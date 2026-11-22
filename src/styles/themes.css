@@ -1,0 +1,230 @@
+/* ==========================================================================
+   MYTHOS — Adaptive World Atmospheres & Editorial Reading Surface
+   5 world themes x 2 color modes (Dark Atmospheric + Editorial Light Paper)
+   ========================================================================== */
+
+:root {
+  --font-display: 'Cinzel', Georgia, serif;
+  --font-prose: 'Newsreader', Georgia, serif;
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --reader-font: 'Newsreader', Georgia, serif;
+  --reader-size: 18px;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  --shadow-card: 0 12px 32px -12px rgba(0, 0, 0, 0.55);
+  --shadow-elevated: 0 24px 60px -15px rgba(0, 0, 0, 0.7);
+}
+
+/* 1. FANTASY — Obsidiana & Ouro Antigo */
+:root,
+[data-world-theme='fantasy'] {
+  --bg-canvas: #0b0a09;
+  --bg-surface: #151311;
+  --bg-elevated: #1e1b18;
+  --bg-glass: rgba(17, 15, 13, 0.84);
+  --border-subtle: rgba(212, 168, 83, 0.16);
+  --border-strong: rgba(212, 168, 83, 0.36);
+  --text-primary: #ede6d6;
+  --text-secondary: #c4bba8;
+  --text-muted: #8a8172;
+  --accent: #d4a853;
+  --accent-contrast: #161108;
+  --accent-soft: rgba(212, 168, 83, 0.14);
+  --accent-glow: rgba(212, 168, 83, 0.24);
+  --danger: #e05d52;
+  --success: #6ec486;
+  --warning: #eab308;
+  --ambient-gradient-1: rgba(212, 168, 83, 0.11);
+  --ambient-gradient-2: rgba(139, 69, 19, 0.14);
+  --font-display: 'Cinzel', Georgia, serif;
+}
+
+/* 2. CYBERPUNK — Neon Noir & Terminal Tático */
+[data-world-theme='cyberpunk'] {
+  --bg-canvas: #07090f;
+  --bg-surface: #0e1422;
+  --bg-elevated: #151f33;
+  --bg-glass: rgba(10, 14, 25, 0.86);
+  --border-subtle: rgba(34, 211, 238, 0.18);
+  --border-strong: rgba(34, 211, 238, 0.42);
+  --text-primary: #e2ecff;
+  --text-secondary: #a5b8d9;
+  --text-muted: #697d9f;
+  --accent: #22d3ee;
+  --accent-contrast: #03151a;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-glow: rgba(34, 211, 238, 0.28);
+  --danger: #f43f5e;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --ambient-gradient-1: rgba(34, 211, 238, 0.12);
+  --ambient-gradient-2: rgba(244, 63, 94, 0.11);
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+}
+
+/* 3. MYSTERY — Dossiê Noir & Latão */
+[data-world-theme='mystery'] {
+  --bg-canvas: #0d0c0b;
+  --bg-surface: #171513;
+  --bg-elevated: #211e1b;
+  --bg-glass: rgba(18, 16, 15, 0.86);
+  --border-subtle: rgba(201, 154, 91, 0.16);
+  --border-strong: rgba(201, 154, 91, 0.36);
+  --text-primary: #e8e4dc;
+  --text-secondary: #b7b0a3;
+  --text-muted: #7f796e;
+  --accent: #c99a5b;
+  --accent-contrast: #171108;
+  --accent-soft: rgba(201, 154, 91, 0.14);
+  --accent-glow: rgba(201, 154, 91, 0.22);
+  --danger: #d95b5b;
+  --success: #6db38b;
+  --warning: #d9a043;
+  --ambient-gradient-1: rgba(201, 154, 91, 0.10);
+  --ambient-gradient-2: rgba(94, 72, 48, 0.13);
+  --font-display: 'Cinzel', Georgia, serif;
+}
+
+/* 4. ZOMBIES — Frequência de Sobrevivência */
+[data-world-theme='zombies'] {
+  --bg-canvas: #0b0d0b;
+  --bg-surface: #141914;
+  --bg-elevated: #1c241c;
+  --bg-glass: rgba(14, 18, 14, 0.86);
+  --border-subtle: rgba(163, 230, 53, 0.16);
+  --border-strong: rgba(163, 230, 53, 0.38);
+  --text-primary: #e7ece5;
+  --text-secondary: #aebaa9;
+  --text-muted: #72806d;
+  --accent: #a3e635;
+  --accent-contrast: #111a05;
+  --accent-soft: rgba(163, 230, 53, 0.13);
+  --accent-glow: rgba(163, 230, 53, 0.22);
+  --danger: #ef4444;
+  --success: #4ade80;
+  --warning: #facc15;
+  --ambient-gradient-1: rgba(163, 230, 53, 0.10);
+  --ambient-gradient-2: rgba(58, 90, 64, 0.15);
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+}
+
+/* 5. APOCALYPTIC — Cinzas & Cobre Queimado */
+[data-world-theme='apocalyptic'] {
+  --bg-canvas: #0e0a09;
+  --bg-surface: #1a1412;
+  --bg-elevated: #251c19;
+  --bg-glass: rgba(20, 15, 13, 0.86);
+  --border-subtle: rgba(224, 122, 58, 0.18);
+  --border-strong: rgba(224, 122, 58, 0.40);
+  --text-primary: #efe7dc;
+  --text-secondary: #c5b6a6;
+  --text-muted: #8b7b6c;
+  --accent: #e07a3a;
+  --accent-contrast: #190b04;
+  --accent-soft: rgba(224, 122, 58, 0.15);
+  --accent-glow: rgba(224, 122, 58, 0.24);
+  --danger: #ef4444;
+  --success: #70c285;
+  --warning: #f59e0b;
+  --ambient-gradient-1: rgba(224, 122, 58, 0.12);
+  --ambient-gradient-2: rgba(120, 53, 15, 0.16);
+  --font-display: 'Cinzel', Georgia, serif;
+}
+
+/* ==========================================================================
+   EDITORIAL LIGHT READING MODE — Papel Literário de Luxo
+   ========================================================================== */
+[data-color-mode='light'] {
+  --bg-canvas: #f6f1e7;
+  --bg-surface: #efe8da;
+  --bg-elevated: #fbf8f1;
+  --bg-glass: rgba(246, 241, 231, 0.88);
+  --text-primary: #1f1a15;
+  --text-secondary: #4a4137;
+  --text-muted: #7a6f62;
+  --shadow-card: 0 12px 28px -12px rgba(45, 32, 16, 0.14);
+  --shadow-elevated: 0 22px 50px -15px rgba(45, 32, 16, 0.2);
+}
+
+[data-color-mode='light'][data-world-theme='fantasy'] {
+  --accent: #9a6b16;
+  --accent-contrast: #fffaf0;
+  --accent-soft: rgba(154, 107, 22, 0.12);
+  --accent-glow: rgba(154, 107, 22, 0.18);
+  --border-subtle: rgba(130, 92, 26, 0.18);
+  --border-strong: rgba(130, 92, 26, 0.42);
+  --danger: #b91c1c;
+  --success: #15803d;
+  --warning: #b45309;
+  --ambient-gradient-1: rgba(180, 125, 30, 0.08);
+  --ambient-gradient-2: rgba(139, 69, 19, 0.06);
+}
+
+[data-color-mode='light'][data-world-theme='cyberpunk'] {
+  --bg-canvas: #f1f5f9;
+  --bg-surface: #e4ebf3;
+  --bg-elevated: #ffffff;
+  --bg-glass: rgba(241, 245, 249, 0.88);
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent: #0284c7;
+  --accent-contrast: #f0f9ff;
+  --accent-soft: rgba(2, 132, 199, 0.12);
+  --accent-glow: rgba(2, 132, 199, 0.2);
+  --border-subtle: rgba(2, 132, 199, 0.2);
+  --border-strong: rgba(2, 132, 199, 0.45);
+  --danger: #be123c;
+  --success: #047857;
+  --warning: #b45309;
+  --ambient-gradient-1: rgba(2, 132, 199, 0.08);
+  --ambient-gradient-2: rgba(225, 29, 72, 0.06);
+}
+
+[data-color-mode='light'][data-world-theme='mystery'] {
+  --accent: #8c5c20;
+  --accent-contrast: #fffdf9;
+  --accent-soft: rgba(140, 92, 32, 0.12);
+  --accent-glow: rgba(140, 92, 32, 0.18);
+  --border-subtle: rgba(120, 82, 35, 0.18);
+  --border-strong: rgba(120, 82, 35, 0.42);
+  --danger: #b91c1c;
+  --success: #15803d;
+  --warning: #b45309;
+}
+
+[data-color-mode='light'][data-world-theme='zombies'] {
+  --bg-canvas: #f2f4ef;
+  --bg-surface: #e6eae1;
+  --bg-elevated: #fafbf8;
+  --bg-glass: rgba(242, 244, 239, 0.88);
+  --text-primary: #161d15;
+  --text-secondary: #3b4639;
+  --text-muted: #647261;
+  --accent: #4d7c0f;
+  --accent-contrast: #f7fee7;
+  --accent-soft: rgba(77, 124, 15, 0.13);
+  --accent-glow: rgba(77, 124, 15, 0.2);
+  --border-subtle: rgba(77, 124, 15, 0.2);
+  --border-strong: rgba(77, 124, 15, 0.42);
+  --danger: #b91c1c;
+  --success: #15803d;
+  --warning: #a16207;
+}
+
+[data-color-mode='light'][data-world-theme='apocalyptic'] {
+  --accent: #b84a14;
+  --accent-contrast: #fff7ed;
+  --accent-soft: rgba(184, 74, 20, 0.12);
+  --accent-glow: rgba(184, 74, 20, 0.18);
+  --border-subtle: rgba(160, 70, 24, 0.2);
+  --border-strong: rgba(160, 70, 24, 0.44);
+  --danger: #b91c1c;
+  --success: #15803d;
+  --warning: #b45309;
+}

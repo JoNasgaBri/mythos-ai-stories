@@ -1,0 +1,207 @@
+@import "tailwindcss";
+@import "./styles/themes.css";
+
+@layer base {
+  html {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.45s ease, color 0.35s ease;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--text-primary);
+  }
+}
+
+/* Atmospheric fixed backdrop (non-interactive) */
+.mythos-ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(ellipse 75% 50% at 15% -5%, var(--ambient-gradient-1), transparent 70%),
+    radial-gradient(ellipse 65% 55% at 88% 105%, var(--ambient-gradient-2), transparent 70%);
+  transition: background-image 0.6s ease;
+}
+
+.mythos-grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Display & Editorial Typography */
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-prose {
+  font-family: var(--reader-font, var(--font-prose));
+  font-size: var(--reader-size, 18px);
+  line-height: 1.72;
+}
+
+.font-mono-tech {
+  font-family: var(--font-mono);
+}
+
+.story-dropcap::first-letter {
+  font-family: var(--font-display);
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.85;
+  padding-right: 0.14em;
+  padding-top: 0.06em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Animations */
+@keyframes beatEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-beat-enter {
+  animation: beatEnter 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes subtlePulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+.animate-world-pulse {
+  animation: subtlePulse 2.2s ease-in-out infinite;
+}
+
+@keyframes diceTumble {
+  0% {
+    transform: rotate(0deg) scale(0.95);
+  }
+  25% {
+    transform: rotate(95deg) scale(1.06);
+  }
+  50% {
+    transform: rotate(190deg) scale(0.96);
+  }
+  75% {
+    transform: rotate(285deg) scale(1.08);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.95);
+  }
+}
+
+.animate-dice-tumble {
+  animation: diceTumble 0.55s linear infinite;
+}
+
+@keyframes diceSnap {
+  0% {
+    transform: scale(1.32) rotate(-14deg);
+    opacity: 0.65;
+  }
+  60% {
+    transform: scale(0.94) rotate(4deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+.animate-dice-snap {
+  animation: diceSnap 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes chapterCurtain {
+  0% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.97);
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  84% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+}
+
+.animate-chapter-curtain {
+  animation: chapterCurtain 2.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes shimmerSweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 25%,
+    var(--accent-soft) 50%,
+    var(--bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmerSweep 1.6s linear infinite;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
