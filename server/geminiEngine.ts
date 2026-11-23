@@ -1266,7 +1266,6 @@ export async function generateSceneSpeech(
         annotations: [
           {
             type: 'speech_metadata',
-            speaker: 'Narrator',
             style: profile.style,
           },
         ],
@@ -1279,7 +1278,6 @@ export async function generateSceneSpeech(
     generation_config: {
       speech_config: [
         {
-          speaker: 'Narrator',
           voice: profile.voice,
           language: langCode,
         },
