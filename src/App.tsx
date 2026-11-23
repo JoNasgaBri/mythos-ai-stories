@@ -646,6 +646,7 @@ export function App() {
         location: response.location,
         mood: response.mood,
         text: response.narration,
+        beats: response.beats,
         deltas: allDeltas,
         timestamp: Date.now(),
       };
@@ -1231,6 +1232,7 @@ export function App() {
         location: resolvedLocation,
         mood: response.mood,
         text: response.narration,
+        beats: response.beats,
         deltas: allDeltas,
         timestamp: Date.now(),
       };
@@ -1564,6 +1566,7 @@ export function App() {
           location: resolvedLoc,
           mood: res.mood,
           text: res.narration,
+          beats: res.beats,
           deltas: [...playerDeltas, ...codexDeltas],
           isCrisisResolution: true,
           timestamp: Date.now(),
@@ -2913,6 +2916,7 @@ export function App() {
         <StoryStage
           campaign={activeCampaign}
           language={settings.language}
+          dialogueStyle={settings.dialogueStyle ?? 'bubbles'}
           focusMode={focusMode}
           isBusy={isBusy}
           isSummarizing={isSummarizing}

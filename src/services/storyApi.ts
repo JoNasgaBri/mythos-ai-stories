@@ -135,6 +135,7 @@ function stripHeavyMediaForApi(campaign: Campaign): Campaign {
     entries: campaign.entries.slice(-20).map((e) => ({
       ...e,
       imageUrl: undefined,
+      beats: undefined,
     })),
   };
 }

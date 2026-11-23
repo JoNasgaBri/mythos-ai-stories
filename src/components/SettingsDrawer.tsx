@@ -386,6 +386,42 @@ export function SettingsDrawer({
               </div>
 
               <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                  Estilo de Diálogo & Mensagens
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ dialogueStyle: 'bubbles' })}
+                    className={`rounded-xl border p-3 text-left transition ${
+                      (settings.dialogueStyle ?? 'bubbles') === 'bubbles'
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">Balões & Mensagens</div>
+                    <p className="mt-0.5 text-[10px] opacity-80">
+                      Falas com retrato/nome e cards de WhatsApp/Rádio.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ dialogueStyle: 'classic' })}
+                    className={`rounded-xl border p-3 text-left transition ${
+                      settings.dialogueStyle === 'classic'
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">Livro Clássico</div>
+                    <p className="mt-0.5 text-[10px] opacity-80">
+                      Texto corrido literário sem balões de fala.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              <div>
                 <div className="mb-2 flex justify-between text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                   <span>Tamanho do Texto</span>
                   <span className="font-mono-tech text-[var(--accent)]">

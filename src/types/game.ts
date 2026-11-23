@@ -355,10 +355,22 @@ export interface StateDelta {
   positive?: boolean;
 }
 
+export type StoryBeatKind = 'narration' | 'dialogue' | 'message';
+
+export interface StoryBeat {
+  kind: StoryBeatKind;
+  speaker?: string;
+  text: string;
+  emotion?: string;
+  channel?: string;
+  isProtagonist?: boolean;
+}
+
 export interface StoryEntry {
   id: string;
   role: 'prologue' | 'narrator' | 'player' | 'pulse' | 'system';
   text: string;
+  beats?: StoryBeat[];
   turn: number;
   chapter?: number;
   sceneTitle?: string;
@@ -463,6 +475,7 @@ export interface AppSettings {
   readerFont: string;
   readerFontSize: number;
   colorMode: 'dark' | 'light';
+  dialogueStyle: 'bubbles' | 'classic';
   responseLength: ResponseLength;
   narrativeStyle: NarrativeStyle;
   narrativePerspective: NarrativePerspective;
@@ -598,6 +611,7 @@ export interface StoryTurnResponse {
   location: string;
   mood: string;
   narration: string;
+  beats?: StoryBeat[];
   actions: Array<{
     label: string;
     intent: ActionIntent;

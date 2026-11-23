@@ -26,6 +26,8 @@ import type {
   ResponseLength,
   RumorUrgency,
   SpeechResponse,
+  StoryBeat,
+  StoryBeatKind,
   StoryPace,
   StoryTurnResponse,
   WorldRumorsResponse,
@@ -55,7 +57,49 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
     narration: {
       type: 'string',
       description:
-        'Rich multi-paragraph narration separated by blank lines (\\n\\n), advancing the story based on player action and dice outcome while faithfully obeying the requested Response Length, Narrative Style, Perspective, and Custom AI Instructions. Never compress into a single brief paragraph when 2+ paragraphs are requested. Do not repeat options at the end.',
+        'Leave empty ("") when "beats" is populated to avoid repeating text! Only put full prose here if you do not use "beats".',
+    },
+    beats: {
+      type: 'array',
+      description:
+        'PRIMARY SCENE OUTPUT: Ordered sequence of literary narration paragraphs, character dialogue speech bubbles, and phone/SMS/radio/letter message cards. Obey the requested Response Length, Narrative Style, Perspective, and Custom AI Instructions across the total beats. Separate spoken dialogue cleanly into kind="dialogue" (do NOT repeat the same spoken words inside narration).',
+      items: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['narration', 'dialogue', 'message'],
+            description:
+              '"narration" for atmospheric prose/action; "dialogue" for spoken lines by a character; "message" for text messages (WhatsApp, SMS, chat), radio transmissions, emails, or written notes/letters.',
+          },
+          speaker: {
+            type: 'string',
+            description:
+              'Character name speaking or sending the message (required for "dialogue" and "message", e.g. "Elena", "Desconhecido"). Omit for "narration".',
+          },
+          text: {
+            type: 'string',
+            description:
+              'The prose paragraph (for narration) OR the exact spoken/messaged words WITHOUT surrounding quotation marks (for dialogue/message).',
+          },
+          emotion: {
+            type: 'string',
+            description:
+              'Optional short 1-3 word tone or expression tag for dialogue (e.g. "Sorrindo", "Sussurrando", "Preocupada", "Firme").',
+          },
+          channel: {
+            type: 'string',
+            description:
+              'Required for kind="message": channel name (e.g. "WhatsApp", "SMS", "Rádio", "E-mail", "Carta", "Notificação").',
+          },
+          isProtagonist: {
+            type: 'boolean',
+            description:
+              'True only if this dialogue or message is spoken/sent by the protagonist.',
+          },
+        },
+        required: ['kind', 'text'],
+      },
     },
     actions: {
       type: 'array',
@@ -828,6 +872,7 @@ function buildSystemInstruction(
     `Current Arc / Book: ${campaign.arcNumber ?? 1}`,
     `Difficulty Mode: ${campaign.difficulty}. CREATIVE & FAITHFUL DIFFICULTY: Match the chosen difficulty faithfully AND creatively within the current scene’s genre/timeline. On easy, offer forgiving openings; on hard/insane/good-luck, make NPCs sharper, finances/supplies tighter, rivals cleverer, and mistakes truly costly — without breaking timeline logic or forcing arbitrary combat.`,
     'BG3 PROGRESSION & INFINITE SANDBOX: Read the protagonist’s BG3 attributes (STR/DEX/CON/INT/WIS/CHA), level, leveled skills, talents, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain (15-80), training/practice with skillTraining (growing or creating skills!), breakthroughs with addTalents, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
+    'SCENE BEATS & DIALOGUE BUBBLES (IMPORTANT): Always compose the scene inside the ordered "beats" array (and leave "narration" as "" to avoid duplicating text). Alternate atmospheric "narration" blocks (prose/descriptions/body language) with "dialogue" blocks whenever any character speaks aloud — put the exact character name in "speaker", an evocative 1-2 word "emotion" (e.g. "Sorrindo", "Sussurrando", "Séria"), and ONLY their spoken words in "text" (no outer quotes, no "ela diz:"). Whenever a character sends or receives a phone message, WhatsApp, SMS, radio call, email, or note, use kind="message" with "speaker" and "channel" (e.g. "WhatsApp", "SMS", "Rádio"). Never repeat a dialogue line inside a narration beat.',
     'ACTIVE PARTY COMPANIONS & RELATIONSHIPS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about. Whenever introducing or interacting closely with a party companion, romance partner, or recurring NPC whose sheet lacks details, populate their age, height, appearance, personality, currentMood, attributes (6 BG3 stats), skills, traits, likes, dislikes, and a concise bondMemory via stateChanges.upsertNpcs. Always honor any player-edited biometrics, height, age, appearance, or skills present in activeParty/knownNpcs without contradicting them.',
     campaign.freeformMode && campaign.turnCount <= 3
       ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
@@ -987,6 +1032,84 @@ function buildCompactStateContext(campaign: Campaign): string {
   );
 }
 
+const VALID_BEAT_KINDS = new Set<StoryBeatKind>([
+  'narration',
+  'dialogue',
+  'message',
+]);
+
+function stripOuterQuotes(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[«"“]+/, '')
+    .replace(/[»"”]+$/, '')
+    .trim();
+}
+
+function normalizeTurnBeatsAndNarration(
+  parsed: Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>,
+  protagonistName: string,
+): { narration: string; beats?: StoryBeat[] } {
+  const protagLower = protagonistName.trim().toLowerCase();
+  const rawBeats = Array.isArray(parsed.beats) ? parsed.beats : [];
+
+  const cleanBeats: StoryBeat[] = [];
+  for (const item of rawBeats) {
+    if (!item || typeof item.text !== 'string') continue;
+    const kind: StoryBeatKind = VALID_BEAT_KINDS.has(item.kind)
+      ? item.kind
+      : 'narration';
+    const text =
+      kind === 'narration' ? item.text.trim() : stripOuterQuotes(item.text);
+    if (!text) continue;
+
+    if (kind === 'narration') {
+      cleanBeats.push({ kind: 'narration', text });
+    } else {
+      const speaker = String(item.speaker || '').trim() || 'Personagem';
+      const speakerLower = speaker.toLowerCase();
+      const isProtagonist =
+        Boolean(item.isProtagonist) ||
+        speakerLower === protagLower ||
+        speakerLower === 'você' ||
+        speakerLower === 'protagonista' ||
+        speakerLower === 'you';
+      cleanBeats.push({
+        kind,
+        speaker,
+        text,
+        emotion: item.emotion ? String(item.emotion).trim() : undefined,
+        channel:
+          kind === 'message'
+            ? String(item.channel || 'Mensagem').trim()
+            : undefined,
+        isProtagonist,
+      });
+    }
+  }
+
+  if (cleanBeats.length > 0) {
+    const synthesized = cleanBeats
+      .map((b) => {
+        if (b.kind === 'narration') return b.text;
+        if (b.kind === 'message') {
+          return `[${b.channel || 'Mensagem'} · ${b.speaker}]: "${b.text}"`;
+        }
+        return b.speaker ? `${b.speaker}: "${b.text}"` : `"${b.text}"`;
+      })
+      .join('\n\n');
+    return {
+      narration: synthesized,
+      beats: cleanBeats,
+    };
+  }
+
+  return {
+    narration: String(parsed.narration || '').trim(),
+    beats: undefined,
+  };
+}
+
 export async function generateStoryStart(
   apiKey: string,
   model: 'gemini-3.8-flash' | 'gemini-4-argon',
@@ -1014,7 +1137,7 @@ export async function generateStoryStart(
     '',
     'REQUIREMENTS:',
     '1. Set "worldPrologue" to 2-3 atmospheric paragraphs introducing the world’s history, laws, culture, and factions in conflict so the player feels grounded in this universe.',
-    '2. Set "narration" to Chapter I’s immediate opening moment where the protagonist enters the scene.',
+    '2. Compose Chapter I’s immediate opening moment inside "beats" (mixing atmospheric "narration" with any spoken "dialogue" or "message" blocks) and leave "narration" empty ("").',
     '3. Populate initial quests, at least 1 NPC (upsertNpcs), starting location (discoverLocation), factions (upsertFactions), and 1-2 foundational addCanonFacts.',
     campaign.world.creativePrompt?.trim()
       ? '4. Directly weave the motifs, tone, and timeline from the Author’s Creative Direction into the worldPrologue, opening scene, NPCs, and starting quest.'
@@ -1039,9 +1162,15 @@ export async function generateStoryStart(
   const parsed = parseStructuredJson<Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>>(
     interaction.output_text,
   );
+  const { narration, beats } = normalizeTurnBeatsAndNarration(
+    parsed,
+    campaign.player.name,
+  );
 
   return {
     ...parsed,
+    narration,
+    beats,
     actions: Array.isArray(parsed.actions) ? parsed.actions : [],
     stateChanges: parsed.stateChanges ?? {},
     interactionId: interaction.id,
@@ -1112,9 +1241,15 @@ export async function generateStoryTurn(
   const parsed = parseStructuredJson<Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>>(
     interaction.output_text,
   );
+  const { narration, beats } = normalizeTurnBeatsAndNarration(
+    parsed,
+    campaign.player.name,
+  );
 
   return {
     ...parsed,
+    narration,
+    beats,
     actions: Array.isArray(parsed.actions) ? parsed.actions : [],
     stateChanges: parsed.stateChanges ?? {},
     interactionId: interaction.id,

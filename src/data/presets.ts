@@ -1431,6 +1431,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   readerFont: "'Newsreader', Georgia, serif",
   readerFontSize: 18,
   colorMode: 'dark',
+  dialogueStyle: 'bubbles',
   responseLength: 'literary',
   narrativeStyle: 'balanced',
   narrativePerspective: 'adaptive',

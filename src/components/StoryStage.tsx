@@ -55,10 +55,15 @@ import type {
 } from '../types/game';
 import { ContextHud } from './ContextHud';
 import { EpiloguePanel } from './EpiloguePanel';
+import {
+  extractPlayerSpeech,
+  SceneBeatsRenderer,
+} from './SceneBeatsRenderer';
 
 interface StoryStageProps {
   campaign: Campaign;
   language: LanguageId;
+  dialogueStyle?: 'bubbles' | 'classic';
   focusMode: boolean;
   isBusy: boolean;
   isSummarizing: boolean;
@@ -128,6 +133,7 @@ const INTENT_ICON: Record<ActionIntent, typeof Swords> = {
 export function StoryStage({
   campaign,
   language,
+  dialogueStyle = 'bubbles',
   focusMode,
   isBusy,
   isSummarizing,
@@ -501,6 +507,82 @@ export function StoryStage({
               }
 
               if (entry.role === 'player') {
+                const playerSpeech =
+                  dialogueStyle !== 'classic' && !entry.isDirection
+                    ? extractPlayerSpeech(entry.text)
+                    : { isSpeech: false, spokenText: entry.text };
+
+                if (playerSpeech.isSpeech) {
+                  const protagInitials = campaign.player.name
+                    .trim()
+                    .split(/\s+/)
+                    .slice(0, 2)
+                    .map((p) => p[0]?.toUpperCase() ?? '')
+                    .join('');
+                  return (
+                    <div
+                      key={entry.id}
+                      className="animate-beat-enter flex flex-row-reverse items-start gap-2.5"
+                    >
+                      {campaign.player.portraitUrl ? (
+                        <img
+                          src={campaign.player.portraitUrl}
+                          alt={campaign.player.name}
+                          className="mt-0.5 h-9 w-9 shrink-0 rounded-2xl border-2 border-[var(--accent)] object-cover shadow-sm"
+                        />
+                      ) : (
+                        <span className="font-display mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border-2 border-[var(--accent)] bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent)]">
+                          {protagInitials || 'V'}
+                        </span>
+                      )}
+                      <div className="flex max-w-[85%] flex-col items-end gap-1.5 sm:max-w-[78%]">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5 px-1 text-xs">
+                          {playerSpeech.recipient ? (
+                            <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
+                              Para {playerSpeech.recipient}
+                            </span>
+                          ) : null}
+                          <span className="font-bold text-[var(--accent)]">
+                            {campaign.player.name}
+                          </span>
+                        </div>
+                        <div className="rounded-2xl rounded-tr-sm border border-[var(--accent)]/45 bg-[var(--accent-soft)] px-3.5 py-2.5 text-[15px] leading-relaxed text-[var(--text-primary)] shadow-sm sm:px-4">
+                          <p className="whitespace-pre-wrap">{playerSpeech.spokenText}</p>
+                        </div>
+                        {entry.diceRoll ? (
+                          <div className="font-mono-tech inline-flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1 text-[11px]">
+                            <Dices className="h-3.5 w-3.5 text-[var(--accent)]" />
+                            <span className="text-[var(--text-secondary)]">
+                              {entry.diceRoll.rolls
+                                ? `2×d20 (${entry.diceRoll.rolls[0]}, ${entry.diceRoll.rolls[1]} → ${entry.diceRoll.roll})`
+                                : `d20 (${entry.diceRoll.roll})`}
+                              {' = '}
+                              <strong className="text-[var(--text-primary)]">
+                                {entry.diceRoll.total}
+                              </strong>{' '}
+                              vs DC {entry.diceRoll.dc}
+                            </span>
+                            <span
+                              className="font-semibold"
+                              style={{
+                                color:
+                                  entry.diceRoll.outcome === 'critical_success' ||
+                                  entry.diceRoll.outcome === 'success'
+                                    ? 'var(--success)'
+                                    : entry.diceRoll.outcome === 'partial'
+                                      ? 'var(--warning)'
+                                      : 'var(--danger)',
+                              }}
+                            >
+                              · {formatOutcomeLabel(entry.diceRoll.outcome, language)}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={entry.id}
@@ -725,7 +807,19 @@ export function StoryStage({
                       </div>
                     </header>
 
-                    <div>{renderProseParagraphs(entry.text, idx === firstNarratorIndex)}</div>
+                    <div>
+                      {dialogueStyle === 'classic' ? (
+                        renderProseParagraphs(entry.text, idx === firstNarratorIndex)
+                      ) : (
+                        <SceneBeatsRenderer
+                          campaign={campaign}
+                          text={entry.text}
+                          beats={entry.beats}
+                          dialogueStyle={dialogueStyle}
+                          onOpenRelationships={onOpenRelationships}
+                        />
+                      )}
+                    </div>
 
                     {entry.deltas && entry.deltas.length > 0 ? (
                       <footer className="mt-4 flex flex-wrap gap-1.5 border-t border-[var(--border-subtle)] pt-3">
