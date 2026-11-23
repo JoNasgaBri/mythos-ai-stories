@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   Dices,
   Eye,
@@ -10,8 +12,8 @@ import {
   ImagePlus,
   Maximize2,
   MessageSquare,
-  PanelRightOpen,
   Pencil,
+  Pin,
   RotateCcw,
   Scale,
   Send,
@@ -42,6 +44,7 @@ import {
 import type {
   ActionIntent,
   ActionRisk,
+  AppSettings,
   AttributeId,
   Campaign,
   CommandInputMode,
@@ -59,12 +62,26 @@ import {
   extractPlayerSpeech,
   SceneBeatsRenderer,
 } from './SceneBeatsRenderer';
+import { ZenLeftRail, type ZenRailMode } from './ZenLeftRail';
 
 interface StoryStageProps {
   campaign: Campaign;
+  settings: AppSettings;
+  saveSlotCount: number;
   language: LanguageId;
   dialogueStyle?: 'bubbles' | 'classic';
   focusMode: boolean;
+  leftRailMode: ZenRailMode;
+  mobileLeftRailOpen: boolean;
+  mobileRightHudOpen: boolean;
+  pulsePaused: boolean;
+  pulseSecondsLeft: number;
+  onChangeLeftRailMode: (mode: ZenRailMode) => void;
+  onCloseMobileLeftRail: () => void;
+  onToggleRightHud: () => void;
+  onCloseMobileRightHud: () => void;
+  onTogglePulsePause: () => void;
+  onAdvanceWorldNow: () => void;
   isBusy: boolean;
   isSummarizing: boolean;
   illustratingEntryId: string | null;
@@ -92,6 +109,9 @@ interface StoryStageProps {
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
+  onOpenRumors?: () => void;
+  onOpenWorkbench?: () => void;
+  onOpenRest?: () => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -132,9 +152,22 @@ const INTENT_ICON: Record<ActionIntent, typeof Swords> = {
 
 export function StoryStage({
   campaign,
+  settings,
+  saveSlotCount,
   language,
   dialogueStyle = 'bubbles',
   focusMode,
+  leftRailMode,
+  mobileLeftRailOpen,
+  mobileRightHudOpen,
+  pulsePaused,
+  pulseSecondsLeft,
+  onChangeLeftRailMode,
+  onCloseMobileLeftRail,
+  onToggleRightHud,
+  onCloseMobileRightHud,
+  onTogglePulsePause,
+  onAdvanceWorldNow,
   isBusy,
   isSummarizing,
   illustratingEntryId,
@@ -162,6 +195,9 @@ export function StoryStage({
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
   onOpenRelationships,
+  onOpenRumors,
+  onOpenWorkbench,
+  onOpenRest,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -183,7 +219,7 @@ export function StoryStage({
   const [inputMode, setInputMode] = useState<CommandInputMode>('act');
   const [dicePolicy, setDicePolicy] = useState<DiceRollPolicy>('auto');
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
-  const [mobileHudOpen, setMobileHudOpen] = useState(false);
+  const [rightHudPeek, setRightHudPeek] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{
     url: string;
     caption?: string;
@@ -322,7 +358,8 @@ export function StoryStage({
 
   const handleUseItemFromHud = (item: InventoryItem) => {
     setSelectedItem(item);
-    setMobileHudOpen(false);
+    onCloseMobileRightHud();
+    setRightHudPeek(false);
     textareaRef.current?.focus();
   };
 
@@ -331,14 +368,16 @@ export function StoryStage({
     setInputText((prev) =>
       prev.trim() ? `${prev.trim()} (para ${npc.name})` : `Para ${npc.name}: `,
     );
-    setMobileHudOpen(false);
+    onCloseMobileRightHud();
+    setRightHudPeek(false);
     textareaRef.current?.focus();
   };
 
   const handleTravelFromHud = (loc: LocationRecord) => {
     setInputMode('act');
     setInputText(`Seguir em direção a ${loc.name}`);
-    setMobileHudOpen(false);
+    onCloseMobileRightHud();
+    setRightHudPeek(false);
     textareaRef.current?.focus();
   };
 
@@ -399,7 +438,31 @@ export function StoryStage({
   }
 
   return (
-    <div className="relative z-10 mx-auto flex h-[calc(100dvh-5.65rem)] max-w-[1440px] gap-6 px-4 py-4 sm:px-6">
+    <div className="relative z-10 mx-auto flex h-[calc(100dvh-2.6rem)] max-w-[1600px] gap-3 px-2.5 py-2.5 sm:h-[calc(100dvh-2.35rem)] sm:gap-4 sm:px-4 sm:py-3">
+      {/* Left Zen Browser Retractable Tactical Rail */}
+      <ZenLeftRail
+        campaign={campaign}
+        settings={settings}
+        saveSlotCount={saveSlotCount}
+        isBusy={isBusy}
+        mode={leftRailMode}
+        mobileOpen={mobileLeftRailOpen}
+        pulsePaused={pulsePaused}
+        pulseSecondsLeft={pulseSecondsLeft}
+        onChangeMode={onChangeLeftRailMode}
+        onCloseMobile={onCloseMobileLeftRail}
+        onOpenInventory={() => onOpenCharacterInventory?.()}
+        onOpenRelationships={() => onOpenRelationships?.()}
+        onOpenRumors={() => onOpenRumors?.()}
+        onOpenWorkbench={() => onOpenWorkbench?.()}
+        onOpenBaseBlueprint={() => onOpenBaseBlueprint?.()}
+        onOpenMap={() => onOpenWorldMap?.()}
+        onOpenRest={() => onOpenRest?.()}
+        onOpenSaves={onOpenSaves}
+        onTogglePulsePause={onTogglePulsePause}
+        onAdvanceWorldNow={onAdvanceWorldNow}
+      />
+
       {/* Main Narrative Theater */}
       <section className="flex min-w-0 flex-1 flex-col">
         {/* Scrollable Editorial Chronicle */}
@@ -1271,9 +1334,17 @@ export function StoryStage({
         ) : null}
       </section>
 
-      {/* Desktop Context HUD */}
+      {/* Desktop Right Zen Browser Split / Auto-Peek HUD */}
       {!focusMode ? (
-        <aside className="hidden w-[350px] shrink-0 lg:block xl:w-[390px]">
+        <aside className="relative hidden w-[340px] shrink-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block xl:w-[375px]">
+          <button
+            type="button"
+            onClick={onToggleRightHud}
+            title="Recolher Painel Direito (Zen Foco)"
+            className="absolute top-1/2 -left-3 z-20 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-muted)] shadow-md transition hover:bg-[var(--bg-elevated)] hover:text-[var(--accent)]"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
           <ContextHud
             campaign={campaign}
             language={language}
@@ -1303,23 +1374,94 @@ export function StoryStage({
             }
           />
         </aside>
-      ) : null}
+      ) : (
+        <div className="hidden lg:block">
+          {!rightHudPeek ? (
+            <button
+              type="button"
+              onMouseEnter={() => setRightHudPeek(true)}
+              onClick={onToggleRightHud}
+              title="Puxar Painel Direito (Ficha & Mundo)"
+              className="fixed top-1/2 right-0 z-30 flex -translate-y-1/2 flex-col items-center gap-1 rounded-l-xl border border-r-0 border-[var(--border-strong)] bg-[var(--bg-glass)] px-1 py-4 text-[var(--text-muted)] shadow-lg backdrop-blur-xl transition hover:px-1.5 hover:text-[var(--accent)]"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              <span className="h-6 w-0.5 rounded-full bg-[var(--accent)]/60" />
+            </button>
+          ) : (
+            <div
+              onMouseLeave={() => setRightHudPeek(false)}
+              className="fixed top-11 right-2.5 bottom-2.5 z-40 flex w-[355px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-canvas)]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+            >
+              <div className="mb-1.5 flex items-center justify-between px-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                  Ficha & Mundo (Prévia Zen)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRightHudPeek(false);
+                    onToggleRightHud();
+                  }}
+                  title="Fixar Painel Direito em Split"
+                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)] transition hover:brightness-110"
+                >
+                  <Pin className="h-3 w-3" />
+                  Fixar Split
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <ContextHud
+                  campaign={campaign}
+                  language={language}
+                  isSummarizing={isSummarizing}
+                  isGeneratingPortrait={isGeneratingPortrait}
+                  generatingNpcPortraitId={generatingNpcPortraitId}
+                  onUseItem={handleUseItemFromHud}
+                  onToggleEquipItem={onToggleEquipItem}
+                  onSpendAttributePoint={onSpendAttributePoint}
+                  onTogglePartyMember={onTogglePartyMember}
+                  onGenerateNpcPortrait={onGenerateNpcPortrait}
+                  onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
+                  onOpenWorldMap={() => {
+                    setRightHudPeek(false);
+                    onOpenWorldMap?.();
+                  }}
+                  onOpenCharacterInventory={() => {
+                    setRightHudPeek(false);
+                    onOpenCharacterInventory?.();
+                  }}
+                  onOpenBaseBlueprint={() => {
+                    setRightHudPeek(false);
+                    onOpenBaseBlueprint?.();
+                  }}
+                  onOpenRelationships={(npcId) => {
+                    setRightHudPeek(false);
+                    onOpenRelationships?.(npcId);
+                  }}
+                  onMentionNpc={handleMentionNpcFromHud}
+                  onTravelLocation={handleTravelFromHud}
+                  onAddCanonFact={onAddCanonFact}
+                  onRemoveCanonFact={onRemoveCanonFact}
+                  onUpdateWorldNotes={onUpdateWorldNotes}
+                  onSummarizeNow={onSummarizeNow}
+                  onConcludeCampaign={onConcludeCampaign}
+                  onGeneratePortrait={onGeneratePortrait}
+                  onZoomImage={(url, caption, engine) =>
+                    setLightboxImage({ url, caption, engine })
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Mobile Floating HUD Trigger + Slide-over Sheet */}
-      <button
-        type="button"
-        onClick={() => setMobileHudOpen(true)}
-        className="fixed right-4 bottom-24 z-30 flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3.5 py-2 text-xs font-semibold text-[var(--accent)] shadow-[var(--shadow-elevated)] lg:hidden"
-      >
-        <PanelRightOpen className="h-4 w-4" />
-        <span>Mundo & Ficha</span>
-      </button>
-
-      {mobileHudOpen ? (
+      {/* Mobile Right HUD Slide-over Sheet (Triggered from GNOME TopBar Right Button) */}
+      {mobileRightHudOpen ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm lg:hidden">
           <div
             className="fixed inset-0"
-            onClick={() => setMobileHudOpen(false)}
+            onClick={onCloseMobileRightHud}
             aria-hidden="true"
           />
           <div className="relative z-10 flex h-full w-full max-w-sm flex-col bg-[var(--bg-canvas)] p-3">
@@ -1329,7 +1471,7 @@ export function StoryStage({
               </span>
               <button
                 type="button"
-                onClick={() => setMobileHudOpen(false)}
+                onClick={onCloseMobileRightHud}
                 className="rounded-lg border border-[var(--border-subtle)] p-1.5 text-[var(--text-secondary)]"
               >
                 <X className="h-4 w-4" />
@@ -1349,19 +1491,19 @@ export function StoryStage({
                 onGenerateNpcPortrait={onGenerateNpcPortrait}
                 onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
                 onOpenWorldMap={() => {
-                  setMobileHudOpen(false);
+                  onCloseMobileRightHud();
                   onOpenWorldMap?.();
                 }}
                 onOpenCharacterInventory={() => {
-                  setMobileHudOpen(false);
+                  onCloseMobileRightHud();
                   onOpenCharacterInventory?.();
                 }}
                 onOpenBaseBlueprint={() => {
-                  setMobileHudOpen(false);
+                  onCloseMobileRightHud();
                   onOpenBaseBlueprint?.();
                 }}
                 onOpenRelationships={(npcId) => {
-                  setMobileHudOpen(false);
+                  onCloseMobileRightHud();
                   onOpenRelationships?.(npcId);
                 }}
                 onMentionNpc={handleMentionNpcFromHud}

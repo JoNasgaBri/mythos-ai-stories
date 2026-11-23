@@ -17,6 +17,7 @@ import { WeatherAtmosphere } from './components/WeatherAtmosphere';
 import { WorkbenchModal } from './components/WorkbenchModal';
 import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
+import type { ZenRailMode } from './components/ZenLeftRail';
 import { createInstantDemoCampaign } from './data/presets';
 import { ambientAudio } from './engine/ambientAudio';
 import {
@@ -190,6 +191,9 @@ export function App() {
   const [activeDiceRoll, setActiveDiceRoll] = useState<DiceRollResult | null>(null);
   const [chapterBanner, setChapterBanner] = useState<ChapterTransitionEvent | null>(null);
   const [focusMode, setFocusMode] = useState(false);
+  const [leftRailMode, setLeftRailMode] = useState<ZenRailMode>('compact');
+  const [mobileLeftRailOpen, setMobileLeftRailOpen] = useState(false);
+  const [mobileRightHudOpen, setMobileRightHudOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savesOpen, setSavesOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<
@@ -2819,6 +2823,26 @@ export function App() {
         lastTurnMeta.diceRoll.outcome === 'partial'),
   );
 
+  const handleToggleLeftRail = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setMobileRightHudOpen(false);
+      setMobileLeftRailOpen((o) => !o);
+      return;
+    }
+    setLeftRailMode((prev) =>
+      prev === 'compact' ? 'pinned' : prev === 'pinned' ? 'hidden' : 'compact',
+    );
+  };
+
+  const handleToggleRightHud = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setMobileLeftRailOpen(false);
+      setMobileRightHudOpen((o) => !o);
+      return;
+    }
+    setFocusMode((f) => !f);
+  };
+
   return (
     <div className="relative min-h-screen">
       <div className="mythos-ambient" />
@@ -2834,34 +2858,23 @@ export function App() {
       <TopBar
         view={view}
         campaign={activeCampaign}
-        saveSlotCount={saveSlots.length}
         settings={settings}
         usingGemini={usingGemini}
-        focusMode={focusMode}
-        pulsePaused={pulsePaused}
-        pulseSecondsLeft={pulseSecondsLeft}
-        isBusy={isBusy}
+        leftRailMode={leftRailMode}
+        rightHudOpen={!focusMode}
         onBackHome={() => {
           stopSpeechPlayback();
+          setMobileLeftRailOpen(false);
+          setMobileRightHudOpen(false);
           setView('home');
         }}
-        onOpenSaves={() => setSavesOpen(true)}
-        onOpenMap={() => setWorldMapOpen(true)}
+        onToggleLeftRail={handleToggleLeftRail}
+        onToggleRightHud={handleToggleRightHud}
         onOpenClock={() => setClockOpen(true)}
-        onOpenCharacterInventory={() => setCharInventoryOpen(true)}
-        onOpenRelationships={() => openRelationships()}
-        onOpenRumors={() => setRumorsOpen(true)}
-        onOpenWorkbench={() => {
-          setLastCraftResult(null);
-          setWorkbenchOpen(true);
-        }}
-        onLongRest={() => setRestModalOpen(true)}
+        onOpenMap={() => setWorldMapOpen(true)}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
         }
-        onToggleFocus={() => setFocusMode((f) => !f)}
-        onTogglePulsePause={() => setPulsePaused((p) => !p)}
-        onAdvanceWorldNow={() => void handleAdvanceWorld()}
         onToggleColorMode={() =>
           updateSettings({
             colorMode: settings.colorMode === 'dark' ? 'light' : 'dark',
@@ -2915,9 +2928,22 @@ export function App() {
       {view === 'stage' && activeCampaign ? (
         <StoryStage
           campaign={activeCampaign}
+          settings={settings}
+          saveSlotCount={saveSlots.length}
           language={settings.language}
           dialogueStyle={settings.dialogueStyle ?? 'bubbles'}
           focusMode={focusMode}
+          leftRailMode={leftRailMode}
+          mobileLeftRailOpen={mobileLeftRailOpen}
+          mobileRightHudOpen={mobileRightHudOpen}
+          pulsePaused={pulsePaused}
+          pulseSecondsLeft={pulseSecondsLeft}
+          onChangeLeftRailMode={setLeftRailMode}
+          onCloseMobileLeftRail={() => setMobileLeftRailOpen(false)}
+          onToggleRightHud={handleToggleRightHud}
+          onCloseMobileRightHud={() => setMobileRightHudOpen(false)}
+          onTogglePulsePause={() => setPulsePaused((p) => !p)}
+          onAdvanceWorldNow={() => void handleAdvanceWorld()}
           isBusy={isBusy}
           isSummarizing={isSummarizing}
           illustratingEntryId={illustratingEntryId}
@@ -2941,6 +2967,12 @@ export function App() {
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
           onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
           onOpenRelationships={(npcId) => openRelationships(npcId)}
+          onOpenRumors={() => setRumorsOpen(true)}
+          onOpenWorkbench={() => {
+            setLastCraftResult(null);
+            setWorkbenchOpen(true);
+          }}
+          onOpenRest={() => setRestModalOpen(true)}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
           queuedSayNpc={queuedSayNpc}
