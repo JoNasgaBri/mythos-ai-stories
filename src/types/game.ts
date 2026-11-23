@@ -4,7 +4,18 @@ export type DifficultyId = 'easy' | 'normal' | 'hard' | 'insane' | 'good-luck';
 
 export type LanguageId = 'pt-BR' | 'en' | 'fr';
 
-export type ResponseLength = 'short' | 'normal' | 'literary';
+export type ResponseLength = 'short' | 'normal' | 'literary' | 'epic';
+
+export type NarrativeStyle = 'balanced' | 'dialogue' | 'cinematic' | 'tactical';
+
+export type NarrativePerspective = 'adaptive' | 'second' | 'third';
+
+export interface AiNarrationPreferences {
+  responseLength: ResponseLength;
+  narrativeStyle: NarrativeStyle;
+  narrativePerspective: NarrativePerspective;
+  customAiInstructions: string;
+}
 
 export type StoryPace = 'epic' | 'endless' | 'focused';
 
@@ -389,6 +400,9 @@ export interface AppSettings {
   readerFontSize: number;
   colorMode: 'dark' | 'light';
   responseLength: ResponseLength;
+  narrativeStyle: NarrativeStyle;
+  narrativePerspective: NarrativePerspective;
+  customAiInstructions: string;
   livingWorldEnabled: boolean;
   livingWorldSeconds: number;
   diceAnimations: boolean;

@@ -1,8 +1,74 @@
-import { Cpu, Globe, KeyRound, Sliders, Type, X } from 'lucide-react';
+import { Cpu, Globe, KeyRound, Sliders, Sparkles, Type, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { DIFFICULTIES, READER_FONT_OPTIONS } from '../data/presets';
 import type { ApiHealthStatus } from '../services/storyApi';
-import type { AppSettings, DifficultyId, LanguageId, ResponseLength } from '../types/game';
+import type {
+  AppSettings,
+  DifficultyId,
+  LanguageId,
+  NarrativePerspective,
+  NarrativeStyle,
+  ResponseLength,
+} from '../types/game';
+
+const LENGTH_OPTIONS: Array<{
+  id: ResponseLength;
+  label: string;
+  hint: string;
+}> = [
+  { id: 'short', label: 'Direta', hint: '1–2 parágrafos' },
+  { id: 'normal', label: 'Equilibrada', hint: '2–3 parágrafos' },
+  { id: 'literary', label: 'Literária', hint: '3–4 parágrafos' },
+  { id: 'epic', label: 'Épica', hint: '4–6 parágrafos' },
+];
+
+const STYLE_OPTIONS: Array<{
+  id: NarrativeStyle;
+  label: string;
+  desc: string;
+}> = [
+  {
+    id: 'balanced',
+    label: 'Equilibrado',
+    desc: 'Ação, diálogos e descrição na medida.',
+  },
+  {
+    id: 'dialogue',
+    label: 'Diálogos & Vínculos',
+    desc: 'Mais conversas, química e NPCs vivos.',
+  },
+  {
+    id: 'cinematic',
+    label: 'Cinematográfico',
+    desc: 'Atmosfera densa, ritmo de livro/série.',
+  },
+  {
+    id: 'tactical',
+    label: 'RPG Tático',
+    desc: 'Detalhes de preparo, itens e consequências.',
+  },
+];
+
+const PERSPECTIVE_OPTIONS: Array<{ id: NarrativePerspective; label: string }> = [
+  { id: 'adaptive', label: 'Adaptativa' },
+  { id: 'second', label: '2ª Pessoa (Você)' },
+  { id: 'third', label: '3ª Pessoa' },
+];
+
+const CUSTOM_PROMPT_PRESETS = [
+  {
+    label: 'Diálogos Longos',
+    text: 'Escreva cenas desenvolvidas com diálogos naturais entre os personagens usando falas diretas. Deixe os NPCs terem personalidade forte e reações detalhadas.',
+  },
+  {
+    label: 'Realismo & Preparo',
+    text: 'Mantenha tom pé no chão e realista: detalhe finanças, logística, suprimentos, rotas e consequências reais das escolhas sem apressar os eventos.',
+  },
+  {
+    label: 'Estilo Livro Épico',
+    text: 'Use prosa rica estilo romance literário, explorando pensamentos, subtexto emocional, cheiros, luz e tensão crescente em cada parágrafo.',
+  },
+];
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -182,28 +248,33 @@ export function SettingsDrawer({
               </div>
 
               <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                  Extensão da Narração
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      { id: 'short', label: 'Direta' },
-                      { id: 'normal', label: 'Equilibrada' },
-                      { id: 'literary', label: 'Literária' },
-                    ] as Array<{ id: ResponseLength; label: string }>
-                  ).map((len) => (
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    Extensão da Narração
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setTab('ai')}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--accent)] hover:underline"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Personalizar IA
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {LENGTH_OPTIONS.map((len) => (
                     <button
                       key={len.id}
                       type="button"
                       onClick={() => onUpdateSettings({ responseLength: len.id })}
-                      className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                      className={`rounded-xl border px-3 py-2 text-left transition ${
                         settings.responseLength === len.id
                           ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
                       }`}
                     >
-                      {len.label}
+                      <div className="text-xs font-semibold">{len.label}</div>
+                      <div className="text-[10px] opacity-80">{len.hint}</div>
                     </button>
                   ))}
                 </div>
@@ -506,6 +577,140 @@ export function SettingsDrawer({
                       Raciocínio profundo para tramas intrincadas de mistério, política e psicologia.
                     </p>
                   </button>
+                </div>
+              </div>
+
+              {/* Full AI Response Customization */}
+              <div className="space-y-4 border-t border-[var(--border-subtle)] pt-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Personalização das Respostas da IA
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    Tamanho das Respostas
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {LENGTH_OPTIONS.map((len) => (
+                      <button
+                        key={len.id}
+                        type="button"
+                        onClick={() => onUpdateSettings({ responseLength: len.id })}
+                        className={`rounded-xl border px-3 py-2 text-left transition ${
+                          settings.responseLength === len.id
+                            ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">{len.label}</div>
+                        <div className="text-[10px] opacity-80">{len.hint}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    Estilo & Foco da Narração
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {STYLE_OPTIONS.map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => onUpdateSettings({ narrativeStyle: st.id })}
+                        className={`rounded-xl border px-3 py-2 text-left transition ${
+                          settings.narrativeStyle === st.id
+                            ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
+                        }`}
+                      >
+                        <div
+                          className={`text-xs font-semibold ${
+                            settings.narrativeStyle === st.id
+                              ? 'text-[var(--accent)]'
+                              : 'text-[var(--text-primary)]'
+                          }`}
+                        >
+                          {st.label}
+                        </div>
+                        <div className="mt-0.5 text-[10px] leading-snug text-[var(--text-muted)]">
+                          {st.desc}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                    Perspectiva Narrativa
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {PERSPECTIVE_OPTIONS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({ narrativePerspective: p.id })
+                        }
+                        className={`rounded-xl border px-2 py-2 text-[11px] font-medium transition ${
+                          settings.narrativePerspective === p.id
+                            ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Instruções Personalizadas do Mestre IA
+                    </label>
+                    {settings.customAiInstructions.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({ customAiInstructions: '' })
+                        }
+                        className="text-[10px] text-[var(--text-muted)] hover:text-[var(--danger)]"
+                      >
+                        Limpar
+                      </button>
+                    ) : null}
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={settings.customAiInstructions}
+                    onChange={(e) =>
+                      onUpdateSettings({ customAiInstructions: e.target.value })
+                    }
+                    placeholder="Ex: Escreva respostas longas e detalhadas, dê bastante diálogo aos personagens, não apresse a história e descreva o ambiente com realismo..."
+                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 text-xs leading-relaxed text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-[var(--accent)]"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {CUSTOM_PROMPT_PRESETS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({
+                            customAiInstructions: settings.customAiInstructions.trim()
+                              ? `${settings.customAiInstructions.trim()}\n${preset.text}`
+                              : preset.text,
+                          })
+                        }
+                        className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 px-2 py-1 text-[10px] font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                      >
+                        + {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

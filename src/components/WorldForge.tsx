@@ -1506,9 +1506,10 @@ export function WorldForge({
                     onChange={(e) => setResponseLength(e.target.value as ResponseLength)}
                     className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                   >
-                    <option value="short">Direto (3-4 frases)</option>
-                    <option value="normal">Equilibrado (2 parágrafos)</option>
-                    <option value="literary">Literário (3 parágrafos ricos)</option>
+                    <option value="short">Direto (1-2 parágrafos)</option>
+                    <option value="normal">Equilibrado (2-3 parágrafos)</option>
+                    <option value="literary">Literário (3-4 parágrafos ricos)</option>
+                    <option value="epic">Épico / Livro (4-6 parágrafos detalhados)</option>
                   </select>
                 </div>
               </div>

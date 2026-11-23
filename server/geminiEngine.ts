@@ -5,6 +5,7 @@ import {
   getEffectiveAttributes,
 } from '../src/engine/rpgSystem';
 import type {
+  AiNarrationPreferences,
   Campaign,
   DiceRollResult,
   EpilogueResponse,
@@ -16,6 +17,8 @@ import type {
   ItemCategory,
   JournalSummaryResponse,
   LanguageId,
+  NarrativePerspective,
+  NarrativeStyle,
   ResponseLength,
   SpeechResponse,
   StoryPace,
@@ -46,7 +49,7 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
     narration: {
       type: 'string',
       description:
-        'Vivid second-person literary narration advancing the story based on player action and dice outcome. Do not repeat options at the end.',
+        'Rich multi-paragraph narration separated by blank lines (\\n\\n), advancing the story based on player action and dice outcome while faithfully obeying the requested Response Length, Narrative Style, Perspective, and Custom AI Instructions. Never compress into a single brief paragraph when 2+ paragraphs are requested. Do not repeat options at the end.',
     },
     actions: {
       type: 'array',
@@ -510,10 +513,56 @@ const LANGUAGE_DIRECTIVE: Record<LanguageId, string> = {
 };
 
 const LENGTH_DIRECTIVE: Record<ResponseLength, string> = {
-  short: 'Keep narration crisp: 1 focused paragraph (3-4 vivid sentences).',
-  normal: 'Write 2 balanced literary paragraphs with clear sensory detail and pacing.',
-  literary: 'Write 3 rich literary paragraphs with atmosphere, character subtext, and tension.',
+  short:
+    'NARRATION LENGTH (DIRECT · 1-2 PARAGRAPHS): Write 1 to 2 punchy, vivid paragraphs separated by \\n\\n. Keep pacing tight without cutting essential dialogue or scene reactions.',
+  normal:
+    'NARRATION LENGTH (BALANCED · 2-3 PARAGRAPHS): Write 2 to 3 well-developed, engaging paragraphs separated by \\n\\n, giving clear space to action, natural dialogue, sensory atmosphere, and character reactions.',
+  literary:
+    'NARRATION LENGTH (LITERARY · 3-4 PARAGRAPHS): Write 3 to 4 rich, immersive paragraphs separated by \\n\\n, with expressive NPC dialogue, emotional subtext, atmospheric detail, and deep narrative consequences.',
+  epic:
+    'NARRATION LENGTH (EPIC / BOOK-GRADE · 4-6 PARAGRAPHS): Write 4 to 6 expansive, novel-quality paragraphs separated by \\n\\n! Give generous breathing room to full back-and-forth character dialogues, companion reactions, environmental storytelling, tactical preparation, and layered drama. NEVER rush or compress a scene into 1 short paragraph.',
 };
+
+const STYLE_DIRECTIVE: Record<NarrativeStyle, string> = {
+  balanced:
+    'NARRATIVE STYLE: Balanced storytelling — weave vivid scene description, natural spoken dialogue, and concrete RPG consequences in harmony.',
+  dialogue:
+    'NARRATIVE STYLE: Dialogue & Character-Driven — prioritize rich spoken dialogue with NPCs and companions (using natural quotation/dash dialogue lines), body language, emotional chemistry, banter, and relationship development.',
+  cinematic:
+    'NARRATIVE STYLE: Cinematic & Atmospheric — write with dramatic framing, lighting, soundscapes, tension, and memorable sensory imagery like a prestige TV series or novel.',
+  tactical:
+    'NARRATIVE STYLE: Tactical RPG & Simulation — emphasize concrete details, logistics, preparation, finances/resources, environmental opportunities, item usage, skill training, and cause-and-effect stakes.',
+};
+
+const PERSPECTIVE_DIRECTIVE: Record<NarrativePerspective, string> = {
+  adaptive:
+    'NARRATIVE PERSPECTIVE: Adaptive — mirror the player’s own writing voice (if they write in 3rd person like "Jonas faz...", narrate naturally in 3rd person focused on the protagonist; if they write in 1st/2nd person, narrate in immersive 2nd person "Você...").',
+  second:
+    'NARRATIVE PERSPECTIVE: Always narrate in immersive second person ("Você..." / "You...").',
+  third:
+    'NARRATIVE PERSPECTIVE: Always narrate in close third person using the protagonist’s name and pronouns.',
+};
+
+function resolveOutputTokenBudget(
+  model: 'gemini-3.8-flash' | 'gemini-4-argon',
+  length: ResponseLength,
+): number {
+  if (model === 'gemini-4-argon') {
+    return 32768;
+  }
+  switch (length) {
+    case 'short':
+      return 4096;
+    case 'normal':
+      return 6144;
+    case 'literary':
+      return 8192;
+    case 'epic':
+      return 12288;
+    default:
+      return 8192;
+  }
+}
 
 const PACE_DIRECTIVE: Record<StoryPace, string> = {
   epic: 'Campaign Pace: LONG EPIC CHRONICLE. Develop slow-burn intrigue, regional cultures, recurring subplots, and lasting consequences across multiple books/arcs. NEVER rush toward a premature ending.',
@@ -537,15 +586,26 @@ function parseStructuredJson<T>(raw: string | undefined): T {
 function buildSystemInstruction(
   campaign: Campaign,
   length: ResponseLength,
+  narrationPrefs?: Partial<AiNarrationPreferences>,
 ): string {
   const matureNote = campaign.world.matureMode
     ? 'Mature storytelling (18+) is enabled: allow gritty moral dilemmas, dark consequences, psychological tension, and raw drama without gratuitous explicit content.'
     : 'Keep content PG-13: dramatic tension and peril without graphic gore or explicit mature themes.';
 
+  const style: NarrativeStyle = narrationPrefs?.narrativeStyle ?? 'balanced';
+  const perspective: NarrativePerspective =
+    narrationPrefs?.narrativePerspective ?? 'adaptive';
+  const customInstructions = narrationPrefs?.customAiInstructions?.trim();
+
   return [
     'You are the MYTHOS Narrative Engine, a collaborative literary co-author and living RPG Game Master.',
     LANGUAGE_DIRECTIVE[campaign.language],
-    LENGTH_DIRECTIVE[length],
+    LENGTH_DIRECTIVE[length] ?? LENGTH_DIRECTIVE.literary,
+    STYLE_DIRECTIVE[style] ?? STYLE_DIRECTIVE.balanced,
+    PERSPECTIVE_DIRECTIVE[perspective] ?? PERSPECTIVE_DIRECTIVE.adaptive,
+    customInstructions
+      ? `=== PLAYER'S CUSTOM AI RESPONSE INSTRUCTIONS (FOLLOW STRICTLY) ===\n${customInstructions}`
+      : '',
     matureNote,
     '=== CO-AUTHOR & COLLABORATIVE STORYTELLING (HIGHEST PRIORITY) ===',
     '- TRUTH HIERARCHY: #1 The player’s latest input & recent story > #2 User-edited or pinned canon facts > #3 Starting world seed. The initial world prompt is ONLY an opening launchpad — NEVER a rigid prison.',
@@ -703,9 +763,14 @@ export async function generateStoryStart(
   model: 'gemini-3.8-flash' | 'gemini-4-argon',
   campaign: Campaign,
   length: ResponseLength,
+  narrationPrefs?: Partial<AiNarrationPreferences>,
 ): Promise<StoryTurnResponse> {
   const client = new GoogleGenAI({ apiKey });
-  const systemInstruction = buildSystemInstruction(campaign, length);
+  const systemInstruction = buildSystemInstruction(
+    campaign,
+    length,
+    narrationPrefs,
+  );
 
   const prompt = [
     'Initialize this world and its opening scene.',
@@ -740,7 +805,7 @@ export async function generateStoryStart(
       schema: TURN_RESPONSE_SCHEMA,
     },
     generation_config: {
-      max_output_tokens: 2200,
+      max_output_tokens: resolveOutputTokenBudget(model, length),
     },
   });
 
@@ -766,9 +831,14 @@ export async function generateStoryTurn(
   diceRoll: DiceRollResult | undefined,
   length: ResponseLength,
   crisisMode?: 'survival_test' | 'breaking_point',
+  narrationPrefs?: Partial<AiNarrationPreferences>,
 ): Promise<StoryTurnResponse> {
   const client = new GoogleGenAI({ apiKey });
-  const systemInstruction = buildSystemInstruction(campaign, length);
+  const systemInstruction = buildSystemInstruction(
+    campaign,
+    length,
+    narrationPrefs,
+  );
 
   const rollInstruction = diceRoll
     ? `DETERMINISTIC FATE ROLL: d20=${diceRoll.roll}${diceRoll.rolls ? ` (rolled ${diceRoll.rolls[0]} & ${diceRoll.rolls[1]} with ${diceRoll.rollMode}${diceRoll.advantageSource ? ` from ${diceRoll.advantageSource}` : ''})` : ''}${diceRoll.rerolledWithInspiration ? ' [REROLLED WITH BG3 INSPIRATION]' : ''}, total_bonus=${diceRoll.bonus >= 0 ? '+' : ''}${diceRoll.bonus}${diceRoll.bonusSource ? ` (${diceRoll.bonusSource})` : ''}, total=${diceRoll.total} vs DC=${diceRoll.dc} => OUTCOME: ${diceRoll.outcome.toUpperCase()}. Narrate consequences strictly matching this outcome${diceRoll.advantageSource ? ` and highlight how ${diceRoll.advantageSource} assisted!` : '.'}`
@@ -808,7 +878,7 @@ export async function generateStoryTurn(
       schema: TURN_RESPONSE_SCHEMA,
     },
     generation_config: {
-      max_output_tokens: 2200,
+      max_output_tokens: resolveOutputTokenBudget(model, length),
     },
   });
 

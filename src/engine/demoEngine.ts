@@ -1031,13 +1031,22 @@ export function demoTurnStory(
   if (length !== 'short') {
     paragraphs.push(actNote);
   }
-  if (length === 'literary') {
+  if (length === 'literary' || length === 'epic') {
     paragraphs.push(
       lang === 'en'
         ? `Each breath tastes of ${campaign.world.tone.toLowerCase()} stakes; whatever step you take next will echo through the chapters ahead.`
         : lang === 'fr'
           ? `Chaque geste laisse désormais une trace durable dans cette chronique.`
           : `O ar carrega o peso de ${campaign.world.tone.toLowerCase()}; qualquer escolha daqui em diante cobrará testemunhas e cicatrizes.`,
+    );
+  }
+  if (length === 'epic') {
+    paragraphs.push(
+      lang === 'en'
+        ? `In the quiet beat that follows, every gaze in ${nextLocation} lingers on ${campaign.player.name}. Details you might have brushed past earlier now lock together like gears waiting for your next word.`
+        : lang === 'fr'
+          ? `Dans le silence qui suit, chaque regard à ${nextLocation} se tourne vers ${campaign.player.name}, suspendu à votre prochaine décision.`
+          : `No instante de silêncio que se segue em ${nextLocation}, os olhares e pequenos gestos ao redor parecem se alinhar diante de ${campaign.player.name}. O cenário abre espaço para que você conduza o diálogo, planeje o próximo passo ou aprofunde as relações antes que a maré vire novamente.`,
     );
   }
 

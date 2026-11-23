@@ -117,6 +117,12 @@ export async function requestStoryStart(
       {
         campaign,
         responseLength: settings.responseLength,
+        narrationPrefs: {
+          responseLength: settings.responseLength,
+          narrativeStyle: settings.narrativeStyle,
+          narrativePerspective: settings.narrativePerspective,
+          customAiInstructions: settings.customAiInstructions,
+        },
         model: settings.geminiModel,
       },
       settings,
@@ -142,6 +148,12 @@ export async function requestStoryTurn(
         action,
         diceRoll,
         responseLength: settings.responseLength,
+        narrationPrefs: {
+          responseLength: settings.responseLength,
+          narrativeStyle: settings.narrativeStyle,
+          narrativePerspective: settings.narrativePerspective,
+          customAiInstructions: settings.customAiInstructions,
+        },
         model: settings.geminiModel,
         crisisMode,
       },

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
+  AiNarrationPreferences,
   Campaign,
   DiceRollResult,
   ForgeWorldRequest,
@@ -105,13 +106,15 @@ export function createAiMiddleware(env: MiddlewareEnv) {
         const body = await readJsonBody<{
           campaign: Campaign;
           responseLength?: ResponseLength;
+          narrationPrefs?: Partial<AiNarrationPreferences>;
           model?: string;
         }>(req);
         const result = await generateStoryStart(
           apiKey,
           resolveModel(body.model, env),
           body.campaign,
-          body.responseLength ?? 'normal',
+          body.responseLength ?? body.narrationPrefs?.responseLength ?? 'literary',
+          body.narrationPrefs,
         );
         sendJson(res, 200, result);
         return;
@@ -123,6 +126,7 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           action: string;
           diceRoll?: DiceRollResult;
           responseLength?: ResponseLength;
+          narrationPrefs?: Partial<AiNarrationPreferences>;
           model?: string;
           crisisMode?: 'survival_test' | 'breaking_point';
         }>(req);
@@ -132,8 +136,9 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           body.campaign,
           body.action,
           body.diceRoll,
-          body.responseLength ?? 'normal',
+          body.responseLength ?? body.narrationPrefs?.responseLength ?? 'literary',
           body.crisisMode,
+          body.narrationPrefs,
         );
         sendJson(res, 200, result);
         return;
