@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createAiMiddleware } from '../server/aiMiddleware';
+import { createAiMiddleware } from '../server/aiMiddleware.js';
 
 const middleware = createAiMiddleware({
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,

@@ -3,7 +3,7 @@ import {
   formatModifier,
   getAttributeModifier,
   getEffectiveAttributes,
-} from '../src/engine/rpgSystem';
+} from '../src/engine/rpgSystem.js';
 import type {
   AiNarrationPreferences,
   Campaign,
@@ -24,7 +24,7 @@ import type {
   StoryPace,
   StoryTurnResponse,
   WorldThemeId,
-} from '../src/types/game';
+} from '../src/types/game.js';
 
 const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
   type: 'object',

@@ -7,7 +7,7 @@ import type {
   LanguageId,
   ResponseLength,
   WorldThemeId,
-} from '../src/types/game';
+} from '../src/types/game.js';
 import {
   generateCampaignEpilogue,
   generateForgedWorld,
@@ -18,7 +18,7 @@ import {
   generateStoryTurn,
   generateVisualAsset,
   type VisualAssetParams,
-} from './geminiEngine';
+} from './geminiEngine.js';
 
 interface MiddlewareEnv {
   GEMINI_API_KEY?: string;
