@@ -438,7 +438,7 @@ export function StoryStage({
   }
 
   return (
-    <div className="relative z-10 mx-auto flex h-[calc(100dvh-3.05rem)] w-full max-w-[1860px] gap-3 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-2.5">
+    <div className="animate-view-enter relative z-10 mx-auto flex h-[calc(100dvh-3.05rem)] w-full max-w-[1860px] gap-3 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-2.5">
       {/* Left Zen Browser Retractable Tactical Rail */}
       <ZenLeftRail
         campaign={campaign}
@@ -1047,7 +1047,7 @@ export function StoryStage({
                       </span>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {campaign.actions.map((action) => {
+                      {campaign.actions.map((action, idx) => {
                       const Icon = INTENT_ICON[action.intent] ?? Sparkles;
                       const cardCheck = assessSuggestedAction(
                         action,
@@ -1064,6 +1064,7 @@ export function StoryStage({
                       return (
                         <div
                           key={action.id}
+                          style={{ animationDelay: `${idx * 45}ms` }}
                           onClick={() => handleActionCardClick(action)}
                           role="button"
                           tabIndex={0}
@@ -1073,7 +1074,7 @@ export function StoryStage({
                               handleActionCardClick(action);
                             }
                           }}
-                          className={`group flex cursor-pointer items-start justify-between gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 p-3 text-left transition hover:border-[var(--accent)] hover:bg-[var(--bg-elevated)] ${
+                          className={`animate-choice-in group flex cursor-pointer items-start justify-between gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 p-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:bg-[var(--bg-elevated)] hover:shadow-md active:translate-y-0 active:scale-[0.99] ${
                             isBusy ? 'pointer-events-none opacity-50' : ''
                           }`}
                         >
@@ -1390,7 +1391,7 @@ export function StoryStage({
           ) : (
             <div
               onMouseLeave={() => setRightHudPeek(false)}
-              className="fixed top-12 right-3 bottom-3 z-40 flex w-[380px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-canvas)]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+              className="animate-zen-peek-right fixed top-12 right-3 bottom-3 z-40 flex w-[380px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-canvas)]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
             >
               <div className="mb-1.5 flex items-center justify-between px-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
@@ -1458,13 +1459,13 @@ export function StoryStage({
 
       {/* Mobile Right HUD Slide-over Sheet (Triggered from GNOME TopBar Right Button) */}
       {mobileRightHudOpen ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm lg:hidden">
+        <div className="animate-backdrop-in fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm lg:hidden">
           <div
             className="fixed inset-0"
             onClick={onCloseMobileRightHud}
             aria-hidden="true"
           />
-          <div className="relative z-10 flex h-full w-full max-w-sm flex-col bg-[var(--bg-canvas)] p-3">
+          <div className="animate-drawer-right relative z-10 flex h-full w-full max-w-sm flex-col bg-[var(--bg-canvas)] p-3">
             <div className="mb-2 flex items-center justify-between px-1">
               <span className="font-display text-sm font-semibold text-[var(--accent)]">
                 Mundo, Memória & Ficha
@@ -1527,11 +1528,11 @@ export function StoryStage({
       {lightboxImage ? (
         <div
           onClick={() => setLightboxImage(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md"
+          className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative max-h-[90vh] max-w-4xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl"
+            className="animate-modal-spring relative max-h-[90vh] max-w-4xl overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl"
           >
             <button
               type="button"

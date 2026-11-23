@@ -74,9 +74,9 @@ export function SaveSlotsDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm">
+    <div className="animate-backdrop-in fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm">
       <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
-      <aside className="relative z-10 flex h-full w-full max-w-md flex-col border-l border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-[var(--shadow-elevated)]">
+      <aside className="animate-drawer-right relative z-10 flex h-full w-full max-w-md flex-col border-l border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-[var(--shadow-elevated)]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-5 py-4">
           <div>

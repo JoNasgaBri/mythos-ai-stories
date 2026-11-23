@@ -268,7 +268,7 @@ export function ContextHud({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div key={activeTab} className="animate-tab-fade flex-1 overflow-y-auto p-4">
         {activeTab === 'sheet' ? (
           <div className="space-y-5">
             {/* Portrait / Crest + Identity */}

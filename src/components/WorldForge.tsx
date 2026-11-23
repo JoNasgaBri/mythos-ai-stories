@@ -573,7 +573,7 @@ export function WorldForge({
   };
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1280px] px-4 pt-8 pb-20 sm:px-6">
+    <main className="animate-view-enter relative z-10 mx-auto max-w-[1280px] px-4 pt-8 pb-20 sm:px-6">
       {/* Stepper Header */}
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>

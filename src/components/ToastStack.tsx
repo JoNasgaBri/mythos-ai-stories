@@ -68,7 +68,7 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
             key={toast.id}
             type="button"
             onClick={() => onDismiss(toast.id)}
-            className="animate-beat-enter pointer-events-auto flex items-center gap-2.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-glass)] px-3.5 py-2.5 text-left text-xs font-medium text-[var(--text-primary)] shadow-[var(--shadow-card)] backdrop-blur-md transition hover:border-[var(--accent)]"
+            className="animate-toast-in pointer-events-auto flex items-center gap-2.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-glass)] px-3.5 py-2.5 text-left text-xs font-medium text-[var(--text-primary)] shadow-[var(--shadow-card)] backdrop-blur-md transition hover:-translate-x-0.5 hover:border-[var(--accent)]"
           >
             <span className="shrink-0">{icon}</span>
             <span className="leading-snug">{toast.message}</span>

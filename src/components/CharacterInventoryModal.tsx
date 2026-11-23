@@ -237,14 +237,14 @@ export function CharacterInventoryModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2.5 backdrop-blur-md sm:p-5"
+      className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2.5 backdrop-blur-md sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-label="Personagem e Inventário Tático"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-elevated)]"
+        className="animate-modal-spring flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-[var(--shadow-elevated)]"
       >
         {/* Top Banner */}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 px-4 py-3 sm:px-5">

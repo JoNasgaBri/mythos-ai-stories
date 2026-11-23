@@ -246,7 +246,8 @@ export function SceneBeatsRenderer({
           return (
             <div
               key={idx}
-              className={`flex ${isProtag ? 'justify-end' : 'justify-start'}`}
+              style={{ animationDelay: `${Math.min(idx * 55, 280)}ms` }}
+              className={`animate-message-pop flex ${isProtag ? 'justify-end' : 'justify-start'}`}
             >
               <div
                 className={`w-full max-w-[92%] sm:max-w-[82%] overflow-hidden rounded-2xl border shadow-sm`}
@@ -351,8 +352,11 @@ export function SceneBeatsRenderer({
         return (
           <div
             key={idx}
+            style={{ animationDelay: `${Math.min(idx * 55, 280)}ms` }}
             className={`flex items-start gap-2.5 ${
-              isProtag ? 'flex-row-reverse' : 'flex-row'
+              isProtag
+                ? 'animate-bubble-right flex-row-reverse'
+                : 'animate-bubble-left flex-row'
             }`}
           >
             {/* Speaker Avatar */}

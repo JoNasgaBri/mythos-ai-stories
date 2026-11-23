@@ -97,6 +97,225 @@
   animation: beatEnter 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* ==========================================================================
+   MYTHOS Motion System (Spring GPU-Composited Animations)
+   ========================================================================== */
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-view-enter {
+  animation: viewEnter 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes islandDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-island-drop {
+  animation: islandDrop 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes backdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-backdrop-in {
+  animation: backdropIn 0.2s ease-out both;
+}
+
+@keyframes modalSpring {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.955);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-modal-spring {
+  animation: modalSpring 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes drawerRight {
+  from {
+    opacity: 0.4;
+    transform: translateX(36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-drawer-right {
+  animation: drawerRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes drawerLeft {
+  from {
+    opacity: 0.4;
+    transform: translateX(-36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-drawer-left {
+  animation: drawerLeft 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes zenPeekRight {
+  from {
+    opacity: 0;
+    transform: translateX(22px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.animate-zen-peek-right {
+  animation: zenPeekRight 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes bubbleLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-12px) translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+.animate-bubble-left {
+  animation: bubbleLeft 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes bubbleRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px) translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+.animate-bubble-right {
+  animation: bubbleRight 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes messagePop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-message-pop {
+  animation: messagePop 0.36s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes choiceIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-choice-in {
+  animation: choiceIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toastIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes tabFade {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-tab-fade {
+  animation: tabFade 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes ambientDrift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -1.5%, 0) scale(1.03);
+  }
+}
+
+.mythos-ambient {
+  animation: ambientDrift 24s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 @keyframes subtlePulse {
   0%, 100% {
     opacity: 0.55;

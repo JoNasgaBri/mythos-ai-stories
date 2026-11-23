@@ -64,7 +64,7 @@ export function SanctuaryHome({
   };
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1280px] px-4 pt-10 pb-20 sm:px-6 sm:pt-14">
+    <main className="animate-view-enter relative z-10 mx-auto max-w-[1280px] px-4 pt-10 pb-20 sm:px-6 sm:pt-14">
       {/* Hero Banner */}
       <section className="relative overflow-hidden rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)]/90 p-7 shadow-[var(--shadow-elevated)] backdrop-blur-md sm:p-12">
         <div className="max-w-2xl">
@@ -240,7 +240,7 @@ export function SanctuaryHome({
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {campaigns.map((camp) => {
+            {campaigns.map((camp, idx) => {
               const theme = WORLD_THEMES[camp.world.primaryTheme];
               const diff = DIFFICULTIES.find((d) => d.id === camp.difficulty);
               const lastNarrator = [...camp.entries]
@@ -251,7 +251,8 @@ export function SanctuaryHome({
               return (
                 <article
                   key={camp.id}
-                  className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] transition hover:border-[var(--border-strong)]"
+                  style={{ animationDelay: `${Math.min(idx * 55, 300)}ms` }}
+                  className="animate-choice-in group flex flex-col justify-between overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] transition-all duration-300 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-elevated)]"
                 >
                   {/* Cover art or Theme accent strip */}
                   {camp.coverImageUrl ? (
