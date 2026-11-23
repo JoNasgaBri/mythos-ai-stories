@@ -147,7 +147,7 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
               },
               equipSlot: {
                 type: 'string',
-                enum: ['weapon', 'armor', 'accessory'],
+                enum: ['weapon', 'offhand', 'head', 'armor', 'accessory', 'utility'],
               },
               bonuses: {
                 type: 'object',
@@ -279,10 +279,19 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         },
         advanceTime: {
           type: 'object',
-          description: 'Optionally advance the world clock when hours/days pass, update weather, or set/decrement a dramatic countdown (e.g. days until outbreak/ritual).',
+          description: 'Advance the realistic HH:MM world clock based on how long the player’s action actually took (e.g. 5-15 min for dialogue, 30-180 min for travel/shopping/training), optionally update weather, or set/decrement a countdown.',
           properties: {
-            periods: { type: 'integer', description: 'Number of day periods passed (0-4: morning/afternoon/evening/night).' },
+            minutes: {
+              type: 'integer',
+              description: 'Realistic elapsed minutes for this turn (e.g. 5, 10, 15, 30, 60, 120).',
+            },
+            periods: { type: 'integer', description: 'Optional legacy multi-hour jump (each period = 3 hours).' },
             weather: { type: 'string' },
+            weatherType: {
+              type: 'string',
+              enum: ['clear', 'cloudy', 'rain', 'storm', 'fog', 'heatwave', 'snow', 'ash'],
+              description: 'Structured weather state when the weather shifts naturally.',
+            },
             countdownDelta: { type: 'integer' },
             setCountdown: {
               type: 'object',
@@ -1137,6 +1146,7 @@ export interface VisualAssetParams {
   characterName?: string;
   characterOccupation?: string;
   characterTraits?: string[];
+  equippedItems?: string[];
 }
 
 export async function generateVisualAsset(
@@ -1156,6 +1166,9 @@ export async function generateVisualAsset(
         `Character: ${params.characterName || 'Traveler'}, Occupation: ${params.characterOccupation || 'Adventurer'}.`,
         params.characterTraits?.length
           ? `Traits & visual cues: ${params.characterTraits.join(', ')}.`
+          : '',
+        params.equippedItems?.length
+          ? `Visibly wearing/carrying equipped gear: ${params.equippedItems.join(', ')}.`
           : '',
         `World: ${params.worldTitle}${params.era ? ` (${params.era})` : ''}.`,
         creativeCue,

@@ -1439,6 +1439,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   livingWorldSeconds: 60,
   diceAnimations: true,
   autoIllustrateScenes: false,
+  weatherEffectsEnabled: true,
   ambientSoundEnabled: false,
   ambientVolume: 0.35,
   geminiApiKey: '',

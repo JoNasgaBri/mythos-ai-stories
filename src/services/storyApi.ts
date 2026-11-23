@@ -273,7 +273,9 @@ export async function requestSceneIllustration(
 
 export async function requestPortraitIllustration(
   world: Pick<WorldConfig, 'title' | 'primaryTheme' | 'era' | 'creativePrompt'>,
-  player: Pick<PlayerState, 'name' | 'occupation' | 'traits'>,
+  player: Pick<PlayerState, 'name' | 'occupation' | 'traits'> & {
+    equippedItems?: string[];
+  },
   settings: AppSettings,
   health: ApiHealthStatus,
 ): Promise<IllustrationResponse> {
@@ -289,6 +291,7 @@ export async function requestPortraitIllustration(
         characterName: player.name,
         characterOccupation: player.occupation,
         characterTraits: player.traits,
+        equippedItems: player.equippedItems,
       },
       settings,
     );
@@ -438,7 +441,8 @@ export function applyStateChanges(
           quantity: qty,
           note: item.note,
           rarity: item.rarity ?? 'common',
-          equipSlot: item.equipSlot ?? inferEquipSlotFromCategory(category),
+          equipSlot:
+            item.equipSlot ?? inferEquipSlotFromCategory(category, item.name),
           equipped: false,
           bonuses: item.bonuses,
         });

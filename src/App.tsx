@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
+import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
+import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
 import { SanctuaryHome } from './components/SanctuaryHome';
 import { SaveSlotsDrawer } from './components/SaveSlotsDrawer';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { StoryStage } from './components/StoryStage';
 import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
+import { WeatherAtmosphere } from './components/WeatherAtmosphere';
 import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
 import { createInstantDemoCampaign } from './data/presets';
@@ -17,19 +21,20 @@ import {
   resolveFateCheck,
 } from './engine/diceEngine';
 import {
+  advanceClockByMinutes,
   advanceClockToNextMorning,
-  advanceWorldClock,
   ATTRIBUTE_META,
   computeMaxVigor,
   DEFAULT_ATTRIBUTES,
   defaultCurrencyForTheme,
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
+  formatClockTime,
   getEffectiveAttributes,
   getEquippedGearBonuses,
   MAX_PARTY_SIZE,
+  MAX_SHORT_RESTS_PER_DAY,
   STRONGHOLD_UPGRADE_CATALOG,
-  WORLD_PERIOD_META,
   xpRequiredForLevel,
 } from './engine/rpgSystem';
 import {
@@ -80,6 +85,7 @@ import type {
   StoryEntry,
   TacticalAction,
   ToastMessage,
+  WorldClock,
   WorldConfig,
   WorldThemeId,
 } from './types/game';
@@ -137,6 +143,10 @@ export function App() {
   const [speakingEntryId, setSpeakingEntryId] = useState<string | null>(null);
   const [loadingSpeechEntryId, setLoadingSpeechEntryId] = useState<string | null>(null);
   const [worldMapOpen, setWorldMapOpen] = useState(false);
+  const [clockOpen, setClockOpen] = useState(false);
+  const [restModalOpen, setRestModalOpen] = useState(false);
+  const [charInventoryOpen, setCharInventoryOpen] = useState(false);
+  const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
   const [undoStack, setUndoStack] = useState<Campaign[]>([]);
   const [lastTurnMeta, setLastTurnMeta] = useState<{
     preTurnSnapshot: Campaign;
@@ -233,15 +243,26 @@ export function App() {
     settings.readerFontSize,
   ]);
 
+  const activeWeather =
+    view === 'stage' && activeCampaign?.worldClock?.weatherType
+      ? activeCampaign.worldClock.weatherType
+      : 'cloudy';
+
   useEffect(() => {
     if (settings.ambientSoundEnabled) {
       ambientAudio.start(effectiveTheme, settings.ambientVolume);
       ambientAudio.setTheme(effectiveTheme);
+      ambientAudio.setWeather(activeWeather);
       ambientAudio.setVolume(settings.ambientVolume);
     } else {
       ambientAudio.stop();
     }
-  }, [effectiveTheme, settings.ambientSoundEnabled, settings.ambientVolume]);
+  }, [
+    activeWeather,
+    effectiveTheme,
+    settings.ambientSoundEnabled,
+    settings.ambientVolume,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -501,9 +522,17 @@ export function App() {
 
     setIsGeneratingPortrait(true);
     try {
+      const equippedItems = camp.player.inventory
+        .filter((i) => i.equipped)
+        .map((i) => i.name);
       const res = await requestPortraitIllustration(
         camp.world,
-        camp.player,
+        {
+          name: camp.player.name,
+          occupation: camp.player.occupation,
+          traits: camp.player.traits,
+          equippedItems,
+        },
         settings,
         apiHealth,
       );
@@ -884,6 +913,7 @@ export function App() {
           forcedAttribute: targetAttr,
           rollMode: partyHelper ? 'advantage' : 'normal',
           advantageSource: partyHelper?.name,
+          weatherType: baseCamp.worldClock?.weatherType,
         },
       );
     }
@@ -975,31 +1005,58 @@ export function App() {
 
       const extraDeltas: StateDelta[] = [];
 
-      // Advance Living World Clock
+      // Advance Living World Clock respecting the player's chosen advanceMode
       let nextClock =
         optimisticCampaign.worldClock ??
         defaultWorldClockForTheme(
           optimisticCampaign.world.primaryTheme,
           optimisticCampaign.language,
         );
-      if (response.stateChanges?.advanceTime) {
-        const at = response.stateChanges.advanceTime;
-        nextClock = advanceWorldClock(
-          nextClock,
-          at.periods ?? 0,
-          at.weather,
-          at.countdownDelta,
-          at.setCountdown,
-        );
-        if ((at.periods ?? 0) > 0 || at.setCountdown) {
+      const advanceMode = nextClock.advanceMode ?? 'ai_auto';
+      const at = response.stateChanges?.advanceTime;
+      const prevWeather = nextClock.weatherType;
+
+      let minutesElapsed = 0;
+      if (advanceMode === 'fixed_step') {
+        minutesElapsed = nextClock.fixedStepMinutes ?? 15;
+      } else if (advanceMode === 'ai_auto') {
+        if (typeof at?.minutes === 'number' && at.minutes >= 0) {
+          minutesElapsed = Math.min(720, Math.round(at.minutes));
+        } else if (typeof at?.periods === 'number' && at.periods > 0) {
+          minutesElapsed = Math.min(720, Math.round(at.periods) * 180);
+        } else {
+          minutesElapsed = 10; // realistic short beat by default (no abrupt period jumps!)
+        }
+      }
+
+      if (
+        minutesElapsed > 0 ||
+        at?.weather ||
+        at?.weatherType ||
+        at?.setCountdown ||
+        typeof at?.countdownDelta === 'number'
+      ) {
+        nextClock = advanceClockByMinutes(nextClock, minutesElapsed, {
+          weather: at?.weather,
+          weatherType: at?.weatherType,
+          countdownDelta: at?.countdownDelta,
+          setCountdown: at?.setCountdown,
+          lang: optimisticCampaign.language,
+        });
+        if (minutesElapsed >= 60 || at?.setCountdown) {
           extraDeltas.push({
             kind: 'time',
-            label: `Dia ${nextClock.day} · ${WORLD_PERIOD_META[nextClock.period].label[optimisticCampaign.language]}`,
+            label: `Dia ${nextClock.day} · ${formatClockTime(nextClock.hour, nextClock.minute)}`,
             positive: true,
           });
         }
-      } else if (nextTurn % 3 === 0) {
-        nextClock = advanceWorldClock(nextClock, 1);
+        if (nextClock.weatherType && nextClock.weatherType !== prevWeather) {
+          extraDeltas.push({
+            kind: 'time',
+            label: `Clima: ${nextClock.weather}`,
+            positive: true,
+          });
+        }
       }
 
       // Stronghold narrative upgrade
@@ -1787,45 +1844,148 @@ export function App() {
     pushToast('base', `Construído no Refúgio: ${builtUpgrade.name}`);
   };
 
-  const handleLongRest = async () => {
+  const handleUpdateClock = (nextClock: WorldClock, toastMessage?: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    persistActiveCampaign({
+      ...camp,
+      worldClock: nextClock,
+    });
+    if (toastMessage) {
+      pushToast('time', toastMessage);
+    }
+  };
+
+  const handleConsumeItemNow = (itemId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const target = camp.player.inventory.find((i) => i.id === itemId);
+    if (!target || target.category !== 'consumable') return;
+
+    const { nextPlayer } = applyStateChanges(camp.player, {
+      removeItems: [target.name],
+      vigorDelta: 25,
+    });
+    const sysEntry: StoryEntry = {
+      id: `entry_use_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: `Você consumiu ${target.name} (+25 Vigor).`,
+      timestamp: Date.now(),
+    };
+    persistActiveCampaign({
+      ...camp,
+      player: nextPlayer,
+      status: evaluateStatus(nextPlayer.vigor, nextPlayer.tension),
+      entries: [...camp.entries, sysEntry],
+    });
+    pushToast('vigor', `${target.name} usado · +25 Vigor`);
+  };
+
+  const handleConfirmRest = async (payload: RestChoicePayload) => {
     const camp = activeCampaignRef.current;
     if (!camp || isBusy || camp.status !== 'active') return;
 
     const currentClock =
       camp.worldClock ??
       defaultWorldClockForTheme(camp.world.primaryTheme, camp.language);
-    const nextClock = advanceClockToNextMorning(currentClock);
+
+    const isShort = payload.kind === 'short';
+    if (isShort && (currentClock.shortRestsUsedToday ?? 0) >= MAX_SHORT_RESTS_PER_DAY) {
+      pushToast('error', 'Você já usou seus 2 Descansos Curtos de hoje.');
+      return;
+    }
 
     const hasMedbay = Boolean(
       camp.stronghold?.upgrades.some((u) => u.id === 'medbay'),
     );
-    const vigorGain = hasMedbay ? 65 : 40;
-    const nextVigor = Math.min(camp.player.maxVigor, camp.player.vigor + vigorGain);
-    const nextTension = Math.max(0, camp.player.tension - 15);
 
-    const partyNames = camp.codex.npcs
-      .filter((n) => n.inParty && n.status === 'alive')
-      .map((n) => n.name);
+    const nextClock: WorldClock = isShort
+      ? {
+          ...advanceClockByMinutes(currentClock, 90, { lang: camp.language }),
+          shortRestsUsedToday: Math.min(
+            MAX_SHORT_RESTS_PER_DAY,
+            (currentClock.shortRestsUsedToday ?? 0) + 1,
+          ),
+        }
+      : advanceClockToNextMorning(currentClock);
+
+    const vigorGain = isShort ? 20 : hasMedbay ? 80 : 55;
+    const tensionDrop = isShort ? 8 : 20;
+    const nextVigor = Math.min(camp.player.maxVigor, camp.player.vigor + vigorGain);
+    const nextTension = Math.max(0, camp.player.tension - tensionDrop);
+    const actualVigorGain = nextVigor - camp.player.vigor;
+
+    // Optional guaranteed skill training progress if focus === 'train'
+    let nextPlayer = {
+      ...camp.player,
+      vigor: nextVigor,
+      tension: nextTension,
+    };
+    if (payload.focus === 'train' && payload.skillName?.trim()) {
+      const trained = applyStateChanges(
+        nextPlayer,
+        {
+          skillTraining: [
+            {
+              name: payload.skillName.trim(),
+              xpGain: isShort ? 25 : 45,
+            },
+          ],
+        },
+        camp.turnCount,
+        {
+          hasTrainingStation: Boolean(
+            camp.stronghold?.upgrades.some((u) => u.id === 'training'),
+          ),
+        },
+      );
+      nextPlayer = trained.nextPlayer;
+    }
 
     const restedCamp: Campaign = {
       ...camp,
       worldClock: nextClock,
-      player: {
-        ...camp.player,
-        vigor: nextVigor,
-        tension: nextTension,
-      },
+      player: nextPlayer,
     };
 
+    const timeLabel = `Dia ${nextClock.day} · ${formatClockTime(nextClock.hour, nextClock.minute)}`;
     pushToast(
       'time',
-      `Descanso Longo · Dia ${nextClock.day} (Manhã) · +${nextVigor - camp.player.vigor} Vigor`,
+      `${isShort ? 'Descanso Curto' : 'Descanso Longo'} (${timeLabel}) · +${actualVigorGain} Vigor`,
     );
 
-    const visibleRestAction =
-      partyNames.length > 0
-        ? `Montar acampamento / descansar no refúgio com ${partyNames.join(', ')} até o amanhecer do Dia ${nextClock.day}`
-        : `Descansar no refúgio até o amanhecer do Dia ${nextClock.day}`;
+    if (!payload.narrateScene) {
+      const sysEntry: StoryEntry = {
+        id: `entry_rest_silent_${Date.now()}`,
+        role: 'system',
+        turn: camp.turnCount,
+        text: `${isShort ? 'Descanso Curto' : 'Descanso Longo'} em ${camp.currentLocation} → ${timeLabel} (+${actualVigorGain} Vigor).`,
+        timestamp: Date.now(),
+      };
+      persistActiveCampaign({
+        ...restedCamp,
+        entries: [...restedCamp.entries, sysEntry],
+      });
+      return;
+    }
+
+    const focusActionMap = {
+      quiet: isShort
+        ? `Fazer uma breve pausa para recuperar o fôlego em ${camp.currentLocation}`
+        : `Descansar até o amanhecer do Dia ${nextClock.day} em ${camp.currentLocation}`,
+      companion: payload.companionName
+        ? `Aproveitar a pausa para conversar com ${payload.companionName}`
+        : `Aproveitar a pausa para conversar com o grupo`,
+      train: payload.skillName
+        ? `Usar a pausa para treinar ${payload.skillName}`
+        : `Usar a pausa para treinar minhas habilidades`,
+      refuge: `Usar a pausa para organizar suprimentos e verificar a segurança em ${camp.currentLocation}`,
+    };
+
+    const visibleRestAction = payload.customNote
+      ? `${focusActionMap[payload.focus]}: ${payload.customNote}`
+      : focusActionMap[payload.focus];
 
     await executeStoryTurn(
       restedCamp,
@@ -1836,14 +1996,14 @@ export function App() {
       false,
       'wis',
       {
-        extraPromptNote: `[CENA DE ACAMPAMENTO / DESCANSO LONGO: O protagonista descansou até a manhã do Dia ${nextClock.day} em ${camp.stronghold?.name || camp.currentLocation} (Defesa ${camp.stronghold?.defense ?? 20}). Narre um momento tranquilo e marcante de pausa: ${
-          partyNames.length > 0
-            ? `uma conversa íntima, conselho ou vínculo com ${partyNames.join(', ')}`
-            : 'um sonho, reflexão, notícia matinal ou preparação silenciosa'
+        extraPromptNote: `[PAUSA / ${isShort ? 'DESCANSO CURTO (+1h30)' : 'DESCANSO LONGO (ATÉ 07:30 DO DIA SEGUINTE)'}: Mantenha total coerência com o local atual (${camp.currentLocation}), o gênero da história e o horário (${timeLabel}, clima ${nextClock.weather}). NÃO invente acampamento medieval se a história for urbana/moderna! Foco escolhido pelo jogador: ${payload.focus}${
+          payload.companionName ? ` com ${payload.companionName}` : ''
+        }${payload.skillName ? ` treinando ${payload.skillName}` : ''}${
+          payload.customNote ? `. Nota do jogador: ${payload.customNote}` : ''
         }${
           nextClock.countdown
-            ? `. Lembre sutilmente que restam ${nextClock.countdown.daysLeft} dias para: ${nextClock.countdown.label}.`
-            : '.'
+            ? `. Contagem regressiva ativa: ${nextClock.countdown.daysLeft}d para ${nextClock.countdown.label}.`
+            : ''
         }]`,
       },
     );
@@ -1983,6 +2143,13 @@ export function App() {
     <div className="relative min-h-screen">
       <div className="mythos-ambient" />
       <div className="mythos-grain" />
+      {view === 'stage' && activeCampaign ? (
+        <WeatherAtmosphere
+          weatherType={activeCampaign.worldClock?.weatherType}
+          period={activeCampaign.worldClock?.period}
+          enabled={settings.weatherEffectsEnabled}
+        />
+      ) : null}
 
       <TopBar
         view={view}
@@ -2000,7 +2167,9 @@ export function App() {
         }}
         onOpenSaves={() => setSavesOpen(true)}
         onOpenMap={() => setWorldMapOpen(true)}
-        onLongRest={() => void handleLongRest()}
+        onOpenClock={() => setClockOpen(true)}
+        onOpenCharacterInventory={() => setCharInventoryOpen(true)}
+        onLongRest={() => setRestModalOpen(true)}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
         }
@@ -2082,6 +2251,9 @@ export function App() {
           onGenerateNpcPortrait={(npcId) => void handleGenerateNpcPortrait(npcId)}
           onBuildStrongholdUpgrade={handleBuildStrongholdUpgrade}
           onOpenWorldMap={() => setWorldMapOpen(true)}
+          onOpenCharacterInventory={() => setCharInventoryOpen(true)}
+          queuedUseItem={queuedUseItem}
+          onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
           onSendAction={handleSendAction}
           onTypingActivity={handleTypingActivity}
           onSummarizeNow={() =>
@@ -2121,12 +2293,46 @@ export function App() {
       />
 
       {activeCampaign ? (
-        <WorldMapModal
-          open={worldMapOpen}
-          campaign={activeCampaign}
-          onClose={() => setWorldMapOpen(false)}
-          onTravelLocation={handleTravelFromMap}
-        />
+        <>
+          <WorldMapModal
+            open={worldMapOpen}
+            campaign={activeCampaign}
+            onClose={() => setWorldMapOpen(false)}
+            onTravelLocation={handleTravelFromMap}
+          />
+          <ClockWeatherPopover
+            open={clockOpen}
+            clock={
+              activeCampaign.worldClock ??
+              defaultWorldClockForTheme(
+                activeCampaign.world.primaryTheme,
+                activeCampaign.language,
+              )
+            }
+            language={settings.language}
+            onClose={() => setClockOpen(false)}
+            onUpdateClock={handleUpdateClock}
+          />
+          <RestCampModal
+            open={restModalOpen}
+            campaign={activeCampaign}
+            isBusy={isBusy}
+            onClose={() => setRestModalOpen(false)}
+            onConfirmRest={(payload) => void handleConfirmRest(payload)}
+          />
+          <CharacterInventoryModal
+            open={charInventoryOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            isGeneratingPortrait={isGeneratingPortrait}
+            onClose={() => setCharInventoryOpen(false)}
+            onToggleEquipItem={handleToggleEquipItem}
+            onConsumeItemNow={handleConsumeItemNow}
+            onUseItemInScene={(item) => setQueuedUseItem(item)}
+            onSpendAttributePoint={handleSpendAttributePoint}
+            onGeneratePortrait={() => void handleGeneratePortrait()}
+          />
+        </>
       ) : null}
 
       <SaveSlotsDrawer

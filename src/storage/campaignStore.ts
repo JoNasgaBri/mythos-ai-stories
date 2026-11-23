@@ -4,12 +4,15 @@ import {
   DEFAULT_ATTRIBUTES,
   defaultAffinityFromStance,
   defaultCurrencyForTheme,
+  defaultHourForPeriod,
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
+  derivePeriodFromHour,
   deriveRelationshipFromAffinity,
   getEquippedGearBonuses,
   inferEquipSlotFromCategory,
   inferNpcAssistAttribute,
+  inferWeatherTypeFromText,
   MAX_INSPIRATION,
   syncSkillLevels,
   xpRequiredForLevel,
@@ -98,7 +101,8 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     ? rawPlayer.inventory.map((item) => ({
         ...item,
         rarity: item.rarity ?? 'common',
-        equipSlot: item.equipSlot ?? inferEquipSlotFromCategory(item.category),
+        equipSlot:
+          item.equipSlot ?? inferEquipSlotFromCategory(item.category, item.name),
       }))
     : [];
   const gearBonuses = getEquippedGearBonuses(inventory);
@@ -114,6 +118,43 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
   const rawSkills = Array.isArray(rawPlayer?.skills) ? rawPlayer.skills : [];
   const skillLevels = syncSkillLevels(rawSkills, rawPlayer?.skillLevels);
   const syncedSkills = skillLevels.map((s) => s.name);
+
+  const defaultClock = defaultWorldClockForTheme(theme, language);
+  const rawClock = raw.worldClock;
+  const clockHour =
+    typeof rawClock?.hour === 'number'
+      ? Math.max(0, Math.min(23, Math.floor(rawClock.hour)))
+      : rawClock?.period
+        ? defaultHourForPeriod(rawClock.period)
+        : defaultClock.hour ?? 8;
+  const clockMinute =
+    typeof rawClock?.minute === 'number'
+      ? Math.max(0, Math.min(59, Math.floor(rawClock.minute)))
+      : defaultClock.minute ?? 30;
+  const normalizedClock = {
+    ...defaultClock,
+    ...(rawClock ?? {}),
+    day: typeof rawClock?.day === 'number' && rawClock.day >= 1 ? Math.round(rawClock.day) : 1,
+    hour: clockHour,
+    minute: clockMinute,
+    period: derivePeriodFromHour(clockHour),
+    weatherType:
+      rawClock?.weatherType ??
+      inferWeatherTypeFromText(
+        rawClock?.weather || defaultClock.weather,
+        defaultClock.weatherType ?? 'cloudy',
+      ),
+    weather: rawClock?.weather || defaultClock.weather,
+    advanceMode: rawClock?.advanceMode ?? 'ai_auto',
+    fixedStepMinutes:
+      typeof rawClock?.fixedStepMinutes === 'number' && rawClock.fixedStepMinutes > 0
+        ? rawClock.fixedStepMinutes
+        : 15,
+    shortRestsUsedToday:
+      typeof rawClock?.shortRestsUsedToday === 'number'
+        ? Math.max(0, Math.min(2, Math.round(rawClock.shortRestsUsedToday)))
+        : 0,
+  };
 
   return {
     ...(raw as Campaign),
@@ -182,7 +223,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     status: raw.status ?? 'active',
     arcNumber: typeof raw.arcNumber === 'number' && raw.arcNumber >= 1 ? raw.arcNumber : 1,
     eraSummaries: Array.isArray(raw.eraSummaries) ? raw.eraSummaries : [],
-    worldClock: raw.worldClock ?? defaultWorldClockForTheme(theme, language),
+    worldClock: normalizedClock,
     stronghold:
       raw.stronghold ??
       defaultStrongholdForTheme(

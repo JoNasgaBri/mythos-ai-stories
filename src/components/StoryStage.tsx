@@ -72,6 +72,8 @@ interface StoryStageProps {
   canRerollLastTurn?: boolean;
   restoredDraft?: { id: number; text: string } | null;
   onConsumeRestoredDraft?: () => void;
+  queuedUseItem?: InventoryItem | null;
+  onConsumeQueuedUseItem?: () => void;
   onUndoTurn?: () => void;
   onRegenerateTurn?: () => void;
   onRerollLastTurn?: () => void;
@@ -80,6 +82,7 @@ interface StoryStageProps {
   onGenerateNpcPortrait?: (npcId: string) => void;
   onBuildStrongholdUpgrade?: (upgradeId: string) => void;
   onOpenWorldMap?: () => void;
+  onOpenCharacterInventory?: () => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -134,6 +137,8 @@ export function StoryStage({
   canRerollLastTurn,
   restoredDraft,
   onConsumeRestoredDraft,
+  queuedUseItem,
+  onConsumeQueuedUseItem,
   onUndoTurn,
   onRegenerateTurn,
   onRerollLastTurn,
@@ -142,6 +147,7 @@ export function StoryStage({
   onGenerateNpcPortrait,
   onBuildStrongholdUpgrade,
   onOpenWorldMap,
+  onOpenCharacterInventory,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -192,6 +198,13 @@ export function StoryStage({
     onConsumeRestoredDraft?.();
     textareaRef.current?.focus();
   }, [onConsumeRestoredDraft, restoredDraft]);
+
+  useEffect(() => {
+    if (!queuedUseItem) return;
+    setSelectedItem(queuedUseItem);
+    onConsumeQueuedUseItem?.();
+    textareaRef.current?.focus();
+  }, [onConsumeQueuedUseItem, queuedUseItem]);
 
   const isEnded =
     campaign.status === 'ended_fallen' || campaign.status === 'ended_victory';
@@ -1164,6 +1177,7 @@ export function StoryStage({
             onGenerateNpcPortrait={onGenerateNpcPortrait}
             onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
             onOpenWorldMap={onOpenWorldMap}
+            onOpenCharacterInventory={onOpenCharacterInventory}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
@@ -1225,6 +1239,10 @@ export function StoryStage({
                 onOpenWorldMap={() => {
                   setMobileHudOpen(false);
                   onOpenWorldMap?.();
+                }}
+                onOpenCharacterInventory={() => {
+                  setMobileHudOpen(false);
+                  onOpenCharacterInventory?.();
                 }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}

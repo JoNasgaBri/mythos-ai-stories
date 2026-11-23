@@ -41,6 +41,7 @@ import {
 import { useState } from 'react';
 import { DIFFICULTIES, STORY_PACE_OPTIONS, UI_COPY } from '../data/presets';
 import {
+  ALL_EQUIP_SLOTS,
   ATTRIBUTE_KEYS,
   ATTRIBUTE_META,
   EQUIP_SLOT_LABEL,
@@ -84,6 +85,7 @@ interface ContextHudProps {
   onGenerateNpcPortrait?: (npcId: string) => void;
   onBuildStrongholdUpgrade?: (upgradeId: string) => void;
   onOpenWorldMap?: () => void;
+  onOpenCharacterInventory?: () => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
@@ -146,6 +148,7 @@ export function ContextHud({
   onGenerateNpcPortrait,
   onBuildStrongholdUpgrade,
   onOpenWorldMap,
+  onOpenCharacterInventory,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
@@ -686,19 +689,32 @@ export function ContextHud({
               </span>
             </div>
 
-            {/* Equipped Slots Strip */}
+            {/* Equipped 6-Slot Visual Summary + Full BG3 Modal Trigger */}
+            {onOpenCharacterInventory ? (
+              <button
+                type="button"
+                onClick={onOpenCharacterInventory}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--accent)]/60 bg-[var(--accent-soft)] py-2 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)] hover:text-[#111]"
+              >
+                <Shield className="h-3.5 w-3.5" />
+                <span>Abrir Personagem & Inventário Visual (BG3)</span>
+              </button>
+            ) : null}
+
             <div className="grid grid-cols-3 gap-1.5">
-              {(['weapon', 'armor', 'accessory'] as EquipSlot[]).map((slot) => {
+              {ALL_EQUIP_SLOTS.map((slot: EquipSlot) => {
                 const eq = player.inventory.find(
                   (i) => i.equipped && i.equipSlot === slot,
                 );
                 return (
-                  <div
+                  <button
                     key={slot}
-                    className={`rounded-xl border p-2 text-center ${
+                    type="button"
+                    onClick={() => onOpenCharacterInventory?.()}
+                    className={`rounded-xl border p-2 text-center transition ${
                       eq
-                        ? 'border-[var(--accent)]/50 bg-[var(--bg-elevated)]'
-                        : 'border-dashed border-[var(--border-subtle)] bg-[var(--bg-canvas)]/40'
+                        ? 'border-[var(--accent)]/50 bg-[var(--bg-elevated)] hover:border-[var(--accent)]'
+                        : 'border-dashed border-[var(--border-subtle)] bg-[var(--bg-canvas)]/40 hover:border-[var(--border-strong)]'
                     }`}
                   >
                     <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -707,7 +723,7 @@ export function ContextHud({
                     <div className="mt-0.5 truncate text-[10px] font-medium text-[var(--text-primary)]">
                       {eq ? eq.name : 'Vazio'}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

@@ -1,4 +1,4 @@
-import { getAttributeModifier } from './rpgSystem';
+import { getAttributeModifier, getWeatherRollModifier } from './rpgSystem';
 import type {
   ActionIntent,
   ActionRisk,
@@ -14,6 +14,7 @@ import type {
   RollMode,
   SkillProgress,
   TacticalAction,
+  WeatherType,
 } from '../types/game';
 
 export function findPartyAdvantage(
@@ -491,6 +492,7 @@ export function resolveFateCheck(
     rollMode?: RollMode;
     advantageSource?: string;
     rerolledWithInspiration?: boolean;
+    weatherType?: WeatherType;
   },
 ): DiceRollResult | undefined {
   if (requiresRoll === false) {
@@ -526,7 +528,18 @@ export function resolveFateCheck(
     rpgContext?.skillLevels,
   );
   const skillLevelBonus = skillMatch ? Math.max(1, skillMatch.level) : 0;
-  const bonus = attributeMod + skillLevelBonus;
+  const weatherMod = getWeatherRollModifier(
+    rpgContext?.weatherType,
+    attribute,
+    intent,
+  );
+  const bonus = attributeMod + skillLevelBonus + weatherMod.mod;
+  const bonusSourceParts = [
+    skillMatch?.name,
+    weatherMod.mod !== 0 && weatherMod.label
+      ? `${weatherMod.label} ${weatherMod.mod > 0 ? `+${weatherMod.mod}` : weatherMod.mod}`
+      : undefined,
+  ].filter(Boolean);
 
   const rollMode: RollMode = rpgContext?.rollMode ?? 'normal';
   const r1 = Math.floor(Math.random() * 20) + 1;
@@ -560,10 +573,10 @@ export function resolveFateCheck(
     advantageSource: rpgContext?.advantageSource,
     rerolledWithInspiration: rpgContext?.rerolledWithInspiration,
     bonus,
-    bonusSource: skillMatch?.name,
+    bonusSource: bonusSourceParts.length > 0 ? bonusSourceParts.join(' · ') : undefined,
     attribute,
     attributeMod,
-    skillLevelBonus,
+    skillLevelBonus: skillLevelBonus + weatherMod.mod,
     total,
     dc,
     outcome,

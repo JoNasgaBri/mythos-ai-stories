@@ -1,4 +1,5 @@
 import type {
+  ActionIntent,
   AttributeId,
   CharacterAttributes,
   EquipSlot,
@@ -13,6 +14,8 @@ import type {
   RelationshipTier,
   SkillProgress,
   StrongholdState,
+  TimeAdvanceMode,
+  WeatherType,
   WorldClock,
   WorldPeriod,
   WorldThemeId,
@@ -20,6 +23,7 @@ import type {
 
 export const MAX_INSPIRATION = 4;
 export const MAX_PARTY_SIZE = 3;
+export const MAX_SHORT_RESTS_PER_DAY = 2;
 
 export const ATTRIBUTE_KEYS: AttributeId[] = [
   'str',
@@ -305,11 +309,44 @@ export function getPresetAttributesForArchetype(
 
 export function inferEquipSlotFromCategory(
   category: InventoryItem['category'],
+  name = '',
 ): EquipSlot | undefined {
+  const n = name.toLowerCase();
+  if (/(capacete|elmo|[oó]culos|visor|m[aá]scara|chap[eé]u|capuz|helm|goggles|mask|hat)/i.test(n)) {
+    return 'head';
+  }
+  if (/(armadura|colete|jaqueta|casaco|manto|traje|cota|armor|vest|jacket|cloak|coat)/i.test(n)) {
+    return 'armor';
+  }
+  if (/(escudo|lanterna|adaga|faca|r[aá]dio|cyberdeck|smartphone|celular|shield|torch|dagger|radio|phone)/i.test(n)) {
+    return 'offhand';
+  }
+  if (/(mochila|bolsa|cinto|kit|pack|bag|belt|medkit)/i.test(n)) {
+    return 'utility';
+  }
   if (category === 'weapon') return 'weapon';
   if (category === 'relic') return 'accessory';
+  if (category === 'tool') return 'utility';
   return undefined;
 }
+
+export const ALL_EQUIP_SLOTS: EquipSlot[] = [
+  'weapon',
+  'offhand',
+  'head',
+  'armor',
+  'accessory',
+  'utility',
+];
+
+export const EQUIP_SLOT_LABEL: Record<EquipSlot, string> = {
+  weapon: 'Arma Principal',
+  offhand: 'Secundária',
+  head: 'Cabeça',
+  armor: 'Traje / Armadura',
+  accessory: 'Acessório',
+  utility: 'Utilidade',
+};
 
 export const RARITY_META: Record<
   ItemRarity,
@@ -320,12 +357,6 @@ export const RARITY_META: Record<
   rare: { label: 'Raro', color: '#60a5fa', bg: 'rgba(96, 165, 250, 0.14)' },
   epic: { label: 'Épico', color: '#c084fc', bg: 'rgba(192, 132, 252, 0.14)' },
   legendary: { label: 'Lendário', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.16)' },
-};
-
-export const EQUIP_SLOT_LABEL: Record<EquipSlot, string> = {
-  weapon: 'Arma',
-  armor: 'Traje',
-  accessory: 'Acessório',
 };
 
 export const RELATIONSHIP_META: Record<
@@ -392,21 +423,268 @@ export const WORLD_PERIOD_META: Record<
   },
 };
 
+export const WEATHER_KEYS: WeatherType[] = [
+  'clear',
+  'cloudy',
+  'rain',
+  'storm',
+  'fog',
+  'heatwave',
+  'snow',
+  'ash',
+];
+
+export const WEATHER_META: Record<
+  WeatherType,
+  {
+    label: Record<LanguageId, string>;
+    color: string;
+    effectHint: Record<LanguageId, string>;
+  }
+> = {
+  clear: {
+    label: { 'pt-BR': 'Céu Limpo', en: 'Clear Sky', fr: 'Ciel Clair' },
+    color: '#fbbf24',
+    effectHint: {
+      'pt-BR': 'Boa visibilidade (+1 Percepção/SAB ao ar livre).',
+      en: 'Clear visibility (+1 Perception/WIS outdoors).',
+      fr: 'Bonne visibilité (+1 Perception).',
+    },
+  },
+  cloudy: {
+    label: { 'pt-BR': 'Nublado', en: 'Overcast', fr: 'Couvert' },
+    color: '#94a3b8',
+    effectHint: {
+      'pt-BR': 'Clima estável, sem penalidades.',
+      en: 'Steady weather, no penalties.',
+      fr: 'Temps stable, aucun malus.',
+    },
+  },
+  rain: {
+    label: { 'pt-BR': 'Chuva', en: 'Rain', fr: 'Pluie' },
+    color: '#38bdf8',
+    effectHint: {
+      'pt-BR': 'Abafa passos (+1 Furtividade/DES), pistas na lama.',
+      en: 'Masks footsteps (+1 Stealth/DEX), muddy tracks.',
+      fr: 'Masque les pas (+1 Discrétion/DEX).',
+    },
+  },
+  storm: {
+    label: { 'pt-BR': 'Tempestade', en: 'Storm', fr: 'Tempête' },
+    color: '#818cf8',
+    effectHint: {
+      'pt-BR': 'Trovões e ventania (+1 Furtividade, -1 ataques/viagem exposta).',
+      en: 'Thunder & gales (+1 Stealth, -1 exposed checks).',
+      fr: 'Orage intense (+1 Discrétion, -1 actions exposées).',
+    },
+  },
+  fog: {
+    label: { 'pt-BR': 'Neblina Densa', en: 'Dense Fog', fr: 'Brouillard' },
+    color: '#cbd5e1',
+    effectHint: {
+      'pt-BR': 'Cobertura visual (+2 Furtividade, -1 Percepção à distância).',
+      en: 'Heavy cover (+2 Stealth, -1 distant spotting).',
+      fr: 'Forte couverture (+2 Discrétion).',
+    },
+  },
+  heatwave: {
+    label: { 'pt-BR': 'Calor Extremo', en: 'Heatwave', fr: 'Canicule' },
+    color: '#fb923c',
+    effectHint: {
+      'pt-BR': 'Sol intenso (-1 testes físicos longos sem água/CON).',
+      en: 'Scorching heat (-1 strenuous CON checks without water).',
+      fr: 'Chaleur accablante (-1 endurance).',
+    },
+  },
+  snow: {
+    label: { 'pt-BR': 'Neve / Frio', en: 'Snow / Frost', fr: 'Neige / Froid' },
+    color: '#bae6fd',
+    effectHint: {
+      'pt-BR': 'Pegadas visíveis (+1 Rastreamento/SAB, exige abrigo).',
+      en: 'Fresh tracks (+1 Tracking/WIS, shelter matters).',
+      fr: 'Traces fraîches (+1 Pistage/SAG).',
+    },
+  },
+  ash: {
+    label: { 'pt-BR': 'Cinzas & Poeira', en: 'Ash & Dust', fr: 'Cendres' },
+    color: '#a8a29e',
+    effectHint: {
+      'pt-BR': 'Ar denso (+1 Furtividade, -1 CON sem máscara).',
+      en: 'Choking air (+1 Stealth, -1 CON without mask).',
+      fr: 'Air lourd (+1 Discrétion, -1 CON).',
+    },
+  },
+};
+
+export const TIME_ADVANCE_MODE_META: Record<
+  TimeAdvanceMode,
+  { label: string; desc: string }
+> = {
+  ai_auto: {
+    label: 'Automático (IA)',
+    desc: 'A IA estima quantos minutos ou horas passaram em cada ação.',
+  },
+  fixed_step: {
+    label: 'Passo Fixo',
+    desc: 'Cada turno avança exatamente o intervalo que você escolher.',
+  },
+  manual: {
+    label: 'Manual',
+    desc: 'O relógio só anda quando você avançar aqui ou descansar.',
+  },
+};
+
+export function derivePeriodFromHour(hour: number): WorldPeriod {
+  const h = ((Math.floor(hour) % 24) + 24) % 24;
+  if (h >= 6 && h < 12) return 'morning';
+  if (h >= 12 && h < 18) return 'afternoon';
+  if (h >= 18 && h < 21) return 'evening';
+  return 'night';
+}
+
+export function defaultHourForPeriod(period: WorldPeriod): number {
+  switch (period) {
+    case 'morning':
+      return 8;
+    case 'afternoon':
+      return 14;
+    case 'evening':
+      return 19;
+    case 'night':
+      return 22;
+  }
+}
+
+export function formatClockTime(hour = 8, minute = 0): string {
+  const h = String(((Math.floor(hour) % 24) + 24) % 24).padStart(2, '0');
+  const m = String(((Math.floor(minute) % 60) + 60) % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+export function inferWeatherTypeFromText(
+  text: string,
+  fallback: WeatherType = 'cloudy',
+): WeatherType {
+  const t = text.toLowerCase();
+  if (/(tempestad|trov|raio|furac|storm|thunder|lightning)/i.test(t)) return 'storm';
+  if (/(chuv|garoa|garua|rain|drizzle|downpour)/i.test(t)) return 'rain';
+  if (/(neblin|n[eé]voa|brum|fog|mist)/i.test(t)) return 'fog';
+  if (/(neve|geada|frio|nev|snow|frost|blizzard)/i.test(t)) return 'snow';
+  if (/(calor|sol\s+escald|abafad|seca|heat|scorch|humid)/i.test(t)) return 'heatwave';
+  if (/(cinz|poeir|fuma[cç]|t[oó]xic|ash|dust|smog)/i.test(t)) return 'ash';
+  if (/(limp|ensolarad|estrelad|claro|clear|sunny)/i.test(t)) return 'clear';
+  if (/(nublad|cinzent|overcast|cloud)/i.test(t)) return 'cloudy';
+  return fallback;
+}
+
+export function getWeatherRollModifier(
+  weatherType: WeatherType | undefined,
+  attribute: AttributeId,
+  intent: ActionIntent,
+): { mod: number; label?: string } {
+  if (!weatherType) return { mod: 0 };
+  if (weatherType === 'fog' && intent === 'stealth') {
+    return { mod: 2, label: 'Neblina' };
+  }
+  if ((weatherType === 'rain' || weatherType === 'storm' || weatherType === 'ash') && intent === 'stealth') {
+    return { mod: 1, label: WEATHER_META[weatherType].label['pt-BR'] };
+  }
+  if (weatherType === 'clear' && attribute === 'wis' && intent === 'investigate') {
+    return { mod: 1, label: 'Céu Limpo' };
+  }
+  if (weatherType === 'snow' && attribute === 'wis' && intent === 'investigate') {
+    return { mod: 1, label: 'Pegadas na Neve' };
+  }
+  if (weatherType === 'storm' && intent === 'bold') {
+    return { mod: -1, label: 'Tempestade' };
+  }
+  if ((weatherType === 'heatwave' || weatherType === 'ash') && attribute === 'con' && intent === 'survival') {
+    return { mod: -1, label: WEATHER_META[weatherType].label['pt-BR'] };
+  }
+  return { mod: 0 };
+}
+
 export function defaultWorldClockForTheme(
   theme: WorldThemeId,
   lang: LanguageId = 'pt-BR',
 ): WorldClock {
-  const weatherByTheme: Record<WorldThemeId, Record<LanguageId, string>> = {
-    fantasy: { 'pt-BR': 'Névoa Fria', en: 'Cool Mist', fr: 'Brume Froide' },
-    cyberpunk: { 'pt-BR': 'Chuva Ácida', en: 'Acid Rain', fr: 'Pluie Acide' },
-    mystery: { 'pt-BR': 'Garua Densa', en: 'Coastal Fog', fr: 'Brouillard' },
-    zombies: { 'pt-BR': 'Céu Abafado', en: 'Humid Overcast', fr: 'Ciel Lourd' },
-    apocalyptic: { 'pt-BR': 'Vento Seco', en: 'Dry Wind', fr: 'Vent Sec' },
+  const weatherByTheme: Record<WorldThemeId, WeatherType> = {
+    fantasy: 'fog',
+    cyberpunk: 'rain',
+    mystery: 'fog',
+    zombies: 'heatwave',
+    apocalyptic: 'ash',
   };
+  const wt = weatherByTheme[theme] ?? 'clear';
   return {
     day: 1,
+    hour: 8,
+    minute: 30,
     period: 'morning',
-    weather: weatherByTheme[theme]?.[lang] ?? 'Estável',
+    weatherType: wt,
+    weather: WEATHER_META[wt].label[lang],
+    advanceMode: 'ai_auto',
+    fixedStepMinutes: 15,
+    shortRestsUsedToday: 0,
+  };
+}
+
+export function advanceClockByMinutes(
+  clock: WorldClock,
+  minutesToAdd: number,
+  options?: {
+    weatherType?: WeatherType;
+    weather?: string;
+    countdownDelta?: number;
+    setCountdown?: { label: string; daysLeft: number };
+    lang?: LanguageId;
+  },
+): WorldClock {
+  const curHour =
+    typeof clock.hour === 'number' ? clock.hour : defaultHourForPeriod(clock.period);
+  const curMin = typeof clock.minute === 'number' ? clock.minute : 0;
+  const totalMinutes = curHour * 60 + curMin + Math.max(0, Math.round(minutesToAdd));
+  const daysPassed = Math.floor(totalMinutes / (24 * 60));
+  const remMinutes = totalMinutes % (24 * 60);
+  const nextHour = Math.floor(remMinutes / 60);
+  const nextMinute = remMinutes % 60;
+  const nextPeriod = derivePeriodFromHour(nextHour);
+
+  let countdown = clock.countdown ? { ...clock.countdown } : undefined;
+  if (options?.setCountdown && options.setCountdown.label.trim()) {
+    countdown = {
+      label: options.setCountdown.label.trim(),
+      daysLeft: Math.max(0, Math.round(options.setCountdown.daysLeft)),
+    };
+  } else if (countdown) {
+    const delta =
+      typeof options?.countdownDelta === 'number'
+        ? Math.round(options.countdownDelta)
+        : -daysPassed;
+    countdown.daysLeft = Math.max(0, countdown.daysLeft + delta);
+  }
+
+  const nextWeatherType: WeatherType =
+    options?.weatherType ??
+    (options?.weather
+      ? inferWeatherTypeFromText(options.weather, clock.weatherType ?? 'cloudy')
+      : clock.weatherType ?? 'cloudy');
+  const nextWeatherLabel =
+    options?.weather?.trim() ||
+    (options?.weatherType
+      ? WEATHER_META[options.weatherType].label[options.lang ?? 'pt-BR']
+      : clock.weather);
+
+  return {
+    ...clock,
+    day: Math.max(1, clock.day + daysPassed),
+    hour: nextHour,
+    minute: nextMinute,
+    period: nextPeriod,
+    weatherType: nextWeatherType,
+    weather: nextWeatherLabel,
+    shortRestsUsedToday: daysPassed > 0 ? 0 : (clock.shortRestsUsedToday ?? 0),
+    countdown,
   };
 }
 
@@ -416,31 +694,16 @@ export function advanceWorldClock(
   weather?: string,
   countdownDelta?: number,
   setCountdown?: { label: string; daysLeft: number },
+  weatherType?: WeatherType,
+  lang: LanguageId = 'pt-BR',
 ): WorldClock {
-  const curIdx = WORLD_PERIOD_ORDER.indexOf(clock.period);
-  const safeIdx = curIdx >= 0 ? curIdx : 0;
-  const totalSteps = safeIdx + Math.max(0, Math.round(periods));
-  const daysPassed = Math.floor(totalSteps / WORLD_PERIOD_ORDER.length);
-  const nextPeriod = WORLD_PERIOD_ORDER[totalSteps % WORLD_PERIOD_ORDER.length];
-
-  let countdown = clock.countdown ? { ...clock.countdown } : undefined;
-  if (setCountdown && setCountdown.label.trim()) {
-    countdown = {
-      label: setCountdown.label.trim(),
-      daysLeft: Math.max(0, Math.round(setCountdown.daysLeft)),
-    };
-  } else if (countdown) {
-    const delta =
-      typeof countdownDelta === 'number' ? Math.round(countdownDelta) : -daysPassed;
-    countdown.daysLeft = Math.max(0, countdown.daysLeft + delta);
-  }
-
-  return {
-    day: Math.max(1, clock.day + daysPassed),
-    period: nextPeriod,
-    weather: weather?.trim() || clock.weather,
-    countdown,
-  };
+  return advanceClockByMinutes(clock, Math.max(0, Math.round(periods)) * 180, {
+    weather,
+    weatherType,
+    countdownDelta,
+    setCountdown,
+    lang,
+  });
 }
 
 export function advanceClockToNextMorning(clock: WorldClock): WorldClock {
@@ -454,7 +717,10 @@ export function advanceClockToNextMorning(clock: WorldClock): WorldClock {
   return {
     ...clock,
     day: nextDay,
+    hour: 7,
+    minute: 30,
     period: 'morning',
+    shortRestsUsedToday: 0,
     countdown,
   };
 }

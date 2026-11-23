@@ -444,6 +444,25 @@ export function SettingsDrawer({
                   />
                 </div>
 
+                <div className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
+                  <div>
+                    <div className="text-sm font-medium text-[var(--text-primary)]">
+                      Efeitos Visuais de Clima & Horário
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Chuva sutil, neblina, neve e tom de luz do dia/noite no fundo da tela.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.weatherEffectsEnabled}
+                    onChange={(e) =>
+                      onUpdateSettings({ weatherEffectsEnabled: e.target.checked })
+                    }
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                </div>
+
                 <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
                   <div className="flex items-center justify-between">
                     <div>

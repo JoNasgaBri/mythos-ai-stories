@@ -187,6 +187,96 @@
   animation: shimmerSweep 1.6s linear infinite;
 }
 
+/* Subtle Living Weather Atmosphere Layers */
+@keyframes rainFall {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: -32px 160px;
+  }
+}
+
+@keyframes fogDrift {
+  0% {
+    transform: translateX(-3%) translateY(0);
+  }
+  50% {
+    transform: translateX(3%) translateY(-1%);
+  }
+  100% {
+    transform: translateX(-3%) translateY(0);
+  }
+}
+
+@keyframes snowDrift {
+  0% {
+    background-position: 0 0, 20px 10px;
+  }
+  100% {
+    background-position: 35px 180px, -25px 140px;
+  }
+}
+
+@keyframes lightningPulse {
+  0%, 93%, 100% {
+    background: transparent;
+  }
+  94.5% {
+    background: rgba(199, 210, 254, 0.09);
+  }
+  96% {
+    background: transparent;
+  }
+  97% {
+    background: rgba(199, 210, 254, 0.05);
+  }
+}
+
+.mythos-weather-rain {
+  background-image: repeating-linear-gradient(
+    102deg,
+    transparent 0px,
+    transparent 28px,
+    rgba(186, 230, 253, 0.16) 29px,
+    transparent 30px
+  );
+  background-size: 140px 160px;
+  animation: rainFall 0.85s linear infinite;
+}
+
+.mythos-weather-lightning {
+  animation: lightningPulse 11s ease-in-out infinite;
+}
+
+.mythos-weather-fog {
+  background: radial-gradient(
+      ellipse at 20% 25%,
+      rgba(226, 232, 240, 0.16),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 80% 70%,
+      rgba(203, 213, 225, 0.14),
+      transparent 55%
+    );
+  animation: fogDrift 18s ease-in-out infinite;
+}
+
+.mythos-weather-snow {
+  background-image: radial-gradient(rgba(241, 245, 249, 0.45) 1px, transparent 1.5px),
+    radial-gradient(rgba(224, 242, 254, 0.35) 1.5px, transparent 2px);
+  background-size: 110px 110px, 160px 160px;
+  animation: snowDrift 7s linear infinite;
+}
+
+.mythos-weather-ash {
+  background-image: radial-gradient(rgba(214, 211, 209, 0.35) 1px, transparent 1.5px),
+    radial-gradient(rgba(251, 146, 60, 0.25) 1.2px, transparent 2px);
+  background-size: 130px 130px, 190px 190px;
+  animation: snowDrift 12s linear infinite;
+}
+
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 7px;

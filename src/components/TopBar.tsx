@@ -12,14 +12,20 @@ import {
   Play,
   Save,
   Settings,
+  Shield,
   Sparkles,
   Sun,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { UI_COPY } from '../data/presets';
-import { WORLD_PERIOD_META } from '../engine/rpgSystem';
+import {
+  formatClockTime,
+  WEATHER_META,
+  WORLD_PERIOD_META,
+} from '../engine/rpgSystem';
 import type { AppSettings, AppView, Campaign } from '../types/game';
+import { WEATHER_ICON } from './ClockWeatherPopover';
 
 interface TopBarProps {
   view: AppView;
@@ -34,6 +40,8 @@ interface TopBarProps {
   onBackHome: () => void;
   onOpenSaves: () => void;
   onOpenMap?: () => void;
+  onOpenClock?: () => void;
+  onOpenCharacterInventory?: () => void;
   onLongRest?: () => void;
   onToggleAmbientSound?: () => void;
   onToggleFocus: () => void;
@@ -56,6 +64,8 @@ export function TopBar({
   onBackHome,
   onOpenSaves,
   onOpenMap,
+  onOpenClock,
+  onOpenCharacterInventory,
   onLongRest,
   onToggleAmbientSound,
   onToggleFocus,
@@ -118,30 +128,85 @@ export function TopBar({
                 <span className="truncate max-w-[130px]">{campaign.currentLocation}</span>
               </button>
               {campaign.worldClock ? (
-                <span
-                  title={`Clima: ${campaign.worldClock.weather}`}
-                  className="hidden items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-[11px] text-[var(--text-secondary)] xl:inline-flex"
-                >
-                  <span>{WORLD_PERIOD_META[campaign.worldClock.period].symbol}</span>
-                  <span>
-                    Dia {campaign.worldClock.day} ·{' '}
-                    {WORLD_PERIOD_META[campaign.worldClock.period].label[settings.language]}
-                  </span>
-                </span>
+                (() => {
+                  const wt = campaign.worldClock.weatherType ?? 'cloudy';
+                  const WIcon = WEATHER_ICON[wt];
+                  const wMeta = WEATHER_META[wt];
+                  const timeStr = formatClockTime(
+                    campaign.worldClock.hour ?? 8,
+                    campaign.worldClock.minute ?? 30,
+                  );
+                  return (
+                    <button
+                      type="button"
+                      onClick={onOpenClock}
+                      title={`${wMeta.label[settings.language]} · ${wMeta.effectHint[settings.language]} (Clique para personalizar relógio, ritmo e clima)`}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)]"
+                    >
+                      <WIcon className="h-3 w-3 shrink-0" style={{ color: wMeta.color }} />
+                      <span className="font-mono-tech font-medium text-[var(--text-primary)]">
+                        D{campaign.worldClock.day} · {timeStr}
+                      </span>
+                      <span className="hidden xl:inline text-[var(--text-muted)]">
+                        {WORLD_PERIOD_META[campaign.worldClock.period].label[settings.language]}
+                      </span>
+                    </button>
+                  );
+                })()
               ) : null}
               {campaign.worldClock?.countdown ? (
-                <span className="hidden items-center gap-1 rounded-full border border-[var(--warning)]/40 bg-[var(--warning)]/12 px-2 py-0.5 text-[10px] font-semibold text-[var(--warning)] 2xl:inline-flex">
+                <button
+                  type="button"
+                  onClick={onOpenClock}
+                  className="hidden items-center gap-1 rounded-full border border-[var(--warning)]/40 bg-[var(--warning)]/12 px-2 py-0.5 text-[10px] font-semibold text-[var(--warning)] transition hover:brightness-110 2xl:inline-flex"
+                >
                   {campaign.worldClock.countdown.daysLeft}d · {campaign.worldClock.countdown.label}
-                </span>
+                </button>
               ) : null}
             </div>
           ) : null}
         </div>
 
-        {/* Right: Map, Rest, Saves, Living World Pulse, Focus, Audio, Mode & Settings */}
+        {/* Right: Character, Clock (mobile), Map, Rest, Saves, Living World Pulse, Focus, Audio, Mode & Settings */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           {view === 'stage' && campaign ? (
             <>
+              {campaign.worldClock && onOpenClock ? (
+                (() => {
+                  const wt = campaign.worldClock.weatherType ?? 'cloudy';
+                  const WIcon = WEATHER_ICON[wt];
+                  const wMeta = WEATHER_META[wt];
+                  return (
+                    <button
+                      type="button"
+                      onClick={onOpenClock}
+                      title="Relógio & Clima"
+                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-[11px] font-medium text-[var(--text-secondary)] md:hidden"
+                    >
+                      <WIcon className="h-3.5 w-3.5" style={{ color: wMeta.color }} />
+                      <span className="font-mono-tech">
+                        {formatClockTime(
+                          campaign.worldClock.hour ?? 8,
+                          campaign.worldClock.minute ?? 30,
+                        )}
+                      </span>
+                    </button>
+                  );
+                })()
+              ) : null}
+
+              {onOpenCharacterInventory ? (
+                <button
+                  type="button"
+                  onClick={onOpenCharacterInventory}
+                  title="Abrir Personagem & Inventário Visual (BG3)"
+                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                >
+                  <Shield className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  <span className="hidden lg:inline">Inventário</span>
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={onOpenMap}
@@ -149,7 +214,7 @@ export function TopBar({
                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
               >
                 <MapIcon className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Mapa</span>
+                <span className="hidden xl:inline">Mapa</span>
               </button>
 
               {campaign.status === 'active' && onLongRest ? (
@@ -157,7 +222,7 @@ export function TopBar({
                   type="button"
                   disabled={isBusy}
                   onClick={onLongRest}
-                  title="Descansar no Acampamento / Refúgio (recupera Vigor, avança o dia e abre cena de pausa com o grupo)"
+                  title="Abrir Pausa / Descanso (Curto ou Longo)"
                   className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[var(--success)] hover:text-[var(--success)] disabled:opacity-45"
                 >
                   <Flame className="h-3.5 w-3.5 text-[#fb923c]" />

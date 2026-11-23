@@ -1,8 +1,8 @@
-import type { WorldThemeId } from '../types/game';
+import type { WeatherType, WorldThemeId } from '../types/game';
 
 /**
  * Lightweight, zero-asset procedural ambient soundscape built on Web Audio API.
- * Muted by default; starts only on explicit user toggle so browsers allow AudioContext cleanly.
+ * Muted by default; adapts dynamically to both World Theme and Live Weather!
  */
 class AmbientAudioEngine {
   private ctx: AudioContext | null = null;
@@ -11,6 +11,7 @@ class AmbientAudioEngine {
   private activeSources: Array<{ stop: () => void }> = [];
   private isPlaying = false;
   private currentTheme: WorldThemeId = 'fantasy';
+  private currentWeather: WeatherType = 'cloudy';
   private volume = 0.35;
 
   private ensureContext(): AudioContext | null {
@@ -170,6 +171,26 @@ class AmbientAudioEngine {
       lfoGain.gain.value = 160;
     }
 
+    // Weather acoustic layer override (rain hiss, storm gale, snow/fog wind)
+    if (this.currentWeather === 'rain') {
+      filter.type = 'bandpass';
+      filter.frequency.value = 1250;
+      filter.Q.value = 0.65;
+      noiseGain.gain.value = Math.max(noiseGain.gain.value, 0.28);
+    } else if (this.currentWeather === 'storm') {
+      filter.type = 'bandpass';
+      filter.frequency.value = 1480;
+      filter.Q.value = 0.55;
+      noiseGain.gain.value = 0.36;
+      lfo.frequency.value = 0.18;
+      lfoGain.gain.value = 280;
+    } else if (this.currentWeather === 'snow' || this.currentWeather === 'fog') {
+      filter.type = 'bandpass';
+      filter.frequency.value = 520;
+      filter.Q.value = 1.6;
+      noiseGain.gain.value = Math.max(noiseGain.gain.value, 0.24);
+    }
+
     lfo.connect(lfoGain);
     lfoGain.connect(filter.frequency);
 
@@ -226,6 +247,14 @@ class AmbientAudioEngine {
     this.currentTheme = theme;
     if (this.isPlaying && this.ctx) {
       this.buildThemeSoundscape(this.ctx, theme);
+    }
+  }
+
+  public setWeather(weather: WeatherType): void {
+    if (this.currentWeather === weather) return;
+    this.currentWeather = weather;
+    if (this.isPlaying && this.ctx) {
+      this.buildThemeSoundscape(this.ctx, this.currentTheme);
     }
   }
 

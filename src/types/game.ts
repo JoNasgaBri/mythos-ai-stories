@@ -37,10 +37,29 @@ export type RollMode = 'normal' | 'advantage' | 'disadvantage';
 
 export type WorldPeriod = 'morning' | 'afternoon' | 'evening' | 'night';
 
+export type WeatherType =
+  | 'clear'
+  | 'cloudy'
+  | 'rain'
+  | 'storm'
+  | 'fog'
+  | 'heatwave'
+  | 'snow'
+  | 'ash';
+
+export type TimeAdvanceMode = 'ai_auto' | 'fixed_step' | 'manual';
+
 export interface WorldClock {
   day: number;
+  hour?: number; // 0 to 23
+  minute?: number; // 0 to 59
+  dateLabel?: string; // Optional custom calendar date e.g. "14 de Out · 2026"
   period: WorldPeriod;
   weather: string;
+  weatherType?: WeatherType;
+  advanceMode?: TimeAdvanceMode;
+  fixedStepMinutes?: number; // 15, 30, 60, 120 when advanceMode === 'fixed_step'
+  shortRestsUsedToday?: number; // 0 to 2 per day (BG3 style)
   countdown?: {
     label: string;
     daysLeft: number;
@@ -68,7 +87,13 @@ export type CharacterAttributes = Record<AttributeId, number>;
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
-export type EquipSlot = 'weapon' | 'armor' | 'accessory';
+export type EquipSlot =
+  | 'weapon'
+  | 'offhand'
+  | 'head'
+  | 'armor'
+  | 'accessory'
+  | 'utility';
 
 export interface ItemBonuses {
   str?: number;
@@ -407,6 +432,7 @@ export interface AppSettings {
   livingWorldSeconds: number;
   diceAnimations: boolean;
   autoIllustrateScenes: boolean;
+  weatherEffectsEnabled: boolean;
   ambientSoundEnabled: boolean;
   ambientVolume: number;
   geminiApiKey: string;
@@ -475,8 +501,10 @@ export interface AiStateChanges {
     reason?: string;
   }>;
   advanceTime?: {
+    minutes?: number;
     periods?: number;
     weather?: string;
+    weatherType?: WeatherType;
     countdownDelta?: number;
     setCountdown?: {
       label: string;
