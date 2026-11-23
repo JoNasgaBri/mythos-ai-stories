@@ -107,6 +107,33 @@ function briefDemoDelay(ms = 480): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Strips large base64 data URLs (scene art, portraits, cover) and keeps only
+ * the recent entry window before POSTing to serverless API routes.
+ * Prevents HTTP 413 Payload Too Large on Vercel (4.5 MB limit) and makes mobile turns instant.
+ */
+function stripHeavyMediaForApi(campaign: Campaign): Campaign {
+  return {
+    ...campaign,
+    coverImageUrl: undefined,
+    player: {
+      ...campaign.player,
+      portraitUrl: undefined,
+    },
+    codex: {
+      ...campaign.codex,
+      npcs: campaign.codex.npcs.map((n) => ({
+        ...n,
+        portraitUrl: undefined,
+      })),
+    },
+    entries: campaign.entries.slice(-20).map((e) => ({
+      ...e,
+      imageUrl: undefined,
+    })),
+  };
+}
+
 export async function requestStoryStart(
   campaign: Campaign,
   settings: AppSettings,
@@ -116,7 +143,7 @@ export async function requestStoryStart(
     return postJson<StoryTurnResponse>(
       '/api/story/start',
       {
-        campaign,
+        campaign: stripHeavyMediaForApi(campaign),
         responseLength: settings.responseLength,
         narrationPrefs: {
           responseLength: settings.responseLength,
@@ -145,7 +172,7 @@ export async function requestStoryTurn(
     return postJson<StoryTurnResponse>(
       '/api/story/turn',
       {
-        campaign,
+        campaign: stripHeavyMediaForApi(campaign),
         action,
         diceRoll,
         responseLength: settings.responseLength,
@@ -177,7 +204,11 @@ export async function requestLivingWorldPulse(
   health: ApiHealthStatus,
 ): Promise<StoryTurnResponse> {
   if (shouldUseGemini(settings, health)) {
-    return postJson<StoryTurnResponse>('/api/story/pulse', { campaign }, settings);
+    return postJson<StoryTurnResponse>(
+      '/api/story/pulse',
+      { campaign: stripHeavyMediaForApi(campaign) },
+      settings,
+    );
   }
   await briefDemoDelay(400);
   return demoPulseStory(campaign);
@@ -192,7 +223,7 @@ export async function requestJournalSummary(
   if (shouldUseGemini(settings, health)) {
     return postJson<JournalSummaryResponse>(
       '/api/story/summarize',
-      { campaign, mode },
+      { campaign: stripHeavyMediaForApi(campaign), mode },
       settings,
     );
   }
@@ -209,7 +240,11 @@ export async function requestCampaignEpilogue(
   if (shouldUseGemini(settings, health)) {
     return postJson<EpilogueResponse>(
       '/api/story/epilogue',
-      { campaign, outcome, model: settings.geminiModel },
+      {
+        campaign: stripHeavyMediaForApi(campaign),
+        outcome,
+        model: settings.geminiModel,
+      },
       settings,
     );
   }
