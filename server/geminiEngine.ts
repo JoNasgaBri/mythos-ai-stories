@@ -543,25 +543,25 @@ const PERSPECTIVE_DIRECTIVE: Record<NarrativePerspective, string> = {
     'NARRATIVE PERSPECTIVE: Always narrate in close third person using the protagonist’s name and pronouns.',
 };
 
-function resolveOutputTokenBudget(
+function resolveGenerationConfig(
   model: 'gemini-3.8-flash' | 'gemini-4-argon',
-  length: ResponseLength,
-): number {
+): {
+  max_output_tokens: number;
+  thinking_level: 'low' | 'medium';
+} {
   if (model === 'gemini-4-argon') {
-    return 32768;
+    return {
+      max_output_tokens: 32768,
+      thinking_level: 'low',
+    };
   }
-  switch (length) {
-    case 'short':
-      return 4096;
-    case 'normal':
-      return 6144;
-    case 'literary':
-      return 8192;
-    case 'epic':
-      return 12288;
-    default:
-      return 8192;
-  }
+  // Thinking tokens share the max_output_tokens pool on Gemini 3.8 Flash;
+  // keeping thinking_level="low" with a generous 16k ceiling prevents JSON truncation
+  // and keeps mobile/web turns fast and affordable.
+  return {
+    max_output_tokens: 16384,
+    thinking_level: 'low',
+  };
 }
 
 const PACE_DIRECTIVE: Record<StoryPace, string> = {
@@ -569,6 +569,75 @@ const PACE_DIRECTIVE: Record<StoryPace, string> = {
   endless: 'Campaign Pace: ENDLESS LIVING SANDBOX. Keep opening new horizons, mysteries, rumors, and quests so the story can span hundreds of turns organically.',
   focused: 'Campaign Pace: FOCUSED ARC. Maintain steady dramatic momentum around the central conflict.',
 };
+
+function sanitizeControlCharsInJsonStrings(input: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escaped) {
+        out += ch;
+        escaped = false;
+      } else if (ch === '\\') {
+        out += ch;
+        escaped = true;
+      } else if (ch === '"') {
+        out += ch;
+        inString = false;
+      } else if (ch === '\n') {
+        out += '\\n';
+      } else if (ch === '\r') {
+        out += '\\r';
+      } else if (ch === '\t') {
+        out += '\\t';
+      } else {
+        out += ch;
+      }
+    } else {
+      if (ch === '"') inString = true;
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function repairTruncatedJson(input: string): string {
+  let text = sanitizeControlCharsInJsonStrings(input).trim();
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+    } else {
+      if (ch === '"') inString = true;
+      else if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if (ch === '}' || ch === ']') stack.pop();
+    }
+  }
+
+  if (inString) {
+    if (escaped) text = text.slice(0, -1);
+    text += '"';
+  }
+  // Strip trailing dangling comma or colon before closing containers
+  text = text.replace(/[,:\s]+$/, '');
+  while (stack.length > 0) {
+    text += stack.pop();
+  }
+  return text;
+}
 
 function parseStructuredJson<T>(raw: string | undefined): T {
   if (!raw || !raw.trim()) {
@@ -580,7 +649,38 @@ function parseStructuredJson<T>(raw: string | undefined): T {
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
-  return JSON.parse(cleaned) as T;
+
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    // 1) Try sanitizing literal newlines/control chars inside JSON strings
+    const sanitized = sanitizeControlCharsInJsonStrings(cleaned);
+    try {
+      return JSON.parse(sanitized) as T;
+    } catch {
+      // 2) Extract outermost JSON object if wrapped by stray text
+      const firstBrace = sanitized.indexOf('{');
+      const lastBrace = sanitized.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        const sliced = sanitized.slice(firstBrace, lastBrace + 1);
+        try {
+          return JSON.parse(sliced) as T;
+        } catch {
+          // fall through to truncation repair
+        }
+      }
+
+      // 3) Last-resort repair for truncated JSON output
+      if (firstBrace >= 0) {
+        const repaired = repairTruncatedJson(sanitized.slice(firstBrace));
+        return JSON.parse(repaired) as T;
+      }
+
+      throw new Error(
+        'Resposta JSON incompleta da IA. Tente novamente — seu texto foi preservado.',
+      );
+    }
+  }
 }
 
 function buildSystemInstruction(
@@ -804,9 +904,7 @@ export async function generateStoryStart(
       mime_type: 'application/json',
       schema: TURN_RESPONSE_SCHEMA,
     },
-    generation_config: {
-      max_output_tokens: resolveOutputTokenBudget(model, length),
-    },
+    generation_config: resolveGenerationConfig(model),
   });
 
   const parsed = parseStructuredJson<Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>>(
@@ -815,6 +913,8 @@ export async function generateStoryStart(
 
   return {
     ...parsed,
+    actions: Array.isArray(parsed.actions) ? parsed.actions : [],
+    stateChanges: parsed.stateChanges ?? {},
     interactionId: interaction.id,
     engineUsed: 'gemini',
   };
@@ -877,9 +977,7 @@ export async function generateStoryTurn(
       mime_type: 'application/json',
       schema: TURN_RESPONSE_SCHEMA,
     },
-    generation_config: {
-      max_output_tokens: resolveOutputTokenBudget(model, length),
-    },
+    generation_config: resolveGenerationConfig(model),
   });
 
   const parsed = parseStructuredJson<Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>>(
@@ -888,6 +986,8 @@ export async function generateStoryTurn(
 
   return {
     ...parsed,
+    actions: Array.isArray(parsed.actions) ? parsed.actions : [],
+    stateChanges: parsed.stateChanges ?? {},
     interactionId: interaction.id,
     engineUsed: 'gemini',
   };
@@ -916,7 +1016,8 @@ export async function generateLivingWorldPulse(
       schema: TURN_RESPONSE_SCHEMA,
     },
     generation_config: {
-      max_output_tokens: 900,
+      max_output_tokens: 4096,
+      thinking_level: 'minimal',
     },
   });
 
@@ -926,6 +1027,8 @@ export async function generateLivingWorldPulse(
 
   return {
     ...parsed,
+    actions: Array.isArray(parsed.actions) ? parsed.actions : [],
+    stateChanges: parsed.stateChanges ?? {},
     interactionId: campaign.interactionId,
     engineUsed: 'gemini',
   };
@@ -958,7 +1061,8 @@ export async function generateJournalSummary(
       schema: SUMMARY_SCHEMA,
     },
     generation_config: {
-      max_output_tokens: 550,
+      max_output_tokens: 4096,
+      thinking_level: 'minimal',
     },
   });
 
@@ -996,9 +1100,7 @@ export async function generateCampaignEpilogue(
       mime_type: 'application/json',
       schema: EPILOGUE_SCHEMA,
     },
-    generation_config: {
-      max_output_tokens: 950,
-    },
+    generation_config: resolveGenerationConfig(model),
   });
 
   const parsed = parseStructuredJson<{ title: string; summary: string; finalWords: string }>(
@@ -1277,9 +1379,7 @@ export async function generateForgedWorld(
       mime_type: 'application/json',
       schema: FORGED_WORLD_SCHEMA,
     },
-    generation_config: {
-      max_output_tokens: 2200,
-    },
+    generation_config: resolveGenerationConfig(model),
   });
 
   const parsed = parseStructuredJson<Partial<RawForgedBlueprint>>(
