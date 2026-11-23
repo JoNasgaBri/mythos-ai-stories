@@ -3,6 +3,7 @@ import {
   Download,
   Flame,
   Heart,
+  MessageSquare,
   Play,
   Plus,
   Sparkles,
@@ -11,14 +12,21 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { DIFFICULTIES, UI_COPY, WORLD_THEMES } from '../data/presets';
-import type { Campaign, LanguageId, WorldThemeId } from '../types/game';
+import type {
+  Campaign,
+  DifficultyId,
+  LanguageId,
+  WorldThemeId,
+} from '../types/game';
 
 interface SanctuaryHomeProps {
   campaigns: Campaign[];
   language: LanguageId;
   previewTheme: WorldThemeId;
+  defaultDifficulty: DifficultyId;
   onSelectPreviewTheme: (theme: WorldThemeId) => void;
   onStartForge: () => void;
+  onStartFreeform: (difficulty: DifficultyId, theme: WorldThemeId) => void;
   onPlayInstantDemo: () => void;
   onOpenCampaign: (campaign: Campaign) => void;
   onExportCampaign: (campaign: Campaign) => void;
@@ -30,8 +38,10 @@ export function SanctuaryHome({
   campaigns,
   language,
   previewTheme,
+  defaultDifficulty,
   onSelectPreviewTheme,
   onStartForge,
+  onStartFreeform,
   onPlayInstantDemo,
   onOpenCampaign,
   onExportCampaign,
@@ -41,6 +51,9 @@ export function SanctuaryHome({
   const copy = UI_COPY[language];
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [freeformOpen, setFreeformOpen] = useState(false);
+  const [freeformDifficulty, setFreeformDifficulty] =
+    useState<DifficultyId>(defaultDifficulty);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,8 +84,17 @@ export function SanctuaryHome({
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={onStartForge}
+              onClick={() => setFreeformOpen((v) => !v)}
               className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-6 py-3.5 text-sm font-semibold text-[var(--accent-contrast)] shadow-lg transition hover:brightness-110"
+            >
+              <MessageSquare className="h-4 w-4" />
+              <span>História Livre (Estilo WebSim)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onStartForge}
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent)]/60 bg-[var(--accent-soft)] px-5 py-3.5 text-sm font-semibold text-[var(--accent)] transition hover:brightness-110"
             >
               <Plus className="h-4 w-4" />
               <span>{copy.forgeNew}</span>
@@ -87,6 +109,55 @@ export function SanctuaryHome({
               <span>{copy.playInstantDemo}</span>
             </button>
           </div>
+
+          {freeformOpen ? (
+            <div className="animate-beat-enter mt-5 rounded-2xl border border-[var(--accent)]/50 bg-[var(--bg-elevated)]/95 p-4 shadow-lg">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-sm font-semibold text-[var(--accent)]">
+                    Sessão Zero · Comece Conversando do Zero (Sem Lore Fixo)
+                  </h3>
+                  <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                    Escolha a dificuldade desejada e escreva o mundo, personagem e gênero diretamente no chat com o Mestre — com atributos BG3 (+6 pontos livres), evolução, vínculos e escolhas infinitas.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {DIFFICULTIES.map((diff) => {
+                  const active = freeformDifficulty === diff.id;
+                  return (
+                    <button
+                      key={diff.id}
+                      type="button"
+                      onClick={() => setFreeformDifficulty(diff.id)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                        active
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                      }`}
+                    >
+                      {diff.label[language]}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-[var(--text-muted)]">
+                  Visual atual: <strong className="text-[var(--text-primary)]">{WORLD_THEMES[previewTheme].name[language]}</strong> (mude abaixo se quiser)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onStartFreeform(freeformDifficulty, previewTheme)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-[var(--accent-contrast)] transition hover:brightness-110"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Começar Conversando →</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Adaptive Theme Preview Strip */}

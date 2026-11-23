@@ -10,6 +10,19 @@ import {
   generateDemoPortraitArt,
   generateDemoSceneArt,
 } from '../engine/demoArtwork';
+import {
+  computeMaxVigor,
+  defaultAffinityFromStance,
+  deriveRelationshipFromAffinity,
+  getEquippedGearBonuses,
+  inferEquipSlotFromCategory,
+  inferNpcAssistAttribute,
+  inferSkillAttribute,
+  MAX_INSPIRATION,
+  RELATIONSHIP_META,
+  syncSkillLevels,
+  xpRequiredForLevel,
+} from '../engine/rpgSystem';
 import type {
   AiStateChanges,
   AppSettings,
@@ -23,15 +36,20 @@ import type {
   IllustrationResponse,
   InventoryItem,
   JournalSummaryResponse,
+  LanguageId,
   LocationRecord,
   NpcRecord,
   PlayerState,
   Quest,
+  SkillProgress,
+  SpeechResponse,
   StateDelta,
   StoryEntry,
   StoryTurnResponse,
+  TalentRecord,
   WorldCodex,
   WorldConfig,
+  WorldThemeId,
 } from '../types/game';
 
 export interface ApiHealthStatus {
@@ -276,21 +294,205 @@ export async function requestPortraitIllustration(
   };
 }
 
+export async function requestNpcPortrait(
+  world: Pick<WorldConfig, 'title' | 'primaryTheme' | 'era' | 'creativePrompt'>,
+  npc: Pick<NpcRecord, 'name' | 'role' | 'notes'>,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<IllustrationResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<IllustrationResponse>(
+      '/api/story/illustrate',
+      {
+        kind: 'portrait',
+        theme: world.primaryTheme,
+        worldTitle: world.title,
+        era: world.era,
+        creativePrompt: world.creativePrompt,
+        characterName: npc.name,
+        characterOccupation: npc.role,
+        characterTraits: npc.notes ? [npc.notes.slice(0, 140)] : [],
+      },
+      settings,
+    );
+  }
+
+  await briefDemoDelay(320);
+  return {
+    dataUrl: generateDemoPortraitArt(world.primaryTheme, npc.name, npc.role),
+    caption: `${npc.name} · ${npc.role}`,
+    engineUsed: 'demo',
+  };
+}
+
+const speechAudioCache = new Map<string, string>();
+
+export async function requestSceneSpeech(
+  entryId: string,
+  text: string,
+  language: LanguageId,
+  theme: WorldThemeId,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<SpeechResponse | null> {
+  const cacheKey = `${entryId}_${language}_${theme}`;
+  const cached = speechAudioCache.get(cacheKey);
+  if (cached) {
+    return { dataUrl: cached, mimeType: 'audio/wav', engineUsed: 'gemini' };
+  }
+
+  if (shouldUseGemini(settings, health)) {
+    const res = await postJson<SpeechResponse>(
+      '/api/story/speak',
+      { text, language, theme },
+      settings,
+    );
+    if (res.dataUrl) {
+      speechAudioCache.set(cacheKey, res.dataUrl);
+    }
+    return res;
+  }
+
+  return null;
+}
+
 export function applyStateChanges(
   player: PlayerState,
   changes: AiStateChanges | undefined,
-): { nextPlayer: PlayerState; deltas: StateDelta[] } {
+  turn = 0,
+  options?: { hasTrainingStation?: boolean },
+): {
+  nextPlayer: PlayerState;
+  deltas: StateDelta[];
+  worldIdentityPatch?: Partial<Pick<WorldConfig, 'title' | 'era' | 'premise'>>;
+} {
   if (!changes) {
     return { nextPlayer: player, deltas: [] };
   }
 
   const deltas: StateDelta[] = [];
+  let name = player.name;
+  let age = player.age;
+  let occupation = player.occupation;
+  let worldIdentityPatch:
+    | Partial<Pick<WorldConfig, 'title' | 'era' | 'premise'>>
+    | undefined;
+
+  if (changes.updateIdentity) {
+    const id = changes.updateIdentity;
+    if (id.name?.trim()) name = id.name.trim();
+    if (typeof id.age === 'number' && id.age >= 14 && id.age <= 999) {
+      age = Math.round(id.age);
+    }
+    if (id.occupation?.trim()) occupation = id.occupation.trim();
+    if (id.worldTitle?.trim() || id.worldEra?.trim() || id.worldPremise?.trim()) {
+      worldIdentityPatch = {};
+      if (id.worldTitle?.trim()) worldIdentityPatch.title = id.worldTitle.trim();
+      if (id.worldEra?.trim()) worldIdentityPatch.era = id.worldEra.trim();
+      if (id.worldPremise?.trim()) worldIdentityPatch.premise = id.worldPremise.trim();
+    }
+  }
+
+  let level = player.level ?? 1;
+  let xp = player.xp ?? 0;
+  let xpToNextLevel = player.xpToNextLevel ?? xpRequiredForLevel(level);
+  let attributePoints = player.attributePoints ?? 0;
+  let maxVigor = player.maxVigor;
   let vigor = player.vigor;
   let tension = player.tension;
+  let inspiration =
+    typeof player.inspiration === 'number'
+      ? Math.max(0, Math.min(MAX_INSPIRATION, player.inspiration))
+      : 1;
+
+  const inventory: InventoryItem[] = player.inventory.map((i) => ({ ...i }));
+  if (Array.isArray(changes.addItems)) {
+    for (const item of changes.addItems) {
+      if (!item?.name) continue;
+      const qty = Math.max(1, item.quantity ?? 1);
+      const existing = inventory.find(
+        (x) => x.name.toLowerCase() === item.name.toLowerCase(),
+      );
+      if (existing) {
+        existing.quantity += qty;
+        if (item.rarity && !existing.rarity) existing.rarity = item.rarity;
+        if (item.bonuses && !existing.bonuses) existing.bonuses = item.bonuses;
+      } else {
+        const category = item.category ?? 'misc';
+        inventory.push({
+          id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: item.name,
+          category,
+          quantity: qty,
+          note: item.note,
+          rarity: item.rarity ?? 'common',
+          equipSlot: item.equipSlot ?? inferEquipSlotFromCategory(category),
+          equipped: false,
+          bonuses: item.bonuses,
+        });
+      }
+      deltas.push({
+        kind: 'item_add',
+        label: `+ ${item.name}${qty > 1 ? ` (x${qty})` : ''}`,
+        positive: true,
+      });
+    }
+  }
+
+  if (Array.isArray(changes.removeItems)) {
+    for (const itemName of changes.removeItems) {
+      const idx = inventory.findIndex(
+        (x) => x.name.toLowerCase() === itemName.toLowerCase(),
+      );
+      if (idx >= 0) {
+        if (inventory[idx].quantity > 1) {
+          inventory[idx].quantity -= 1;
+        } else {
+          inventory.splice(idx, 1);
+        }
+        deltas.push({
+          kind: 'item_remove',
+          label: `- ${itemName}`,
+          positive: false,
+        });
+      }
+    }
+  }
+
+  // XP & automatic Level Up progression
+  if (typeof changes.xpGain === 'number' && changes.xpGain > 0) {
+    const gained = Math.min(400, Math.round(changes.xpGain));
+    xp += gained;
+    deltas.push({
+      kind: 'xp',
+      label: `+${gained} XP`,
+      positive: true,
+    });
+
+    while (xp >= xpToNextLevel && level < 20) {
+      xp -= xpToNextLevel;
+      level += 1;
+      attributePoints += 1;
+      xpToNextLevel = xpRequiredForLevel(level);
+      const gearBonuses = getEquippedGearBonuses(inventory);
+      const nextMax = computeMaxVigor(
+        level,
+        (player.attributes?.con ?? 10) + (gearBonuses.con ?? 0),
+        gearBonuses.maxVigor ?? 0,
+      );
+      maxVigor = Math.max(maxVigor, nextMax);
+      vigor = Math.min(maxVigor, vigor + 15);
+      deltas.push({
+        kind: 'level',
+        label: `Nível ${level}! (+1 Atributo)`,
+        positive: true,
+      });
+    }
+  }
 
   if (typeof changes.vigorDelta === 'number' && changes.vigorDelta !== 0) {
     const prev = vigor;
-    vigor = Math.max(0, Math.min(player.maxVigor, vigor + changes.vigorDelta));
+    vigor = Math.max(0, Math.min(maxVigor, vigor + changes.vigorDelta));
     const diff = vigor - prev;
     if (diff !== 0) {
       deltas.push({
@@ -314,51 +516,31 @@ export function applyStateChanges(
     }
   }
 
-  const inventory: InventoryItem[] = player.inventory.map((i) => ({ ...i }));
-  if (Array.isArray(changes.addItems)) {
-    for (const item of changes.addItems) {
-      if (!item?.name) continue;
-      const qty = Math.max(1, item.quantity ?? 1);
-      const existing = inventory.find(
-        (x) => x.name.toLowerCase() === item.name.toLowerCase(),
-      );
-      if (existing) {
-        existing.quantity += qty;
-      } else {
-        inventory.push({
-          id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          name: item.name,
-          category: item.category ?? 'misc',
-          quantity: qty,
-          note: item.note,
-        });
-      }
+  if (typeof changes.inspirationGain === 'number' && changes.inspirationGain > 0) {
+    const prev = inspiration;
+    inspiration = Math.min(MAX_INSPIRATION, inspiration + Math.round(changes.inspirationGain));
+    if (inspiration > prev) {
       deltas.push({
-        kind: 'item_add',
-        label: `+ ${item.name}${qty > 1 ? ` (x${qty})` : ''}`,
+        kind: 'inspiration',
+        label: `+${inspiration - prev} Inspiração ✦`,
         positive: true,
       });
     }
   }
 
-  if (Array.isArray(changes.removeItems)) {
-    for (const name of changes.removeItems) {
-      const idx = inventory.findIndex(
-        (x) => x.name.toLowerCase() === name.toLowerCase(),
-      );
-      if (idx >= 0) {
-        if (inventory[idx].quantity > 1) {
-          inventory[idx].quantity -= 1;
-        } else {
-          inventory.splice(idx, 1);
-        }
-        deltas.push({
-          kind: 'item_remove',
-          label: `- ${name}`,
-          positive: false,
-        });
-      }
-    }
+  // Currency / resources
+  const currency = {
+    amount: player.currency?.amount ?? 0,
+    label: changes.currencyLabel?.trim() || player.currency?.label || 'Ouro',
+  };
+  if (typeof changes.currencyDelta === 'number' && changes.currencyDelta !== 0) {
+    const deltaAmt = Math.round(changes.currencyDelta);
+    currency.amount = Math.max(0, currency.amount + deltaAmt);
+    deltas.push({
+      kind: 'currency',
+      label: `${deltaAmt > 0 ? '+' : ''}${deltaAmt} ${currency.label}`,
+      positive: deltaAmt > 0,
+    });
   }
 
   const traits = [...player.traits];
@@ -371,12 +553,105 @@ export function applyStateChanges(
     }
   }
 
-  const skills = [...player.skills];
+  // Skills & Skill Training (BG3 leveled skills)
+  const skillLevels: SkillProgress[] = syncSkillLevels(
+    player.skills,
+    player.skillLevels,
+  ).map((s) => ({ ...s }));
+
   if (Array.isArray(changes.addSkills)) {
     for (const s of changes.addSkills) {
-      if (s && !skills.some((existing) => existing.toLowerCase() === s.toLowerCase())) {
-        skills.push(s);
-        deltas.push({ kind: 'skill', label: `+ Perícia: ${s}`, positive: true });
+      const clean = s?.trim();
+      if (
+        clean &&
+        !skillLevels.some((ex) => ex.name.toLowerCase() === clean.toLowerCase())
+      ) {
+        skillLevels.push({
+          name: clean,
+          level: 1,
+          attribute: inferSkillAttribute(clean),
+          xp: 0,
+        });
+        deltas.push({ kind: 'skill', label: `+ Habilidade: ${clean} Nv.1`, positive: true });
+      }
+    }
+  }
+
+  if (Array.isArray(changes.skillTraining)) {
+    for (const tr of changes.skillTraining) {
+      const cleanName = tr?.name?.trim();
+      if (!cleanName) continue;
+      let target = skillLevels.find(
+        (s) => s.name.toLowerCase() === cleanName.toLowerCase(),
+      );
+      if (!target) {
+        target = {
+          name: cleanName,
+          level: 1,
+          attribute: tr.attribute ?? inferSkillAttribute(cleanName),
+          xp: 0,
+        };
+        skillLevels.push(target);
+        deltas.push({
+          kind: 'skill',
+          label: `Nova Habilidade: ${cleanName} Nv.1`,
+          positive: true,
+        });
+      }
+      if (tr.levelUp && target.level < 5) {
+        target.level += 1;
+        target.xp = 0;
+        deltas.push({
+          kind: 'skill',
+          label: `${target.name} evoluiu para Nv.${target.level}!`,
+          positive: true,
+        });
+      } else {
+        const rawGain = Math.max(15, Math.min(100, Math.round(tr.xpGain ?? 40)));
+        const gain = options?.hasTrainingStation
+          ? Math.min(100, Math.round(rawGain * 1.25))
+          : rawGain;
+        target.xp += gain;
+        if (target.xp >= 100 && target.level < 5) {
+          target.level += 1;
+          target.xp = target.xp - 100;
+          deltas.push({
+            kind: 'skill',
+            label: `${target.name} evoluiu para Nv.${target.level}!`,
+            positive: true,
+          });
+        } else {
+          deltas.push({
+            kind: 'skill',
+            label: `Treino: ${target.name} (+${gain}% prog.)`,
+            positive: true,
+          });
+        }
+      }
+    }
+  }
+
+  const skills = skillLevels.map((s) => s.name);
+
+  // Talents
+  const talents: TalentRecord[] = Array.isArray(player.talents)
+    ? player.talents.map((t) => ({ ...t }))
+    : [];
+  if (Array.isArray(changes.addTalents)) {
+    for (const tal of changes.addTalents) {
+      if (!tal?.name?.trim()) continue;
+      if (!talents.some((ex) => ex.name.toLowerCase() === tal.name.trim().toLowerCase())) {
+        talents.push({
+          id: `tal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: tal.name.trim(),
+          description: tal.description?.trim() || 'Talento despertado na sua jornada.',
+          unlockedTurn: turn,
+        });
+        deltas.push({
+          kind: 'talent',
+          label: `Talento: ${tal.name.trim()}`,
+          positive: true,
+        });
       }
     }
   }
@@ -406,6 +681,14 @@ export function applyStateChanges(
       if (target) {
         target.status = 'completed';
         deltas.push({ kind: 'quest', label: `Concluído: ${target.title}`, positive: true });
+        if (inspiration < MAX_INSPIRATION) {
+          inspiration += 1;
+          deltas.push({
+            kind: 'inspiration',
+            label: '+1 Inspiração ✦ (Objetivo)',
+            positive: true,
+          });
+        }
       }
     }
   }
@@ -425,14 +708,27 @@ export function applyStateChanges(
   return {
     nextPlayer: {
       ...player,
+      name,
+      age,
+      occupation,
+      level,
+      xp,
+      xpToNextLevel,
+      attributePoints,
       vigor,
+      maxVigor,
       tension,
+      inspiration,
       traits,
       skills,
+      skillLevels,
+      talents,
+      currency,
       inventory,
       quests,
     },
     deltas,
+    worldIdentityPatch,
   };
 }
 
@@ -456,12 +752,45 @@ export function applyCodexChanges(
       );
       if (existing) {
         const stanceChanged = rawNpc.stance && rawNpc.stance !== existing.stance;
+        const prevRel = existing.relationship;
+        const prevAffinity =
+          typeof existing.affinity === 'number'
+            ? existing.affinity
+            : defaultAffinityFromStance(existing.stance);
+
         if (rawNpc.role) existing.role = rawNpc.role;
         if (rawNpc.stance) existing.stance = rawNpc.stance;
         if (rawNpc.status) existing.status = rawNpc.status;
         if (rawNpc.notes) existing.notes = rawNpc.notes;
+        if (rawNpc.assistAttribute) existing.assistAttribute = rawNpc.assistAttribute;
+        if (rawNpc.assistSpecialty) existing.assistSpecialty = rawNpc.assistSpecialty;
+
+        const deltaAff =
+          typeof rawNpc.affinityDelta === 'number'
+            ? Math.max(-40, Math.min(40, Math.round(rawNpc.affinityDelta)))
+            : 0;
+        const nextAffinity = Math.max(-100, Math.min(100, prevAffinity + deltaAff));
+        existing.affinity = nextAffinity;
+        existing.relationship =
+          rawNpc.relationship ??
+          deriveRelationshipFromAffinity(nextAffinity, existing.relationship);
         existing.lastSeenLocation = currentLocation;
-        if (stanceChanged || rawNpc.status === 'dead' || rawNpc.status === 'missing') {
+
+        if (rawNpc.relationship && rawNpc.relationship !== prevRel) {
+          const relMeta = RELATIONSHIP_META[rawNpc.relationship];
+          deltas.push({
+            kind: 'bond',
+            label: `${existing.name}: ${relMeta.label}`,
+            positive:
+              rawNpc.relationship !== 'enemy' && rawNpc.relationship !== 'rival',
+          });
+        } else if (deltaAff !== 0) {
+          deltas.push({
+            kind: 'bond',
+            label: `Vínculo ${existing.name}: ${deltaAff > 0 ? '+' : ''}${deltaAff}`,
+            positive: deltaAff > 0,
+          });
+        } else if (stanceChanged || rawNpc.status === 'dead' || rawNpc.status === 'missing') {
           deltas.push({
             kind: 'npc',
             label: `${existing.name}: ${rawNpc.status === 'dead' ? 'Morto' : existing.stance}`,
@@ -469,12 +798,27 @@ export function applyCodexChanges(
           });
         }
       } else {
+        const stance = rawNpc.stance || 'neutral';
+        const baseAff = defaultAffinityFromStance(stance);
+        const deltaAff =
+          typeof rawNpc.affinityDelta === 'number' ? Math.round(rawNpc.affinityDelta) : 0;
+        const affinity = Math.max(-100, Math.min(100, baseAff + deltaAff));
+        const relationship =
+          rawNpc.relationship ?? deriveRelationshipFromAffinity(affinity);
+
         const created: NpcRecord = {
           id: `npc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: rawNpc.name,
           role: rawNpc.role || 'Habitante',
-          stance: rawNpc.stance || 'neutral',
+          stance,
           status: rawNpc.status || 'alive',
+          affinity,
+          relationship,
+          inParty: false,
+          assistAttribute:
+            rawNpc.assistAttribute ??
+            inferNpcAssistAttribute(rawNpc.role || '', rawNpc.notes || ''),
+          assistSpecialty: rawNpc.assistSpecialty,
           lastSeenLocation: currentLocation,
           notes: rawNpc.notes || '',
           firstMetTurn: turn,
@@ -486,6 +830,32 @@ export function applyCodexChanges(
           positive: created.stance !== 'hostile',
         });
       }
+    }
+  }
+
+  // BG3-style companion approval / disapproval reactions
+  if (Array.isArray(changes?.companionReactions)) {
+    for (const reaction of changes.companionReactions) {
+      if (!reaction?.name) continue;
+      const target = npcs.find(
+        (n) => n.name.toLowerCase() === reaction.name.toLowerCase(),
+      );
+      if (target) {
+        const shift = reaction.approved ? 8 : -8;
+        const nextAff = Math.max(-100, Math.min(100, (target.affinity ?? 0) + shift));
+        target.affinity = nextAff;
+        target.relationship = deriveRelationshipFromAffinity(
+          nextAff,
+          target.relationship,
+        );
+      }
+      deltas.push({
+        kind: 'bond',
+        label: reaction.approved
+          ? `${reaction.name} aprovou ♥`
+          : `${reaction.name} desaprovou`,
+        positive: reaction.approved,
+      });
     }
   }
 
@@ -502,18 +872,44 @@ export function applyCodexChanges(
       if (changes?.discoverLocation?.danger) {
         existingLoc.danger = changes.discoverLocation.danger;
       }
+      if (changes?.discoverLocation?.kind) {
+        existingLoc.kind = changes.discoverLocation.kind;
+      }
+      if (changes?.discoverLocation?.status) {
+        const prevStatus = existingLoc.status;
+        existingLoc.status = changes.discoverLocation.status;
+        if (prevStatus !== 'cleared' && existingLoc.status === 'cleared') {
+          deltas.push({
+            kind: 'location',
+            label: `Local Limpo: ${existingLoc.name}`,
+            positive: true,
+          });
+        }
+      }
+      if (typeof changes?.discoverLocation?.recommendedLevel === 'number') {
+        existingLoc.recommendedLevel = changes.discoverLocation.recommendedLevel;
+      }
     } else {
+      const kind = changes?.discoverLocation?.kind || 'city';
       locations.unshift({
         id: `loc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         name: locName,
         description: changes?.discoverLocation?.description || '',
         danger: changes?.discoverLocation?.danger || 'tense',
+        kind,
+        status: changes?.discoverLocation?.status || 'explored',
+        recommendedLevel: changes?.discoverLocation?.recommendedLevel,
         visitCount: 1,
         firstVisitedTurn: turn,
       });
       deltas.push({
         kind: 'location',
-        label: `Local: ${locName}`,
+        label:
+          kind === 'dungeon'
+            ? `Dungeon Descoberta: ${locName}`
+            : kind === 'secret'
+              ? `Local Secreto: ${locName}`
+              : `Local: ${locName}`,
         positive: true,
       });
     }

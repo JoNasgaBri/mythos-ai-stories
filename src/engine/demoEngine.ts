@@ -2,6 +2,7 @@ import { RANDOM_PROTAGONISTS, WORLD_THEMES } from '../data/presets';
 import type {
   ActionIntent,
   AiStateChanges,
+  AttributeId,
   Campaign,
   DiceRollResult,
   EpilogueResponse,
@@ -602,21 +603,25 @@ function buildFollowupActions(theme: WorldThemeId, lang: LanguageId): Array<{
   label: string;
   intent: ActionIntent;
   risk: 'safe' | 'low' | 'medium' | 'high';
+  requiresRoll: boolean;
+  rollSkillHint?: string;
+  attribute?: AttributeId;
+  effectTag?: string;
 }> {
   if (lang === 'en') {
     return [
-      { label: 'Press forward boldly and force a direct confrontation', intent: 'bold', risk: 'high' },
-      { label: 'Slip into cover and watch how the other side reacts', intent: 'stealth', risk: 'medium' },
-      { label: 'Use leverage or calm words to strike an unexpected deal', intent: 'diplomatic', risk: 'low' },
-      { label: 'Search the immediate surroundings for hidden clues or supplies', intent: 'investigate', risk: 'safe' },
+      { label: 'Press forward boldly and force a direct confrontation', intent: 'bold', risk: 'high', requiresRoll: true, rollSkillHint: 'Combat / Force', attribute: 'str', effectTag: 'Combat' },
+      { label: 'Slip into cover and watch how the other side reacts', intent: 'stealth', risk: 'medium', requiresRoll: true, rollSkillHint: 'Stealth', attribute: 'dex', effectTag: 'Stealth' },
+      { label: 'Talk openly or offer a calm bargain to deepen trust', intent: 'diplomatic', risk: 'safe', requiresRoll: false, attribute: 'cha', effectTag: 'Bond' },
+      { label: 'Train your instincts or search the area for hidden clues', intent: 'investigate', risk: 'safe', requiresRoll: false, attribute: 'int', effectTag: 'Train / Clue' },
     ];
   }
   if (lang === 'fr') {
     return [
-      { label: 'Avancer avec audace et provoquer un face-à-face', intent: 'bold', risk: 'high' },
-      { label: 'Se fondre dans l’ombre et observer leur réaction', intent: 'stealth', risk: 'medium' },
-      { label: 'Négocier avec sang-froid pour retourner la situation', intent: 'diplomatic', risk: 'low' },
-      { label: 'Examiner les environs à la recherche d’indices', intent: 'investigate', risk: 'safe' },
+      { label: 'Avancer avec audace et provoquer un face-à-face', intent: 'bold', risk: 'high', requiresRoll: true, rollSkillHint: 'Combat / Force', attribute: 'str', effectTag: 'Combat' },
+      { label: 'Se fondre dans l’ombre et observer leur réaction', intent: 'stealth', risk: 'medium', requiresRoll: true, rollSkillHint: 'Furtivité', attribute: 'dex', effectTag: 'Furtivité' },
+      { label: 'Engager le dialogue calmement pour créer un lien', intent: 'diplomatic', risk: 'safe', requiresRoll: false, attribute: 'cha', effectTag: 'Lien' },
+      { label: 'Examiner les environs à la recherche d’indices', intent: 'investigate', risk: 'safe', requiresRoll: false, attribute: 'int', effectTag: 'Indice' },
     ];
   }
 
@@ -629,10 +634,10 @@ function buildFollowupActions(theme: WorldThemeId, lang: LanguageId): Array<{
   };
 
   return [
-    { label: themeFlavor[theme], intent: 'bold', risk: 'high' },
-    { label: 'Recuar para as sombras e observar em silêncio', intent: 'stealth', risk: 'medium' },
-    { label: 'Tentar uma barganha fria usando o que você sabe', intent: 'diplomatic', risk: 'low' },
-    { label: 'Vasculhar detalhes ocultos e rastros recentes no local', intent: 'investigate', risk: 'safe' },
+    { label: themeFlavor[theme], intent: 'bold', risk: 'high', requiresRoll: true, rollSkillHint: 'Combate / Força', attribute: 'str', effectTag: 'Combate' },
+    { label: 'Recuar para as sombras e agir sem ser visto', intent: 'stealth', risk: 'medium', requiresRoll: true, rollSkillHint: 'Furtividade', attribute: 'dex', effectTag: 'Furtivo' },
+    { label: 'Conversar com firmeza ou fortalecer vínculo com quem está por perto', intent: 'diplomatic', risk: 'safe', requiresRoll: false, attribute: 'cha', effectTag: 'Vínculo' },
+    { label: 'Treinar suas habilidades ou explorar pistas e locais ocultos', intent: 'investigate', risk: 'safe', requiresRoll: false, attribute: 'int', effectTag: 'Treino / Pista' },
   ];
 }
 
@@ -741,13 +746,37 @@ export function demoTurnStory(
   const stateChanges: AiStateChanges = {
     vigorDelta: 0,
     tensionDelta: 0,
+    xpGain: diceRoll
+      ? outcome === 'critical_success'
+        ? 45
+        : outcome === 'success'
+          ? 30
+          : 15
+      : 20,
   };
+
+  if (/\b(trein|pratic|estud|exercit|train|practice|study)\b/i.test(normalized)) {
+    const primarySkill = campaign.player.skills[0] || 'Sobrevivência Tática';
+    stateChanges.skillTraining = [
+      { name: primarySkill, xpGain: 50 },
+    ];
+    stateChanges.xpGain = (stateChanges.xpGain ?? 0) + 25;
+  }
+
+  if (/\b(banco|dinheiro|saque|emprest|emprést|compr|vend|ouro|crédito|loan|gold|money)\b/i.test(normalized)) {
+    stateChanges.currencyDelta = /\b(compr|pagar|gastar|buy|spend)\b/i.test(normalized)
+      ? -40
+      : 150;
+  }
 
   if (locObj) {
     stateChanges.discoverLocation = {
       name: locObj.name,
       description: locObj.description,
       danger: locObj.danger,
+      kind: locObj.danger === 'hostile' ? 'dungeon' : locObj.danger === 'safe' ? 'safehouse' : 'city',
+      status: locObj.danger === 'hostile' ? 'unexplored' : 'explored',
+      recommendedLevel: locObj.danger === 'hostile' ? Math.max(1, campaign.player.level) : undefined,
     };
   }
 
@@ -769,6 +798,47 @@ export function demoTurnStory(
           ? `La tension explose enfin à ${nextLocation} : masques et alliances se brisent d’un seul coup !`
           : `A tensão acumulada explode de vez em ${nextLocation}! Máscaras caem, portas cedem e o confronto inevitável rompe o impasse que sufocava a cena.`;
     stateChanges.tensionDelta = -55;
+  } else if (!diceRoll) {
+    const isDirection = normalized.startsWith('[direção do autor]');
+    const cleanDirection = playerAction
+      .replace(/^\[DIREÇÃO DO AUTOR\]:\s*/i, '')
+      .trim();
+    const isSpoken =
+      normalized.startsWith('você diz:') ||
+      normalized.startsWith('para ') ||
+      normalized.startsWith('falar com') ||
+      normalized.startsWith('you say:') ||
+      normalized.startsWith('vous dites');
+
+    if (isDirection) {
+      outcomeLine =
+        lang === 'en'
+          ? `Narrative direction accepted into canon: ${cleanDirection}. The timeline, atmosphere, and people around ${nextLocation} realign smoothly around what you established.`
+          : lang === 'fr'
+            ? `Direction narrative intégrée au canon : ${cleanDirection}. La scène et les personnages à ${nextLocation} s’ajustent à votre vision.`
+            : `Direção integrada à história: ${cleanDirection}\n\nO ritmo, os personagens e o cenário ao redor de ${nextLocation} se ajustam imediatamente ao que você definiu como autor.`;
+      if (cleanDirection) {
+        stateChanges.addCanonFacts = [cleanDirection.slice(0, 180)];
+      }
+      stateChanges.vigorDelta = 0;
+      stateChanges.tensionDelta = 0;
+    } else {
+      if (lang === 'en') {
+        outcomeLine = isSpoken
+          ? `Your words cut cleanly through the stillness of ${nextLocation}. Nearby ears weigh your intent closely, trading guarded glances before letting the conversation unfold.`
+          : `${campaign.player.name} takes time to move carefully and read ${nextLocation} without rushing, noticing details hidden in plain sight.`;
+      } else if (lang === 'fr') {
+        outcomeLine = isSpoken
+          ? `Vos paroles résonnent dans le calme tendu de ${nextLocation}, poussant vos interlocuteurs à révéler un pan de leur jeu.`
+          : `${campaign.player.name} avance avec mesure et observe ${nextLocation} avec attention, relevant des détails passés inaperçus.`;
+      } else {
+        outcomeLine = isSpoken
+          ? `Suas palavras atravessam o silêncio de ${nextLocation}. Quem está por perto mede cada sílaba antes de responder — o diálogo muda o clima da cena sem precisar de violência.`
+          : `${campaign.player.name} age com calma e observa cada detalhe de ${nextLocation}, avançando na cena de forma natural e percebendo pistas que passariam batido na pressa.`;
+      }
+      stateChanges.vigorDelta = 0;
+      stateChanges.tensionDelta = locObj ? 2 : 0;
+    }
   } else if (lang === 'pt-BR') {
     if (outcome === 'critical_success') {
       outcomeLine = `Sua iniciativa sai com precisão cirúrgica — o ambiente trabalha a seu favor e abre uma brecha rara diante de ${campaign.player.name}.`;
@@ -855,6 +925,17 @@ export function demoTurnStory(
         name: mentionedNpc.name,
         role: mentionedNpc.role,
         stance: nextStance,
+        affinityDelta:
+          outcome === 'critical_success'
+            ? 20
+            : outcome === 'failure' || outcome === 'critical_failure'
+              ? -15
+              : 12,
+        relationship:
+          /\b(beij|namor|flert|paquer|amor|romance|flirt|kiss|date)\b/i.test(normalized) &&
+          (mentionedNpc.affinity ?? 0) >= 25
+            ? 'romance'
+            : undefined,
         notes:
           nextStance === 'ally'
             ? lang === 'en'

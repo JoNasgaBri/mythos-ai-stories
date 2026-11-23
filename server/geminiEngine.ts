@@ -1,4 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
+import {
+  formatModifier,
+  getAttributeModifier,
+  getEffectiveAttributes,
+} from '../src/engine/rpgSystem';
 import type {
   Campaign,
   DiceRollResult,
@@ -12,6 +17,7 @@ import type {
   JournalSummaryResponse,
   LanguageId,
   ResponseLength,
+  SpeechResponse,
   StoryPace,
   StoryTurnResponse,
   WorldThemeId,
@@ -58,8 +64,33 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
             type: 'string',
             enum: ['safe', 'low', 'medium', 'high'],
           },
+          requiresRoll: {
+            type: 'boolean',
+            description:
+              'True ONLY when the action involves real danger, combat, sneaking past active threats, hacking/lockpicking, risky physical/magic feats, or high-stakes deception/intimidation. False for normal dialogue, walking, resting, or routine observation.',
+          },
+          rollSkillHint: {
+            type: 'string',
+            description:
+              'Optional 1-2 word label for what is being tested when requiresRoll is true (e.g. Combate, Furtividade, Blefe, Sobrevivência).',
+          },
+          attribute: {
+            type: 'string',
+            enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+            description: 'BG3 primary attribute most relevant to this choice.',
+          },
+          effectTag: {
+            type: 'string',
+            description:
+              'Short 1-2 word tag showing what this choice impacts (e.g. Vínculo, Romance, Treino, Dungeon, Recursos, Pista, Combate, Explorar).',
+          },
+          unlockHint: {
+            type: 'string',
+            description:
+              'Optional short badge when a player skill, talent, item, or bond makes this option shine (e.g. Tiro Prático Nv.2, CAR +3).',
+          },
         },
-        required: ['label', 'intent', 'risk'],
+        required: ['label', 'intent', 'risk', 'requiresRoll'],
       },
     },
     stateChanges: {
@@ -67,6 +98,34 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
       properties: {
         vigorDelta: { type: 'integer', description: 'Change to vigor (-30 to +25, 0 if unchanged).' },
         tensionDelta: { type: 'integer', description: 'Change to tension (-60 to +25, 0 if unchanged).' },
+        xpGain: {
+          type: 'integer',
+          description: 'XP rewarded for overcoming challenges, training, discoveries, or key story beats (0-120).',
+        },
+        inspirationGain: {
+          type: 'integer',
+          description: 'Award 1 BG3 Inspiration point (0 or 1) on standout roleplay, clever preparation, or heroic beats.',
+        },
+        currencyDelta: {
+          type: 'integer',
+          description: 'Positive or negative change to the player’s money/resources (e.g. +20000 for loan, -350 for supplies).',
+        },
+        currencyLabel: {
+          type: 'string',
+          description: 'Optional currency unit override matching the world (e.g. USD, Ouro, Créditos).',
+        },
+        updateIdentity: {
+          type: 'object',
+          description: 'Use in Freeform Session Zero or when character/world identity is first established or renamed by the player.',
+          properties: {
+            name: { type: 'string' },
+            age: { type: 'integer' },
+            occupation: { type: 'string' },
+            worldTitle: { type: 'string' },
+            worldEra: { type: 'string' },
+            worldPremise: { type: 'string' },
+          },
+        },
         addItems: {
           type: 'array',
           items: {
@@ -79,6 +138,26 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
               },
               quantity: { type: 'integer' },
               note: { type: 'string' },
+              rarity: {
+                type: 'string',
+                enum: ['common', 'uncommon', 'rare', 'epic', 'legendary'],
+              },
+              equipSlot: {
+                type: 'string',
+                enum: ['weapon', 'armor', 'accessory'],
+              },
+              bonuses: {
+                type: 'object',
+                properties: {
+                  str: { type: 'integer' },
+                  dex: { type: 'integer' },
+                  con: { type: 'integer' },
+                  int: { type: 'integer' },
+                  wis: { type: 'integer' },
+                  cha: { type: 'integer' },
+                  maxVigor: { type: 'integer' },
+                },
+              },
             },
             required: ['name'],
           },
@@ -94,6 +173,35 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         addSkills: {
           type: 'array',
           items: { type: 'string' },
+        },
+        skillTraining: {
+          type: 'array',
+          description: 'Award skill training progress or create/level up skills when the player trains, studies, or practices something.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              attribute: {
+                type: 'string',
+                enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+              },
+              xpGain: { type: 'integer', description: 'Skill mastery progress 20-100.' },
+              levelUp: { type: 'boolean', description: 'True on a major training breakthrough.' },
+            },
+            required: ['name'],
+          },
+        },
+        addTalents: {
+          type: 'array',
+          description: 'Unlock a memorable passive Talent / Feat on rare defining achievements or training milestones.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' },
+            },
+            required: ['name', 'description'],
+          },
         },
         addQuests: {
           type: 'array',
@@ -117,7 +225,7 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         },
         upsertNpcs: {
           type: 'array',
-          description: 'Register or update notable NPCs appearing or shifting loyalty in this scene.',
+          description: 'Register or update notable NPCs, bonds, friendships, romance, or rivalries.',
           items: {
             type: 'object',
             properties: {
@@ -131,14 +239,71 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
                 type: 'string',
                 enum: ['alive', 'missing', 'dead'],
               },
+              affinityDelta: {
+                type: 'integer',
+                description: 'Bond/affinity shift (-30 to +30) based on player words and actions.',
+              },
+              relationship: {
+                type: 'string',
+                enum: ['stranger', 'acquaintance', 'friend', 'close', 'romance', 'partner', 'rival', 'enemy'],
+              },
+              assistAttribute: {
+                type: 'string',
+                enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+                description: 'Best BG3 attribute this NPC helps with if invited to the player’s Party.',
+              },
+              assistSpecialty: {
+                type: 'string',
+                description: 'Short specialty label (e.g. Medicina, Negociação, Tiro, Magia).',
+              },
               notes: { type: 'string' },
             },
             required: ['name'],
           },
         },
+        companionReactions: {
+          type: 'array',
+          description: 'Live BG3-style reactions from active party companions when the player’s choice pleases or displeases them.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              approved: { type: 'boolean' },
+              reason: { type: 'string' },
+            },
+            required: ['name', 'approved'],
+          },
+        },
+        advanceTime: {
+          type: 'object',
+          description: 'Optionally advance the world clock when hours/days pass, update weather, or set/decrement a dramatic countdown (e.g. days until outbreak/ritual).',
+          properties: {
+            periods: { type: 'integer', description: 'Number of day periods passed (0-4: morning/afternoon/evening/night).' },
+            weather: { type: 'string' },
+            countdownDelta: { type: 'integer' },
+            setCountdown: {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+                daysLeft: { type: 'integer' },
+              },
+              required: ['label', 'daysLeft'],
+            },
+          },
+        },
+        addBaseUpgrade: {
+          type: 'object',
+          description: 'Record a custom refuge/stronghold fortification or facility built through narration.',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            bonus: { type: 'string' },
+          },
+          required: ['name', 'description', 'bonus'],
+        },
         discoverLocation: {
           type: 'object',
-          description: 'Register or update the current location in the world atlas.',
+          description: 'Register or update the current location, dungeon, safehouse, market, or secret place.',
           properties: {
             name: { type: 'string' },
             description: { type: 'string' },
@@ -146,6 +311,15 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
               type: 'string',
               enum: ['safe', 'tense', 'hostile'],
             },
+            kind: {
+              type: 'string',
+              enum: ['city', 'safehouse', 'dungeon', 'secret', 'market', 'wilderness'],
+            },
+            status: {
+              type: 'string',
+              enum: ['unexplored', 'explored', 'cleared'],
+            },
+            recommendedLevel: { type: 'integer' },
           },
           required: ['name'],
         },
@@ -277,6 +451,25 @@ const FORGED_WORLD_SCHEMA: Record<string, unknown> = {
         name: { type: 'string' },
         age: { type: 'integer' },
         occupation: { type: 'string' },
+        attributes: {
+          type: 'object',
+          description: 'Balanced BG3 starting attributes (8-15 each, total roughly 72-75).',
+          properties: {
+            str: { type: 'integer' },
+            dex: { type: 'integer' },
+            con: { type: 'integer' },
+            int: { type: 'integer' },
+            wis: { type: 'integer' },
+            cha: { type: 'integer' },
+          },
+        },
+        startingCurrency: {
+          type: 'object',
+          properties: {
+            amount: { type: 'integer' },
+            label: { type: 'string' },
+          },
+        },
         traits: { type: 'array', items: { type: 'string' } },
         skills: { type: 'array', items: { type: 'string' } },
         starterItem: {
@@ -350,11 +543,17 @@ function buildSystemInstruction(
     : 'Keep content PG-13: dramatic tension and peril without graphic gore or explicit mature themes.';
 
   return [
-    'You are the MYTHOS Narrative Engine, a literary long-form RPG Game Master.',
+    'You are the MYTHOS Narrative Engine, a collaborative literary co-author and living RPG Game Master.',
     LANGUAGE_DIRECTIVE[campaign.language],
     LENGTH_DIRECTIVE[length],
     matureNote,
-    '=== PERMANENT WORLD BIBLE ===',
+    '=== CO-AUTHOR & COLLABORATIVE STORYTELLING (HIGHEST PRIORITY) ===',
+    '- TRUTH HIERARCHY: #1 The player’s latest input & recent story > #2 User-edited or pinned canon facts > #3 Starting world seed. The initial world prompt is ONLY an opening launchpad — NEVER a rigid prison.',
+    '- "YES, AND..." COLLABORATION: Build WITH the player, never against them. Whenever the player introduces characters (e.g. a neighbor, friend, family member), shifts focus, explores relationships, plans finances/prep, changes tone, or adjusts the timeline/setting (e.g. "antes do vírus se espalhar", "ainda falta uma semana"), embrace it creatively, expand on their ideas, and NEVER yank the story back to repetitive threats or clichés from the starting seed.',
+    '- IMMEDIATE CHARACTER & HOOK INTEGRATION: Every new person, relationship, or goal mentioned by the player MUST appear meaningfully in the narration, be saved via stateChanges.upsertNpcs and stateChanges.addCanonFacts, and drive at least 1-2 of the 3-4 returned choices.',
+    '- ADAPT TO PLAYER VOICE & MOOD (NO FORCED COMBAT): Mirror the player’s perspective (1st person, 3rd person, dialogue, or narrative planning). If the scene is calm, emotional, everyday, investigative, or focused on preparation/relationships, let it breathe and develop organically — do NOT inject artificial combat, zombies, barricades, or stealth ambushes where they do not belong.',
+    '- PRE-APOCALYPSE / SLOW-BURN RULE: If the story takes place before a catastrophe, keep everyday society running (open banks, normal neighbors, daily streets, subtle rumors) until the story naturally advances there.',
+    '=== LIVING WORLD SEED (STARTING BACKDROP — NEVER A CAGE) ===',
     `World Title: ${campaign.world.title}`,
     `Era / Setting: ${campaign.world.era}`,
     `Genres: ${campaign.world.genres.join(', ')}`,
@@ -363,20 +562,28 @@ function buildSystemInstruction(
     `World Laws (Magic / Tech / Survival Rules): ${campaign.world.worldLaws}`,
     `Starting Premise: ${campaign.world.premise}`,
     campaign.world.creativePrompt?.trim()
-      ? `Author's Creative Inspiration & Prompt Direction (HONOR FAITHFULLY IN TONE, MOTIFS, AND PLOT): ${campaign.world.creativePrompt.trim()}`
+      ? `Author's Creative Inspiration & Prompt Direction (EVOLVE WITH THE PLAYER): ${campaign.world.creativePrompt.trim()}`
       : '',
     PACE_DIRECTIVE[campaign.world.storyPace || 'epic'],
     `Current Arc / Book: ${campaign.arcNumber ?? 1}`,
-    `Difficulty Mode: ${campaign.difficulty}. Respect mechanical dice outcomes faithfully — never turn a failure into an unearned triumph.`,
-    'MEMORY DISCIPLINE: Always respect permanentCanonFacts, factions, NPCs, and pastEraArchives. Only emit stateChanges.addCanonFacts (0-2 concise sentences) when an irreversible truth, major death, promise, or revelation occurs.',
-    'Keep stateChanges grounded: track NPCs via upsertNpcs, places via discoverLocation, and faction shifts via upsertFactions.',
-    'Offer 3-4 distinct tactical actions spanning different intents (bold, stealth, diplomatic, investigate, survival).',
-  ].join('\n');
+    `Difficulty Mode: ${campaign.difficulty}. CREATIVE & FAITHFUL DIFFICULTY: Match the chosen difficulty faithfully AND creatively within the current scene’s genre/timeline. On easy, offer forgiving openings; on hard/insane/good-luck, make NPCs sharper, finances/supplies tighter, rivals cleverer, and mistakes truly costly — without breaking timeline logic or forcing arbitrary combat.`,
+    'BG3 PROGRESSION & INFINITE SANDBOX: Read the protagonist’s BG3 attributes (STR/DEX/CON/INT/WIS/CHA), level, leveled skills, talents, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain (15-80), training/practice with skillTraining (growing or creating skills!), breakthroughs with addTalents, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
+    'ACTIVE PARTY COMPANIONS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about.',
+    campaign.freeformMode && campaign.turnCount <= 3
+      ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
+      : '',
+    'DICE & ACTION DISCIPLINE: Reserve requiresRoll=true (risk: "medium" or "high") strictly for actions with real danger, combat, sneaking past active threats, hacking/lockpicking, risky physical/magic feats, or high-stakes deception/intimidation. Keep ordinary dialogue, walking, planning, resting, and routine observation at risk: "safe" with requiresRoll=false, and include at least 1-2 narrative (requiresRoll=false) choices in non-combat scenes.',
+    'MEMORY DISCIPLINE: Honor recent story developments and player-directed changes first; if an older starting-seed fact conflicts with where the player took the story, follow the player’s evolved story. Only emit stateChanges.addCanonFacts (0-2 concise sentences) when a lasting development, new relationship, promise, or revelation occurs.',
+    'Keep stateChanges grounded: track NPCs via upsertNpcs, places/dungeons via discoverLocation, and faction shifts via upsertFactions.',
+    'Offer 4 engaging, meaningfully distinct story choices rooted in the current scene, people, attributes, and goals — set attribute, effectTag (e.g. Vínculo, Romance, Treino, Dungeon, Recursos, Pista, Combate), and optional unlockHint when a player stat/skill/talent shines.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildCompactStateContext(campaign: Campaign): string {
   const recentBeats = campaign.entries
-    .slice(-10)
+    .slice(-14)
     .map((e) => `[${e.role.toUpperCase()}]: ${e.text}`)
     .join('\n');
 
@@ -393,16 +600,38 @@ function buildCompactStateContext(campaign: Campaign): string {
   const dynamicFacts = campaign.codex.canonFacts.filter((f) => !f.pinned).slice(-25);
   const canonFacts = [...pinnedFacts, ...dynamicFacts].slice(0, 35).map((f) => f.text);
 
+  const effAttrs = getEffectiveAttributes(campaign.player);
+
   return JSON.stringify(
     {
       protagonist: {
         name: campaign.player.name,
         age: campaign.player.age,
         occupation: campaign.player.occupation,
+        level: campaign.player.level,
+        xp: `${campaign.player.xp}/${campaign.player.xpToNextLevel}`,
+        attributes: {
+          STR: `${effAttrs.str} (${formatModifier(getAttributeModifier(effAttrs.str))})`,
+          DEX: `${effAttrs.dex} (${formatModifier(getAttributeModifier(effAttrs.dex))})`,
+          CON: `${effAttrs.con} (${formatModifier(getAttributeModifier(effAttrs.con))})`,
+          INT: `${effAttrs.int} (${formatModifier(getAttributeModifier(effAttrs.int))})`,
+          WIS: `${effAttrs.wis} (${formatModifier(getAttributeModifier(effAttrs.wis))})`,
+          CHA: `${effAttrs.cha} (${formatModifier(getAttributeModifier(effAttrs.cha))})`,
+        },
         vigor: `${campaign.player.vigor}/${campaign.player.maxVigor}`,
         tension: campaign.player.tension,
+        inspiration: `${campaign.player.inspiration ?? 1}/4`,
+        currency: `${campaign.player.currency?.amount ?? 0} ${campaign.player.currency?.label ?? 'Ouro'}`,
         traits: campaign.player.traits,
-        skills: campaign.player.skills,
+        skillLevels: (campaign.player.skillLevels ?? []).map(
+          (s) => `${s.name} (Nv.${s.level}, ${s.attribute.toUpperCase()})`,
+        ),
+        talents: (campaign.player.talents ?? []).map(
+          (t) => `${t.name}: ${t.description}`,
+        ),
+        equippedGear: campaign.player.inventory
+          .filter((i) => i.equipped)
+          .map((i) => `${i.name} [${i.equipSlot}]`),
         inventory: campaign.player.inventory.map((i) => `${i.name} (x${i.quantity})`),
         activeQuests: campaign.player.quests
           .filter((q) => q.status === 'active')
@@ -417,6 +646,25 @@ function buildCompactStateContext(campaign: Campaign): string {
       chapter: campaign.currentChapter,
       turn: campaign.turnCount,
       location: campaign.currentLocation,
+      worldClock: campaign.worldClock ?? null,
+      stronghold: campaign.stronghold
+        ? {
+            name: campaign.stronghold.name,
+            location: campaign.stronghold.location,
+            defense: campaign.stronghold.defense,
+            upgrades: campaign.stronghold.upgrades.map((u) => `${u.name} (${u.bonus})`),
+          }
+        : null,
+      activeParty: campaign.codex.npcs
+        .filter((n) => n.inParty && n.status === 'alive')
+        .map((n) => ({
+          name: n.name,
+          role: n.role,
+          relationship: n.relationship ?? 'friend',
+          affinity: n.affinity ?? 0,
+          assistAttribute: n.assistAttribute ?? 'wis',
+          assistSpecialty: n.assistSpecialty || n.role,
+        })),
       permanentCanonFacts: canonFacts,
       factions: campaign.codex.factions.map((f) => ({
         name: f.name,
@@ -428,12 +676,16 @@ function buildCompactStateContext(campaign: Campaign): string {
         name: n.name,
         role: n.role,
         stance: n.stance,
+        relationship: n.relationship ?? 'stranger',
+        affinity: n.affinity ?? 0,
         status: n.status,
         lastSeenLocation: n.lastSeenLocation,
         notes: n.notes,
       })),
       knownLocations: campaign.codex.locations.slice(0, 12).map((l) => ({
         name: l.name,
+        kind: l.kind ?? 'city',
+        status: l.status ?? 'explored',
         danger: l.danger,
         description: l.description,
       })),
@@ -471,8 +723,9 @@ export async function generateStoryStart(
     '2. Set "narration" to Chapter I’s immediate opening moment where the protagonist enters the scene.',
     '3. Populate initial quests, at least 1 NPC (upsertNpcs), starting location (discoverLocation), factions (upsertFactions), and 1-2 foundational addCanonFacts.',
     campaign.world.creativePrompt?.trim()
-      ? '4. Directly weave the motifs, tone, and concept from the Author’s Creative Direction into the worldPrologue, opening scene, NPCs, and starting quest.'
+      ? '4. Directly weave the motifs, tone, and timeline from the Author’s Creative Direction into the worldPrologue, opening scene, NPCs, and starting quest.'
       : '',
+    '5. TIMELINE FIDELITY: If the premise, era, history, or creativePrompt states the story begins BEFORE an outbreak/apocalypse/catastrophe (e.g., "uma semana antes", "antes do vírus"), set the entire opening scene strictly in normal everyday life before the collapse with only subtle unsettling hints — NEVER skip forward to ruins, zombies, or barricades.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -487,7 +740,7 @@ export async function generateStoryStart(
       schema: TURN_RESPONSE_SCHEMA,
     },
     generation_config: {
-      max_output_tokens: 1800,
+      max_output_tokens: 2200,
     },
   });
 
@@ -502,6 +755,9 @@ export async function generateStoryStart(
   };
 }
 
+const CO_AUTHOR_TURN_PATTERN =
+  /^\[DIREÇÃO DO AUTOR\]|\b(antes\s+d[eoa]s?|na\s+verdade|ainda\s+(?:n[aã]o|falta|faltam|tem\s+uma\s+semana)|ele\s+(?:tem|mora|morava|come[cç]a|v[eê]|gosta|gostava|quer|queria)|ela\s+(?:tem|mora|morava|come[cç]a|v[eê])|o\s+mundo\s+ainda)\b/i;
+
 export async function generateStoryTurn(
   apiKey: string,
   model: 'gemini-3.8-flash' | 'gemini-4-argon',
@@ -515,8 +771,13 @@ export async function generateStoryTurn(
   const systemInstruction = buildSystemInstruction(campaign, length);
 
   const rollInstruction = diceRoll
-    ? `DETERMINISTIC FATE ROLL: d20=${diceRoll.roll}, skill_bonus=+${diceRoll.bonus}${diceRoll.bonusSource ? ` (${diceRoll.bonusSource})` : ''}, total=${diceRoll.total} vs DC=${diceRoll.dc} => OUTCOME: ${diceRoll.outcome.toUpperCase()}. Narrate consequences strictly matching this outcome.`
-    : 'No dice roll required for this low-risk observation action; reward curiosity or deepen mystery naturally.';
+    ? `DETERMINISTIC FATE ROLL: d20=${diceRoll.roll}${diceRoll.rolls ? ` (rolled ${diceRoll.rolls[0]} & ${diceRoll.rolls[1]} with ${diceRoll.rollMode}${diceRoll.advantageSource ? ` from ${diceRoll.advantageSource}` : ''})` : ''}${diceRoll.rerolledWithInspiration ? ' [REROLLED WITH BG3 INSPIRATION]' : ''}, total_bonus=${diceRoll.bonus >= 0 ? '+' : ''}${diceRoll.bonus}${diceRoll.bonusSource ? ` (${diceRoll.bonusSource})` : ''}, total=${diceRoll.total} vs DC=${diceRoll.dc} => OUTCOME: ${diceRoll.outcome.toUpperCase()}. Narrate consequences strictly matching this outcome${diceRoll.advantageSource ? ` and highlight how ${diceRoll.advantageSource} assisted!` : '.'}`
+    : 'NARRATIVE FLOW (NO DICE ROLL): This action or dialogue needs no dice check. Resolve it fluidly, naturally, and responsively based on the fiction, character traits, and NPC personalities — never invent an arbitrary roll failure.';
+
+  const isCoAuthorDirection = CO_AUTHOR_TURN_PATTERN.test(playerAction.trim());
+  const directionDirective = isCoAuthorDirection
+    ? 'CO-AUTHOR DIRECTION / TIMELINE SHIFT: The player is actively directing the story, timeline, or introducing characters. Honor every detail they wrote immediately as authoritative canon, transition smoothly to the time/place they specified (discarding any conflicting premature threat from earlier turns), upsert any mentioned people into stateChanges.upsertNpcs, record the timeline truth in stateChanges.addCanonFacts, and offer 3-4 fresh choices directly tied to their new setup.'
+    : '';
 
   const crisisDirective =
     crisisMode === 'survival_test'
@@ -526,53 +787,30 @@ export async function generateStoryTurn(
         : '';
 
   const fullContextPrompt = [
-    'FULL CAMPAIGN MEMORY CORE:',
+    'FULL CAMPAIGN MEMORY CORE (INCLUDES USER-PINNED CANON FACTS & WORLD LORE):',
     buildCompactStateContext(campaign),
     '',
-    `PLAYER ACTION: "${playerAction}"`,
+    `PLAYER INPUT: "${playerAction}"`,
     rollInstruction,
+    directionDirective,
     crisisDirective,
   ]
     .filter(Boolean)
     .join('\n');
 
-  const createWithOptionalChain = async (usePreviousId: boolean) => {
-    return client.interactions.create({
-      model,
-      system_instruction: systemInstruction,
-      previous_interaction_id: usePreviousId ? campaign.interactionId : undefined,
-      input: usePreviousId
-        ? [
-            `UPDATED STATE: arc=${campaign.arcNumber}, vigor=${campaign.player.vigor}/${campaign.player.maxVigor}, tension=${campaign.player.tension}, location=${campaign.currentLocation}, difficulty=${campaign.difficulty}`,
-            `PINNED CANON FACTS: ${campaign.codex.canonFacts.filter((f) => f.pinned).map((f) => f.text).join(' | ') || 'None'}`,
-            `PLAYER ACTION: "${playerAction}"`,
-            rollInstruction,
-            crisisDirective,
-          ]
-            .filter(Boolean)
-            .join('\n')
-        : fullContextPrompt,
-      response_format: {
-        type: 'text',
-        mime_type: 'application/json',
-        schema: TURN_RESPONSE_SCHEMA,
-      },
-      generation_config: {
-        max_output_tokens: 1600,
-      },
-    });
-  };
-
-  let interaction;
-  if (campaign.interactionId) {
-    try {
-      interaction = await createWithOptionalChain(true);
-    } catch {
-      interaction = await createWithOptionalChain(false);
-    }
-  } else {
-    interaction = await createWithOptionalChain(false);
-  }
+  const interaction = await client.interactions.create({
+    model,
+    system_instruction: systemInstruction,
+    input: fullContextPrompt,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: TURN_RESPONSE_SCHEMA,
+    },
+    generation_config: {
+      max_output_tokens: 2200,
+    },
+  });
 
   const parsed = parseStructuredJson<Omit<StoryTurnResponse, 'engineUsed' | 'interactionId'>>(
     interaction.output_text,
@@ -593,9 +831,9 @@ export async function generateLivingWorldPulse(
   const systemInstruction = buildSystemInstruction(campaign, 'short');
 
   const prompt = [
-    'LIVING WORLD PULSE (the protagonist hesitated and time ticked forward in the scene).',
+    'LIVING WORLD PULSE (a quiet ambient beat passes in the current scene).',
     buildCompactStateContext(campaign),
-    'Advance the environment or NPCs subtly in 2-3 atmospheric sentences, raising tension without unfairly killing the player outright. Keep waitingForResponse=false unless an urgent confrontation demands immediate response.',
+    'STRICT TIMELINE & ATMOSPHERE RULE: Match the exact current timeline and permanentCanonFacts of this scene. If the disaster/outbreak has NOT happened yet or tension is below 45, write ONLY a grounded everyday atmospheric detail, radio murmur, or neighbor/city moment consistent with normal life and subtle foreboding — NEVER introduce zombies, barricades, gunfire, or infection symptoms unless already established on screen. Preserve or refresh 3-4 concrete actions fitting the current moment.',
   ].join('\n');
 
   const interaction = await client.interactions.create({
@@ -803,6 +1041,93 @@ export async function generateVisualAsset(
   };
 }
 
+const TTS_VOICE_BY_THEME: Record<WorldThemeId, { voice: string; style: string }> = {
+  fantasy: {
+    voice: 'Charon',
+    style: 'Warm, atmospheric dark-fantasy audiobook narrator with steady dramatic pacing.',
+  },
+  cyberpunk: {
+    voice: 'Fenrir',
+    style: 'Cool, sharp neo-noir sci-fi narrator with subtle midnight tension.',
+  },
+  mystery: {
+    voice: 'Orus',
+    style: 'Measured, classic noir detective storyteller with intriguing pauses.',
+  },
+  zombies: {
+    voice: 'Puck',
+    style: 'Grounded, urgent survival thriller narrator with crisp clarity.',
+  },
+  apocalyptic: {
+    voice: 'Charon',
+    style: 'Gravelly, contemplative wasteland chronicler with resonant weight.',
+  },
+};
+
+const TTS_LANG_CODE: Record<LanguageId, string> = {
+  'pt-BR': 'pt-BR',
+  en: 'en-US',
+  fr: 'fr-FR',
+};
+
+export async function generateSceneSpeech(
+  apiKey: string,
+  text: string,
+  language: LanguageId,
+  theme: WorldThemeId,
+): Promise<SpeechResponse> {
+  const cleanText = text.replace(/\s+/g, ' ').trim().slice(0, 2600);
+  if (!cleanText) {
+    throw new Error('No narration text provided for speech synthesis.');
+  }
+
+  const client = new GoogleGenAI({ apiKey });
+  const profile = TTS_VOICE_BY_THEME[theme] ?? TTS_VOICE_BY_THEME.fantasy;
+  const langCode = TTS_LANG_CODE[language] ?? 'pt-BR';
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash-tts',
+    input: [
+      {
+        type: 'text',
+        text: cleanText,
+        annotations: [
+          {
+            type: 'speech_metadata',
+            speaker: 'Narrator',
+            style: profile.style,
+          },
+        ],
+      },
+    ],
+    response_format: {
+      type: 'audio',
+      mime_type: 'audio/wav',
+    },
+    generation_config: {
+      speech_config: [
+        {
+          speaker: 'Narrator',
+          voice: profile.voice,
+          language: langCode,
+        },
+      ],
+    },
+  });
+
+  const audio = interaction.output_audio;
+  if (!audio?.data) {
+    throw new Error('Gemini 3.8 TTS did not return audio data.');
+  }
+
+  const mimeType = audio.mime_type || 'audio/wav';
+  return {
+    dataUrl: `data:${mimeType};base64,${audio.data}`,
+    mimeType,
+    engineUsed: 'gemini',
+  };
+}
+
 const VALID_THEMES = new Set<WorldThemeId>([
   'fantasy',
   'cyberpunk',
@@ -858,6 +1183,7 @@ export async function generateForgedWorld(
       ? 'Tone rating: PG-13 dramatic adventure.'
       : 'Mature 18+ thematic depth allowed: moral ambiguity, political tension, survival stakes, and dark atmosphere without gratuitous gore.',
     FORGE_MODE_GUIDANCE[req.mode],
+    'TIMELINE FIDELITY: If inspirationPrompt specifies that the story begins BEFORE an outbreak, war, or apocalypse (e.g., "uma semana antes", "antes do vírus"), set era, history, premise, worldLaws, and creativePrompt strictly in the pre-collapse normal world where only subtle rumors or odd news exist.',
     'Never return empty strings. Always invent vivid, playable proper nouns, secrets, and hooks.',
   ].join('\n');
 
@@ -922,6 +1248,23 @@ export async function generateForgedWorld(
         name: String(rawProtag.name || '').trim() || 'Kaelen Thorne',
         age: Math.max(16, Math.min(999, Math.round(Number(rawProtag.age) || 28))),
         occupation: String(rawProtag.occupation || '').trim() || 'Viajante',
+        attributes: rawProtag.attributes
+          ? {
+              str: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.str) || 10))),
+              dex: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.dex) || 10))),
+              con: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.con) || 10))),
+              int: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.int) || 10))),
+              wis: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.wis) || 10))),
+              cha: Math.max(8, Math.min(15, Math.round(Number(rawProtag.attributes.cha) || 10))),
+            }
+          : undefined,
+        startingCurrency:
+          rawProtag.startingCurrency && rawProtag.startingCurrency.label
+            ? {
+                amount: Math.max(0, Math.round(Number(rawProtag.startingCurrency.amount) || 100)),
+                label: String(rawProtag.startingCurrency.label).trim(),
+              }
+            : undefined,
         traits: Array.isArray(rawProtag.traits)
           ? rawProtag.traits.map((t) => String(t).trim()).filter(Boolean).slice(0, 4)
           : [],

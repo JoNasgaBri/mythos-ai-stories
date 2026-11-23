@@ -1,11 +1,16 @@
 import {
   AlertTriangle,
+  Award,
   BookMarked,
   Brain,
   CheckCircle2,
+  Clock,
+  Coins,
   Flag,
+  Heart,
   MapPin,
   PackagePlus,
+  Shield,
   ShieldAlert,
   Sparkles,
   UserPlus,
@@ -24,7 +29,19 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
     <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex max-w-xs flex-col gap-2 sm:right-6 sm:bottom-6">
       {toasts.map((toast) => {
         const icon =
-          toast.kind === 'item_add' ? (
+          toast.kind === 'level' || toast.kind === 'talent' ? (
+            <Award className="h-4 w-4 text-[#fbbf24]" />
+          ) : toast.kind === 'inspiration' ? (
+            <Sparkles className="h-4 w-4 text-[#fbbf24]" />
+          ) : toast.kind === 'base' ? (
+            <Shield className="h-4 w-4 text-[var(--success)]" />
+          ) : toast.kind === 'time' ? (
+            <Clock className="h-4 w-4 text-[var(--accent)]" />
+          ) : toast.kind === 'bond' ? (
+            <Heart className="h-4 w-4 text-[#f472b6]" />
+          ) : toast.kind === 'currency' ? (
+            <Coins className="h-4 w-4 text-[#fbbf24]" />
+          ) : toast.kind === 'item_add' ? (
             <PackagePlus className="h-4 w-4 text-[var(--accent)]" />
           ) : toast.kind === 'quest' || toast.kind === 'save' ? (
             <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />

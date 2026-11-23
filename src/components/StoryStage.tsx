@@ -12,27 +12,46 @@ import {
   MessageSquare,
   PanelRightOpen,
   Pencil,
+  RotateCcw,
   Scale,
   Send,
   Shield,
   Skull,
   Sparkles,
+  Square,
   Swords,
+  Undo2,
+  Volume2,
+  Wand2,
   X,
   Zap,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { INTENT_LABELS, UI_COPY } from '../data/presets';
-import { DIFFICULTY_DC, formatOutcomeLabel } from '../engine/diceEngine';
+import {
+  assessFreeAction,
+  assessSuggestedAction,
+  DIFFICULTY_DC,
+  formatOutcomeLabel,
+} from '../engine/diceEngine';
+import {
+  ATTRIBUTE_META,
+  formatModifier,
+  getEffectiveAttributes,
+} from '../engine/rpgSystem';
 import type {
   ActionIntent,
   ActionRisk,
+  AttributeId,
   Campaign,
+  CommandInputMode,
+  DiceRollPolicy,
   InventoryItem,
   LanguageId,
   LocationRecord,
   NpcRecord,
   TacticalAction,
+  WorldConfig,
 } from '../types/game';
 import { ContextHud } from './ContextHud';
 import { EpiloguePanel } from './EpiloguePanel';
@@ -45,15 +64,39 @@ interface StoryStageProps {
   isSummarizing: boolean;
   illustratingEntryId: string | null;
   isGeneratingPortrait: boolean;
+  generatingNpcPortraitId?: string | null;
+  speakingEntryId?: string | null;
+  loadingSpeechEntryId?: string | null;
+  canUndo?: boolean;
+  canRegenerate?: boolean;
+  canRerollLastTurn?: boolean;
+  restoredDraft?: { id: number; text: string } | null;
+  onConsumeRestoredDraft?: () => void;
+  onUndoTurn?: () => void;
+  onRegenerateTurn?: () => void;
+  onRerollLastTurn?: () => void;
+  onToggleSpeakEntry?: (entryId: string, text: string) => void;
+  onTogglePartyMember?: (npcId: string) => void;
+  onGenerateNpcPortrait?: (npcId: string) => void;
+  onBuildStrongholdUpgrade?: (upgradeId: string) => void;
+  onOpenWorldMap?: () => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
     risk?: ActionRisk,
+    requiresRoll?: boolean,
+    isDirection?: boolean,
+    forcedAttribute?: AttributeId,
   ) => void;
   onTypingActivity: () => void;
   onSummarizeNow: () => void;
   onAddCanonFact: (factText: string) => void;
   onRemoveCanonFact: (factId: string) => void;
+  onUpdateWorldNotes?: (
+    patch: Partial<Pick<WorldConfig, 'era' | 'history' | 'premise' | 'creativePrompt'>>,
+  ) => void;
+  onSpendAttributePoint?: (attr: AttributeId) => void;
+  onToggleEquipItem?: (itemId: string) => void;
   onResolveVigorCrisis: (
     choice: 'survival_roll' | 'use_consumable' | 'accept_end',
     consumable?: InventoryItem,
@@ -75,13 +118,6 @@ const INTENT_ICON: Record<ActionIntent, typeof Swords> = {
   item: Sparkles,
 };
 
-const RISK_DOT_COLOR: Record<ActionRisk, string> = {
-  safe: 'var(--success)',
-  low: 'var(--accent)',
-  medium: 'var(--warning)',
-  high: 'var(--danger)',
-};
-
 export function StoryStage({
   campaign,
   language,
@@ -90,11 +126,30 @@ export function StoryStage({
   isSummarizing,
   illustratingEntryId,
   isGeneratingPortrait,
+  generatingNpcPortraitId,
+  speakingEntryId,
+  loadingSpeechEntryId,
+  canUndo,
+  canRegenerate,
+  canRerollLastTurn,
+  restoredDraft,
+  onConsumeRestoredDraft,
+  onUndoTurn,
+  onRegenerateTurn,
+  onRerollLastTurn,
+  onToggleSpeakEntry,
+  onTogglePartyMember,
+  onGenerateNpcPortrait,
+  onBuildStrongholdUpgrade,
+  onOpenWorldMap,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
   onAddCanonFact,
   onRemoveCanonFact,
+  onUpdateWorldNotes,
+  onSpendAttributePoint,
+  onToggleEquipItem,
   onResolveVigorCrisis,
   onConcludeCampaign,
   onIllustrateEntry,
@@ -105,7 +160,8 @@ export function StoryStage({
 }: StoryStageProps) {
   const copy = UI_COPY[language];
   const [inputText, setInputText] = useState('');
-  const [selectedIntent, setSelectedIntent] = useState<ActionIntent>('bold');
+  const [inputMode, setInputMode] = useState<CommandInputMode>('act');
+  const [dicePolicy, setDicePolicy] = useState<DiceRollPolicy>('auto');
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [mobileHudOpen, setMobileHudOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{
@@ -130,6 +186,13 @@ export function StoryStage({
     return () => window.removeEventListener('keydown', onKey);
   }, [lightboxImage]);
 
+  useEffect(() => {
+    if (!restoredDraft) return;
+    setInputText(restoredDraft.text);
+    onConsumeRestoredDraft?.();
+    textareaRef.current?.focus();
+  }, [onConsumeRestoredDraft, restoredDraft]);
+
   const isEnded =
     campaign.status === 'ended_fallen' || campaign.status === 'ended_victory';
   const isVigorCrisis = campaign.status === 'crisis_vigor';
@@ -138,23 +201,88 @@ export function StoryStage({
     (item) => item.category === 'consumable',
   );
 
+  const effectiveAttrs = getEffectiveAttributes(campaign.player);
+
+  const liveAssessment = assessFreeAction(
+    inputText,
+    inputMode,
+    campaign.player.skills,
+    campaign.player.tension,
+    campaign.difficulty,
+    dicePolicy,
+    language,
+    effectiveAttrs,
+    campaign.player.skillLevels,
+  );
+
+  const cycleDicePolicy = () => {
+    setDicePolicy((prev) =>
+      prev === 'auto' ? 'force' : prev === 'force' ? 'off' : 'auto',
+    );
+  };
+
+  const formatSayText = (raw: string): string => {
+    const alreadyFormatted =
+      /^(você diz:|para\s+\S+:?|falar com|you say:|to\s+\S+:?|vous dites\s*:|[«"'])/i.test(
+        raw,
+      );
+    if (alreadyFormatted) return raw;
+    if (language === 'en') return `You say: "${raw}"`;
+    if (language === 'fr') return `Vous dites : « ${raw} »`;
+    return `Você diz: "${raw}"`;
+  };
+
   const handleSubmit = () => {
     const trimmed = inputText.trim();
     if (!trimmed && !selectedItem) return;
     if (isBusy || isEnded || isVigorCrisis) return;
 
+    if (inputMode === 'direct') {
+      const baseText = selectedItem
+        ? trimmed
+          ? `${trimmed} (usando ${selectedItem.name})`
+          : `Destacar ${selectedItem.name} na cena`
+        : trimmed;
+      setInputText('');
+      setSelectedItem(null);
+      onSendAction(
+        `[DIREÇÃO DO AUTOR]: ${baseText}`,
+        'investigate',
+        'safe',
+        false,
+        true,
+      );
+      return;
+    }
+
     const finalPrompt = selectedItem
       ? trimmed
-        ? `Usar ${selectedItem.name}: ${trimmed}`
+        ? inputMode === 'say'
+          ? `Mostrando ${selectedItem.name}, você diz: "${trimmed}"`
+          : `Usar ${selectedItem.name}: ${trimmed}`
         : `Usar ${selectedItem.name} na cena atual`
-      : trimmed;
+      : inputMode === 'say'
+        ? formatSayText(trimmed)
+        : trimmed;
 
-    const intentToUse = selectedItem ? 'item' : selectedIntent;
-    const riskToUse: ActionRisk = selectedIntent === 'investigate' ? 'low' : 'medium';
+    const intentToUse: ActionIntent = selectedItem
+      ? 'item'
+      : liveAssessment.inferredIntent;
+    const willRoll = liveAssessment.requiresRoll;
+    const riskToUse: ActionRisk = willRoll
+      ? liveAssessment.inferredRisk
+      : 'safe';
 
     setInputText('');
     setSelectedItem(null);
-    onSendAction(finalPrompt, intentToUse, riskToUse);
+    onSendAction(
+      finalPrompt,
+      intentToUse,
+      riskToUse,
+      willRoll,
+      false,
+      liveAssessment.attribute,
+    );
   };
 
   const handleUseItemFromHud = (item: InventoryItem) => {
@@ -164,16 +292,16 @@ export function StoryStage({
   };
 
   const handleMentionNpcFromHud = (npc: NpcRecord) => {
-    setSelectedIntent('diplomatic');
+    setInputMode('say');
     setInputText((prev) =>
-      prev.trim() ? `${prev.trim()} (${npc.name})` : `Falar com ${npc.name}: `,
+      prev.trim() ? `${prev.trim()} (para ${npc.name})` : `Para ${npc.name}: `,
     );
     setMobileHudOpen(false);
     textareaRef.current?.focus();
   };
 
   const handleTravelFromHud = (loc: LocationRecord) => {
-    setSelectedIntent('stealth');
+    setInputMode('act');
     setInputText(`Seguir em direção a ${loc.name}`);
     setMobileHudOpen(false);
     textareaRef.current?.focus();
@@ -181,7 +309,23 @@ export function StoryStage({
 
   const handleActionCardClick = (action: TacticalAction) => {
     if (isBusy || isEnded || isVigorCrisis) return;
-    onSendAction(action.label, action.intent, action.risk);
+    const cardCheck = assessSuggestedAction(
+      action,
+      campaign.player.skills,
+      campaign.difficulty,
+      campaign.player.tension,
+      dicePolicy,
+      effectiveAttrs,
+      campaign.player.skillLevels,
+    );
+    onSendAction(
+      action.label,
+      action.intent,
+      action.risk,
+      cardCheck.requiresRoll,
+      false,
+      cardCheck.attribute,
+    );
   };
 
   const handleCustomizeAction = (
@@ -189,7 +333,7 @@ export function StoryStage({
     action: TacticalAction,
   ) => {
     e.stopPropagation();
-    setSelectedIntent(action.intent);
+    setInputMode(action.intent === 'diplomatic' ? 'say' : 'act');
     setInputText(action.label);
     textareaRef.current?.focus();
   };
@@ -211,6 +355,13 @@ export function StoryStage({
   const firstNarratorIndex = campaign.entries.findIndex(
     (e) => e.role === 'narrator',
   );
+  let lastNarratorIndex = -1;
+  for (let i = campaign.entries.length - 1; i >= 0; i--) {
+    if (campaign.entries[i].role === 'narrator') {
+      lastNarratorIndex = i;
+      break;
+    }
+  }
 
   return (
     <div className="relative z-10 mx-auto flex h-[calc(100vh-3.5rem)] max-w-[1440px] gap-6 px-4 py-4 sm:px-6">
@@ -324,10 +475,27 @@ export function StoryStage({
                 return (
                   <div
                     key={entry.id}
-                    className="animate-beat-enter flex items-start gap-2.5 border-l-2 border-[var(--accent)]/60 py-1 pl-4"
+                    className={`animate-beat-enter flex items-start gap-2.5 border-l-2 py-1 pl-4 ${
+                      entry.isDirection
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)]/35 pr-3 rounded-r-xl'
+                        : 'border-[var(--accent)]/60'
+                    }`}
                   >
-                    <span className="mt-1 text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
-                      ▸ Você
+                    <span
+                      className={`mt-1 shrink-0 text-xs font-semibold uppercase tracking-wider ${
+                        entry.isDirection
+                          ? 'inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]'
+                          : 'text-[var(--accent)]'
+                      }`}
+                    >
+                      {entry.isDirection ? (
+                        <>
+                          <Wand2 className="h-3 w-3" />
+                          <span>Direção</span>
+                        </>
+                      ) : (
+                        '▸ Você'
+                      )}
                     </span>
                     <div className="space-y-1.5">
                       <p className="text-sm italic leading-relaxed text-[var(--text-secondary)] sm:text-base">
@@ -337,12 +505,33 @@ export function StoryStage({
                         <div className="font-mono-tech inline-flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1 text-[11px]">
                           <Dices className="h-3.5 w-3.5 text-[var(--accent)]" />
                           <span className="text-[var(--text-secondary)]">
-                            d20 ({entry.diceRoll.roll})
-                            {entry.diceRoll.bonus > 0
-                              ? ` + ${entry.diceRoll.bonus} (${entry.diceRoll.bonusSource})`
-                              : ''}{' '}
+                            {entry.diceRoll.rolls
+                              ? `2×d20 (${entry.diceRoll.rolls[0]}, ${entry.diceRoll.rolls[1]} → ${entry.diceRoll.roll})`
+                              : `d20 (${entry.diceRoll.roll})`}
+                            {entry.diceRoll.attribute &&
+                            typeof entry.diceRoll.attributeMod === 'number' &&
+                            entry.diceRoll.attributeMod !== 0
+                              ? ` ${entry.diceRoll.attributeMod > 0 ? '+' : '-'} ${Math.abs(entry.diceRoll.attributeMod)} (${ATTRIBUTE_META[entry.diceRoll.attribute].short[language]})`
+                              : ''}
+                            {entry.diceRoll.skillLevelBonus &&
+                            entry.diceRoll.skillLevelBonus > 0 &&
+                            entry.diceRoll.bonusSource
+                              ? ` + ${entry.diceRoll.skillLevelBonus} (${entry.diceRoll.bonusSource})`
+                              : !entry.diceRoll.attribute && entry.diceRoll.bonus !== 0
+                                ? ` ${formatModifier(entry.diceRoll.bonus)}${entry.diceRoll.bonusSource ? ` (${entry.diceRoll.bonusSource})` : ''}`
+                                : ''}{' '}
                             = <strong className="text-[var(--text-primary)]">{entry.diceRoll.total}</strong> vs DC {entry.diceRoll.dc}
                           </span>
+                          {entry.diceRoll.advantageSource ? (
+                            <span className="rounded bg-[var(--success)]/12 px-1.5 py-0.5 text-[10px] font-medium text-[var(--success)]">
+                              Vantagem ({entry.diceRoll.advantageSource})
+                            </span>
+                          ) : null}
+                          {entry.diceRoll.rerolledWithInspiration ? (
+                            <span className="rounded bg-[#fbbf24]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#fbbf24]">
+                              ✦ Inspiração
+                            </span>
+                          ) : null}
                           <span
                             className="font-semibold"
                             style={{
@@ -454,6 +643,46 @@ export function StoryStage({
                             {entry.mood}
                           </span>
                         ) : null}
+                        {onToggleSpeakEntry ? (
+                          <button
+                            type="button"
+                            disabled={
+                              Boolean(loadingSpeechEntryId) &&
+                              loadingSpeechEntryId !== entry.id
+                            }
+                            onClick={() => onToggleSpeakEntry(entry.id, entry.text)}
+                            title={
+                              speakingEntryId === entry.id
+                                ? 'Parar narração em voz'
+                                : 'Ouvir cena narrada (Gemini 3.8 TTS)'
+                            }
+                            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition disabled:opacity-45 ${
+                              speakingEntryId === entry.id
+                                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                                : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
+                            }`}
+                          >
+                            {speakingEntryId === entry.id ? (
+                              <>
+                                <Square className="h-3 w-3" />
+                                <span>Parar</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2
+                                  className={`h-3 w-3 ${
+                                    loadingSpeechEntryId === entry.id
+                                      ? 'animate-pulse text-[var(--accent)]'
+                                      : ''
+                                  }`}
+                                />
+                                <span>
+                                  {loadingSpeechEntryId === entry.id ? '...' : 'Ouvir'}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           disabled={Boolean(illustratingEntryId)}
@@ -484,6 +713,50 @@ export function StoryStage({
                           </span>
                         ))}
                       </footer>
+                    ) : null}
+
+                    {/* Latest Turn Controls: Undo, Regenerate, BG3 Inspiration Reroll */}
+                    {idx === lastNarratorIndex &&
+                    !isEnded &&
+                    !isBusy &&
+                    (canUndo || canRegenerate || canRerollLastTurn) ? (
+                      <div className="mt-3.5 flex flex-wrap items-center justify-end gap-1.5 border-t border-[var(--border-subtle)]/70 pt-2.5">
+                        {canRerollLastTurn && onRerollLastTurn ? (
+                          <button
+                            type="button"
+                            onClick={onRerollLastTurn}
+                            title="Gastar 1 Ponto de Inspiração BG3 para rerrolar o dado d20 deste turno"
+                            className="inline-flex items-center gap-1 rounded-lg border border-[#fbbf24]/50 bg-[#fbbf24]/12 px-2.5 py-1 text-[11px] font-semibold text-[#fbbf24] transition hover:bg-[#fbbf24]/22"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            <span>
+                              Rerrolar d20 (Inspiração {campaign.player.inspiration ?? 1})
+                            </span>
+                          </button>
+                        ) : null}
+                        {canRegenerate && onRegenerateTurn ? (
+                          <button
+                            type="button"
+                            onClick={onRegenerateTurn}
+                            title="Gerar uma versão alternativa desta última resposta da IA"
+                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Regerar Cena</span>
+                          </button>
+                        ) : null}
+                        {canUndo && onUndoTurn ? (
+                          <button
+                            type="button"
+                            onClick={onUndoTurn}
+                            title="Voltar 1 turno instantaneamente (sem perder o progresso anterior)"
+                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition hover:border-[var(--warning)] hover:text-[var(--warning)]"
+                          >
+                            <Undo2 className="h-3 w-3" />
+                            <span>Voltar 1 Turno</span>
+                          </button>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 </article>
@@ -578,9 +851,30 @@ export function StoryStage({
                 ) : null}
 
                 {campaign.actions.length > 0 ? (
-                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                    {campaign.actions.map((action) => {
+                  <div className="mb-3 space-y-1.5">
+                    <div className="flex items-center justify-between px-1 text-[11px]">
+                      <span className="font-semibold uppercase tracking-wider text-[var(--accent)]">
+                        Suas Escolhas
+                      </span>
+                      <span className="text-[var(--text-muted)]">
+                        Clique para escolher ou escreva abaixo
+                      </span>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {campaign.actions.map((action) => {
                       const Icon = INTENT_ICON[action.intent] ?? Sparkles;
+                      const cardCheck = assessSuggestedAction(
+                        action,
+                        campaign.player.skills,
+                        campaign.difficulty,
+                        campaign.player.tension,
+                        dicePolicy,
+                        effectiveAttrs,
+                        campaign.player.skillLevels,
+                      );
+                      const isHighRisk = action.risk === 'high';
+                      const attrShort =
+                        ATTRIBUTE_META[cardCheck.attribute].short[language];
                       return (
                         <div
                           key={action.id}
@@ -597,18 +891,55 @@ export function StoryStage({
                             isBusy ? 'pointer-events-none opacity-50' : ''
                           }`}
                         >
-                          <div className="flex min-w-0 items-start gap-2.5">
+                          <div className="flex min-w-0 flex-1 items-start gap-2.5">
                             <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
                               <Icon className="h-3.5 w-3.5" />
                             </span>
-                            <div className="min-w-0">
-                              <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                                <span>{INTENT_LABELS[action.intent][language]}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                                <span>
+                                  {action.effectTag ||
+                                    INTENT_LABELS[action.intent][language]}
+                                </span>
                                 <span
-                                  className="h-1.5 w-1.5 rounded-full"
-                                  style={{ backgroundColor: RISK_DOT_COLOR[action.risk] }}
-                                  title={`Risco: ${action.risk}`}
-                                />
+                                  title={`${ATTRIBUTE_META[cardCheck.attribute].full[language]} ${formatModifier(cardCheck.attributeMod)}`}
+                                  className="font-mono-tech rounded bg-[var(--bg-canvas)]/80 px-1.5 py-0.5 text-[9px] font-bold tracking-normal text-[var(--text-secondary)]"
+                                >
+                                  {attrShort} {formatModifier(cardCheck.attributeMod)}
+                                </span>
+                                {cardCheck.requiresRoll ? (
+                                  <span
+                                    title={`${cardCheck.reason || 'Teste de risco'} · ${attrShort} ${formatModifier(cardCheck.attributeMod)}${
+                                      cardCheck.bonusSource
+                                        ? ` + ${cardCheck.bonusSource}`
+                                        : ''
+                                    }`}
+                                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-bold tracking-normal normal-case ${
+                                      isHighRisk
+                                        ? 'border-[var(--danger)]/45 bg-[var(--danger)]/12 text-[var(--danger)]'
+                                        : 'border-[var(--warning)]/45 bg-[var(--warning)]/12 text-[var(--warning)]'
+                                    }`}
+                                  >
+                                    <Dices className="h-2.5 w-2.5" />
+                                    d20
+                                    {cardCheck.totalBonus !== 0
+                                      ? ` · ${formatModifier(cardCheck.totalBonus)}`
+                                      : ''}
+                                  </span>
+                                ) : (
+                                  <span
+                                    title="Avança a história sem rolagem de dado"
+                                    className="rounded-md bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 text-[9px] font-semibold tracking-normal normal-case text-[var(--success)]"
+                                  >
+                                    Livre
+                                  </span>
+                                )}
+                                {action.unlockHint ? (
+                                  <span className="inline-flex items-center gap-0.5 rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-semibold tracking-normal normal-case text-[var(--accent)]">
+                                    <Sparkles className="h-2.5 w-2.5" />
+                                    {action.unlockHint}
+                                  </span>
+                                ) : null}
                               </div>
                               <p className="text-xs leading-snug font-medium text-[var(--text-primary)]">
                                 {action.label}
@@ -627,33 +958,114 @@ export function StoryStage({
                         </div>
                       );
                     })}
+                    </div>
                   </div>
                 ) : null}
 
                 {/* Spotlight Command Bar */}
                 <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-2.5 shadow-[var(--shadow-elevated)]">
-                  <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1">
-                    {(
-                      [
-                        { id: 'bold', label: 'Agir' },
-                        { id: 'diplomatic', label: 'Falar' },
-                        { id: 'investigate', label: 'Investigar' },
-                        { id: 'stealth', label: 'Furtivo' },
-                      ] as Array<{ id: ActionIntent; label: string }>
-                    ).map((mode) => (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+                    {/* Clear 3-mode pill toggle: Agir vs Falar vs Dirigir */}
+                    <div className="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-0.5">
                       <button
-                        key={mode.id}
                         type="button"
-                        onClick={() => setSelectedIntent(mode.id)}
-                        className={`rounded-lg px-2.5 py-1 text-[11px] font-medium transition ${
-                          selectedIntent === mode.id
-                            ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                        onClick={() => setInputMode('act')}
+                        title="Descrever uma ação, movimento, exploração ou combate"
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                          inputMode === 'act'
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm'
                             : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
                         }`}
                       >
-                        {mode.label}
+                        <Compass className="h-3.5 w-3.5" />
+                        <span>
+                          {language === 'en' ? 'Act' : 'Agir'}
+                        </span>
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => setInputMode('say')}
+                        title="Falar em diálogo com personagens da cena"
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                          inputMode === 'say'
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm'
+                            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <span>
+                          {language === 'en'
+                            ? 'Say'
+                            : language === 'fr'
+                              ? 'Parler'
+                              : 'Falar'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInputMode('direct')}
+                        title="Guiar a história como co-autor: mudar linha do tempo, apresentar personagens ou corrigir o cenário (sempre sem dado)"
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                          inputMode === 'direct'
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm'
+                            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <Wand2 className="h-3.5 w-3.5" />
+                        <span>
+                          {language === 'en'
+                            ? 'Direct'
+                            : language === 'fr'
+                              ? 'Diriger'
+                              : 'Dirigir'}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Transparent Dice Policy & Live Trigger Pill */}
+                    <button
+                      type="button"
+                      disabled={inputMode === 'direct'}
+                      onClick={cycleDicePolicy}
+                      title={
+                        inputMode === 'direct'
+                          ? 'Modo Dirigir nunca rola dado — a IA obedece sua direção narrativa'
+                          : 'Clique para alternar: d20 Automático (só quando há risco) → Forçar teste → Sem dado'
+                      }
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                        inputMode === 'direct'
+                          ? 'border-[var(--accent)]/40 bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : dicePolicy === 'force'
+                            ? 'border-[var(--accent)]/60 bg-[var(--accent-soft)] text-[var(--accent)]'
+                            : dicePolicy === 'off'
+                              ? 'border-[var(--success)]/45 bg-[var(--success)]/12 text-[var(--success)]'
+                              : liveAssessment.requiresRoll
+                                ? 'border-[var(--warning)]/60 bg-[var(--warning)]/14 text-[var(--warning)]'
+                                : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                      }`}
+                    >
+                      <Dices className="h-3.5 w-3.5" />
+                      <span>
+                        {inputMode === 'direct'
+                          ? 'Sem dado · Direção da História'
+                          : dicePolicy === 'force'
+                            ? 'd20: Forçar teste'
+                            : dicePolicy === 'off'
+                              ? 'Sem dado (Narrativo)'
+                              : liveAssessment.requiresRoll
+                                ? `Rolará d20 · ${liveAssessment.reason}${
+                                    liveAssessment.attribute
+                                      ? ` (${ATTRIBUTE_META[liveAssessment.attribute].short[language]}${
+                                          typeof liveAssessment.totalBonus === 'number' &&
+                                          liveAssessment.totalBonus !== 0
+                                            ? ` ${formatModifier(liveAssessment.totalBonus)}`
+                                            : ''
+                                        })`
+                                      : ''
+                                  }`
+                                : 'd20 Auto · Sem dado'}
+                      </span>
+                    </button>
 
                     {selectedItem ? (
                       <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-medium text-[var(--accent)]">
@@ -684,7 +1096,25 @@ export function StoryStage({
                           handleSubmit();
                         }
                       }}
-                      placeholder={copy.actionPlaceholder}
+                      placeholder={
+                        inputMode === 'direct'
+                          ? language === 'en'
+                            ? 'Guide the story, adjust the timeline, introduce an NPC or rewrite the scene context...'
+                            : language === 'fr'
+                              ? 'Orientez le récit, ajustez la chronologie ou introduisez un personnage...'
+                              : 'Guie a narrativa, volte no tempo, apresente um personagem ou ajuste o cenário (ex: "Ainda falta 1 semana para o surto e Jonas tem uma vizinha...")...'
+                          : inputMode === 'say'
+                            ? language === 'en'
+                              ? 'Write what you say aloud (e.g. "Who passed through here last night?")...'
+                              : language === 'fr'
+                                ? 'Écrivez ce que vous dites à voix haute...'
+                                : 'Escreva o que você diz em diálogo (ex: "Quem esteve aqui ontem à noite?")...'
+                            : language === 'en'
+                              ? 'Describe what you do (explore, inspect, confront, sneak)...'
+                              : language === 'fr'
+                                ? 'Décrivez votre action (explorer, observer, combattre)...'
+                                : 'Descreva o que você faz (explorar, examinar, lutar, agir)...'
+                      }
                       className="max-h-32 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none"
                     />
                     <button
@@ -694,7 +1124,21 @@ export function StoryStage({
                       className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-[var(--accent)] px-4 text-xs font-semibold text-[var(--accent-contrast)] transition hover:brightness-110 disabled:opacity-40"
                     >
                       <Send className="h-3.5 w-3.5" />
-                      <span>{copy.sendAction}</span>
+                      <span>
+                        {inputMode === 'direct'
+                          ? language === 'en'
+                            ? 'Direct'
+                            : language === 'fr'
+                              ? 'Diriger'
+                              : 'Guiar'
+                          : inputMode === 'say'
+                            ? language === 'en'
+                              ? 'Say'
+                              : language === 'fr'
+                                ? 'Parler'
+                                : 'Falar'
+                            : copy.sendAction}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -712,11 +1156,19 @@ export function StoryStage({
             language={language}
             isSummarizing={isSummarizing}
             isGeneratingPortrait={isGeneratingPortrait}
+            generatingNpcPortraitId={generatingNpcPortraitId}
             onUseItem={handleUseItemFromHud}
+            onToggleEquipItem={onToggleEquipItem}
+            onSpendAttributePoint={onSpendAttributePoint}
+            onTogglePartyMember={onTogglePartyMember}
+            onGenerateNpcPortrait={onGenerateNpcPortrait}
+            onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
+            onOpenWorldMap={onOpenWorldMap}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
             onRemoveCanonFact={onRemoveCanonFact}
+            onUpdateWorldNotes={onUpdateWorldNotes}
             onSummarizeNow={onSummarizeNow}
             onConcludeCampaign={onConcludeCampaign}
             onGeneratePortrait={onGeneratePortrait}
@@ -763,11 +1215,22 @@ export function StoryStage({
                 language={language}
                 isSummarizing={isSummarizing}
                 isGeneratingPortrait={isGeneratingPortrait}
+                generatingNpcPortraitId={generatingNpcPortraitId}
                 onUseItem={handleUseItemFromHud}
+                onToggleEquipItem={onToggleEquipItem}
+                onSpendAttributePoint={onSpendAttributePoint}
+                onTogglePartyMember={onTogglePartyMember}
+                onGenerateNpcPortrait={onGenerateNpcPortrait}
+                onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
+                onOpenWorldMap={() => {
+                  setMobileHudOpen(false);
+                  onOpenWorldMap?.();
+                }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}
                 onAddCanonFact={onAddCanonFact}
                 onRemoveCanonFact={onRemoveCanonFact}
+                onUpdateWorldNotes={onUpdateWorldNotes}
                 onSummarizeNow={onSummarizeNow}
                 onConcludeCampaign={onConcludeCampaign}
                 onGeneratePortrait={onGeneratePortrait}

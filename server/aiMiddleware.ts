@@ -3,13 +3,16 @@ import type {
   Campaign,
   DiceRollResult,
   ForgeWorldRequest,
+  LanguageId,
   ResponseLength,
+  WorldThemeId,
 } from '../src/types/game';
 import {
   generateCampaignEpilogue,
   generateForgedWorld,
   generateJournalSummary,
   generateLivingWorldPulse,
+  generateSceneSpeech,
   generateStoryStart,
   generateStoryTurn,
   generateVisualAsset,
@@ -176,6 +179,22 @@ export function createAiMiddleware(env: MiddlewareEnv) {
       if (url === '/api/story/illustrate') {
         const body = await readJsonBody<VisualAssetParams>(req);
         const result = await generateVisualAsset(apiKey, body);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/speak') {
+        const body = await readJsonBody<{
+          text: string;
+          language?: LanguageId;
+          theme?: WorldThemeId;
+        }>(req);
+        const result = await generateSceneSpeech(
+          apiKey,
+          body.text ?? '',
+          body.language ?? 'pt-BR',
+          body.theme ?? 'fantasy',
+        );
         sendJson(res, 200, result);
         return;
       }

@@ -18,11 +18,101 @@ export type ActionIntent =
 
 export type ActionRisk = 'safe' | 'low' | 'medium' | 'high';
 
+export type CommandInputMode = 'act' | 'say' | 'direct';
+
+export type DiceRollPolicy = 'auto' | 'force' | 'off';
+
+export type RollMode = 'normal' | 'advantage' | 'disadvantage';
+
+export type WorldPeriod = 'morning' | 'afternoon' | 'evening' | 'night';
+
+export interface WorldClock {
+  day: number;
+  period: WorldPeriod;
+  weather: string;
+  countdown?: {
+    label: string;
+    daysLeft: number;
+  };
+}
+
+export interface StrongholdUpgrade {
+  id: string;
+  name: string;
+  description: string;
+  bonus: string;
+  builtTurn: number;
+}
+
+export interface StrongholdState {
+  name: string;
+  location: string;
+  defense: number;
+  upgrades: StrongholdUpgrade[];
+}
+
+export type AttributeId = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+
+export type CharacterAttributes = Record<AttributeId, number>;
+
+export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+
+export type EquipSlot = 'weapon' | 'armor' | 'accessory';
+
+export interface ItemBonuses {
+  str?: number;
+  dex?: number;
+  con?: number;
+  int?: number;
+  wis?: number;
+  cha?: number;
+  maxVigor?: number;
+}
+
+export interface SkillProgress {
+  name: string;
+  level: number; // 1 to 5
+  attribute: AttributeId;
+  xp: number; // 0 to 100
+}
+
+export interface TalentRecord {
+  id: string;
+  name: string;
+  description: string;
+  unlockedTurn: number;
+}
+
+export type RelationshipTier =
+  | 'stranger'
+  | 'acquaintance'
+  | 'friend'
+  | 'close'
+  | 'romance'
+  | 'partner'
+  | 'rival'
+  | 'enemy';
+
+export type LocationKind =
+  | 'city'
+  | 'safehouse'
+  | 'dungeon'
+  | 'secret'
+  | 'market'
+  | 'wilderness';
+
+export type LocationStatus = 'unexplored' | 'explored' | 'cleared';
+
 export interface TacticalAction {
   id: string;
   label: string;
   intent: ActionIntent;
   risk: ActionRisk;
+  requiresRoll?: boolean;
+  rollSkillHint?: string;
+  attribute?: AttributeId;
+  effectTag?: string;
+  unlockHint?: string;
 }
 
 export type ItemCategory = 'weapon' | 'tool' | 'relic' | 'consumable' | 'clue' | 'misc';
@@ -33,6 +123,10 @@ export interface InventoryItem {
   category: ItemCategory;
   quantity: number;
   note?: string;
+  rarity?: ItemRarity;
+  equipSlot?: EquipSlot;
+  equipped?: boolean;
+  bonuses?: ItemBonuses;
 }
 
 export interface Quest {
@@ -63,6 +157,12 @@ export interface NpcRecord {
   role: string;
   stance: NpcStance;
   status: NpcStatus;
+  affinity?: number; // -100 to 100
+  relationship?: RelationshipTier;
+  inParty?: boolean;
+  portraitUrl?: string;
+  assistAttribute?: AttributeId;
+  assistSpecialty?: string;
   lastSeenLocation: string;
   notes: string;
   firstMetTurn: number;
@@ -75,6 +175,9 @@ export interface LocationRecord {
   name: string;
   description: string;
   danger: LocationDanger;
+  kind?: LocationKind;
+  status?: LocationStatus;
+  recommendedLevel?: number;
   visitCount: number;
   firstVisitedTurn: number;
 }
@@ -136,8 +239,16 @@ export type DiceOutcome =
 
 export interface DiceRollResult {
   roll: number;
+  rolls?: [number, number];
+  rollMode?: RollMode;
+  advantageSource?: string;
+  rerolledWithInspiration?: boolean;
   bonus: number;
   bonusSource?: string;
+  attribute?: AttributeId;
+  attributeMod?: number;
+  skillLevelBonus?: number;
+  gearBonus?: number;
   total: number;
   dc: number;
   outcome: DiceOutcome;
@@ -157,7 +268,15 @@ export interface StateDelta {
     | 'location'
     | 'faction'
     | 'memory'
-    | 'crisis';
+    | 'crisis'
+    | 'xp'
+    | 'level'
+    | 'talent'
+    | 'currency'
+    | 'bond'
+    | 'inspiration'
+    | 'base'
+    | 'time';
   label: string;
   positive?: boolean;
 }
@@ -176,6 +295,7 @@ export interface StoryEntry {
   imageUrl?: string;
   imageCaption?: string;
   imageEngine?: 'gemini' | 'demo';
+  isDirection?: boolean;
   isCrisisResolution?: boolean;
   timestamp: number;
 }
@@ -186,11 +306,23 @@ export interface PlayerState {
   occupation: string;
   portraitUrl?: string;
   portraitEngine?: 'gemini' | 'demo';
+  level: number;
+  xp: number;
+  xpToNextLevel: number;
+  attributePoints: number;
+  attributes: CharacterAttributes;
   vigor: number;
   maxVigor: number;
   tension: number;
+  inspiration?: number; // 0 to 4 (BG3 Inspiration Points)
   traits: string[];
   skills: string[];
+  skillLevels: SkillProgress[];
+  talents: TalentRecord[];
+  currency: {
+    amount: number;
+    label: string;
+  };
   inventory: InventoryItem[];
   quests: Quest[];
   journal: JournalEntry[];
@@ -232,6 +364,9 @@ export interface Campaign {
   entries: StoryEntry[];
   actions: TacticalAction[];
   interactionId?: string;
+  freeformMode?: boolean;
+  worldClock?: WorldClock;
+  stronghold?: StrongholdState;
   engineUsed: 'gemini' | 'demo';
 }
 
@@ -258,6 +393,8 @@ export interface AppSettings {
   livingWorldSeconds: number;
   diceAnimations: boolean;
   autoIllustrateScenes: boolean;
+  ambientSoundEnabled: boolean;
+  ambientVolume: number;
   geminiApiKey: string;
   geminiModel: 'gemini-3.8-flash' | 'gemini-4-argon';
   forceDemoMode: boolean;
@@ -266,15 +403,40 @@ export interface AppSettings {
 export interface AiStateChanges {
   vigorDelta?: number;
   tensionDelta?: number;
+  xpGain?: number;
+  inspirationGain?: number;
+  currencyDelta?: number;
+  currencyLabel?: string;
+  updateIdentity?: {
+    name?: string;
+    age?: number;
+    occupation?: string;
+    worldTitle?: string;
+    worldEra?: string;
+    worldPremise?: string;
+  };
   addItems?: Array<{
     name: string;
     category?: ItemCategory;
     quantity?: number;
     note?: string;
+    rarity?: ItemRarity;
+    equipSlot?: EquipSlot;
+    bonuses?: ItemBonuses;
   }>;
   removeItems?: string[];
   addTraits?: string[];
   addSkills?: string[];
+  skillTraining?: Array<{
+    name: string;
+    attribute?: AttributeId;
+    xpGain?: number;
+    levelUp?: boolean;
+  }>;
+  addTalents?: Array<{
+    name: string;
+    description: string;
+  }>;
   addQuests?: Array<{
     title: string;
     description: string;
@@ -287,12 +449,38 @@ export interface AiStateChanges {
     role?: string;
     stance?: NpcStance;
     status?: NpcStatus;
+    affinityDelta?: number;
+    relationship?: RelationshipTier;
+    assistAttribute?: AttributeId;
+    assistSpecialty?: string;
     notes?: string;
   }>;
+  companionReactions?: Array<{
+    name: string;
+    approved: boolean;
+    reason?: string;
+  }>;
+  advanceTime?: {
+    periods?: number;
+    weather?: string;
+    countdownDelta?: number;
+    setCountdown?: {
+      label: string;
+      daysLeft: number;
+    };
+  };
+  addBaseUpgrade?: {
+    name: string;
+    description: string;
+    bonus: string;
+  };
   discoverLocation?: {
     name: string;
     description?: string;
     danger?: LocationDanger;
+    kind?: LocationKind;
+    status?: LocationStatus;
+    recommendedLevel?: number;
   };
   upsertFactions?: Array<{
     name: string;
@@ -313,6 +501,11 @@ export interface StoryTurnResponse {
     label: string;
     intent: ActionIntent;
     risk: ActionRisk;
+    requiresRoll?: boolean;
+    rollSkillHint?: string;
+    attribute?: AttributeId;
+    effectTag?: string;
+    unlockHint?: string;
   }>;
   stateChanges: AiStateChanges;
   waitingForResponse?: boolean;
@@ -338,6 +531,12 @@ export type IllustrationKind = 'scene' | 'portrait';
 export interface IllustrationResponse {
   dataUrl: string;
   caption: string;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface SpeechResponse {
+  dataUrl: string;
+  mimeType: string;
   engineUsed: 'gemini' | 'demo';
 }
 
@@ -401,6 +600,11 @@ export interface ForgedWorldBlueprint {
     name: string;
     age: number;
     occupation: string;
+    attributes?: Partial<CharacterAttributes>;
+    startingCurrency?: {
+      amount: number;
+      label: string;
+    };
     traits: string[];
     skills: string[];
     starterItem: {

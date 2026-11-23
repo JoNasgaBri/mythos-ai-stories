@@ -1,4 +1,19 @@
 import { DEFAULT_SETTINGS } from '../data/presets';
+import {
+  computeMaxVigor,
+  DEFAULT_ATTRIBUTES,
+  defaultAffinityFromStance,
+  defaultCurrencyForTheme,
+  defaultStrongholdForTheme,
+  defaultWorldClockForTheme,
+  deriveRelationshipFromAffinity,
+  getEquippedGearBonuses,
+  inferEquipSlotFromCategory,
+  inferNpcAssistAttribute,
+  MAX_INSPIRATION,
+  syncSkillLevels,
+  xpRequiredForLevel,
+} from '../engine/rpgSystem';
 import type { AppSettings, Campaign, SaveSlot } from '../types/game';
 
 const LEGACY_CAMPAIGNS_KEY = 'mythos_campaigns_v1';
@@ -39,12 +54,73 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
           ]
         : [];
 
+  const theme = raw.world?.primaryTheme || 'fantasy';
+  const language = raw.language || 'pt-BR';
+
+  const normalizedNpcs = existingNpcs.map((n) => {
+    const affinity =
+      typeof n.affinity === 'number'
+        ? Math.max(-100, Math.min(100, Math.round(n.affinity)))
+        : defaultAffinityFromStance(n.stance);
+    return {
+      ...n,
+      affinity,
+      relationship:
+        n.relationship ?? deriveRelationshipFromAffinity(affinity),
+      inParty: Boolean(n.inParty),
+      portraitUrl: n.portraitUrl,
+      assistAttribute:
+        n.assistAttribute ?? inferNpcAssistAttribute(n.role || '', n.notes || ''),
+      assistSpecialty: n.assistSpecialty,
+    };
+  });
+
+  const normalizedLocations = locations.map((l) => ({
+    ...l,
+    kind: l.kind ?? 'city',
+    status: l.status ?? 'explored',
+  }));
+
+  const rawPlayer = raw.player;
+  const level =
+    typeof rawPlayer?.level === 'number' && rawPlayer.level >= 1
+      ? Math.min(20, Math.round(rawPlayer.level))
+      : 1;
+  const attributes = {
+    str: rawPlayer?.attributes?.str ?? DEFAULT_ATTRIBUTES.str,
+    dex: rawPlayer?.attributes?.dex ?? DEFAULT_ATTRIBUTES.dex,
+    con: rawPlayer?.attributes?.con ?? DEFAULT_ATTRIBUTES.con,
+    int: rawPlayer?.attributes?.int ?? DEFAULT_ATTRIBUTES.int,
+    wis: rawPlayer?.attributes?.wis ?? DEFAULT_ATTRIBUTES.wis,
+    cha: rawPlayer?.attributes?.cha ?? DEFAULT_ATTRIBUTES.cha,
+  };
+  const inventory = Array.isArray(rawPlayer?.inventory)
+    ? rawPlayer.inventory.map((item) => ({
+        ...item,
+        rarity: item.rarity ?? 'common',
+        equipSlot: item.equipSlot ?? inferEquipSlotFromCategory(item.category),
+      }))
+    : [];
+  const gearBonuses = getEquippedGearBonuses(inventory);
+  const computedMaxVigor = computeMaxVigor(
+    level,
+    attributes.con + (gearBonuses.con ?? 0),
+    gearBonuses.maxVigor ?? 0,
+  );
+  const maxVigor =
+    typeof rawPlayer?.maxVigor === 'number' && rawPlayer.maxVigor >= 60
+      ? rawPlayer.maxVigor
+      : computedMaxVigor;
+  const rawSkills = Array.isArray(rawPlayer?.skills) ? rawPlayer.skills : [];
+  const skillLevels = syncSkillLevels(rawSkills, rawPlayer?.skillLevels);
+  const syncedSkills = skillLevels.map((s) => s.name);
+
   return {
     ...(raw as Campaign),
     id,
     world: {
       title: raw.world?.title || 'Crônica Sem Título',
-      primaryTheme: raw.world?.primaryTheme || 'fantasy',
+      primaryTheme: theme,
       genres: Array.isArray(raw.world?.genres) ? raw.world.genres : ['Fantasia'],
       tone: raw.world?.tone || 'Épico',
       era: raw.world?.era || 'Era Desconhecida',
@@ -55,15 +131,65 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       storyPace: raw.world?.storyPace || 'epic',
       matureMode: raw.world?.matureMode ?? true,
     },
+    player: {
+      name: rawPlayer?.name || 'Viajante',
+      age: rawPlayer?.age ?? 28,
+      occupation: rawPlayer?.occupation || 'Aventureiro',
+      portraitUrl: rawPlayer?.portraitUrl,
+      portraitEngine: rawPlayer?.portraitEngine,
+      level,
+      xp: typeof rawPlayer?.xp === 'number' ? Math.max(0, rawPlayer.xp) : 0,
+      xpToNextLevel:
+        typeof rawPlayer?.xpToNextLevel === 'number' && rawPlayer.xpToNextLevel > 0
+          ? rawPlayer.xpToNextLevel
+          : xpRequiredForLevel(level),
+      attributePoints:
+        typeof rawPlayer?.attributePoints === 'number'
+          ? Math.max(0, rawPlayer.attributePoints)
+          : 0,
+      attributes,
+      vigor:
+        typeof rawPlayer?.vigor === 'number'
+          ? Math.max(0, Math.min(maxVigor, rawPlayer.vigor))
+          : maxVigor,
+      maxVigor,
+      tension:
+        typeof rawPlayer?.tension === 'number'
+          ? Math.max(0, Math.min(100, rawPlayer.tension))
+          : 20,
+      inspiration:
+        typeof rawPlayer?.inspiration === 'number'
+          ? Math.max(0, Math.min(MAX_INSPIRATION, Math.round(rawPlayer.inspiration)))
+          : 1,
+      traits: Array.isArray(rawPlayer?.traits) ? rawPlayer.traits : [],
+      skills: syncedSkills,
+      skillLevels,
+      talents: Array.isArray(rawPlayer?.talents) ? rawPlayer.talents : [],
+      currency:
+        rawPlayer?.currency && typeof rawPlayer.currency.amount === 'number'
+          ? rawPlayer.currency
+          : defaultCurrencyForTheme(theme, language),
+      inventory,
+      quests: Array.isArray(rawPlayer?.quests) ? rawPlayer.quests : [],
+      journal: Array.isArray(rawPlayer?.journal) ? rawPlayer.journal : [],
+    },
     codex: {
-      npcs: existingNpcs,
-      locations,
+      npcs: normalizedNpcs,
+      locations: normalizedLocations,
       factions: existingFactions,
       canonFacts: existingFacts,
     },
     status: raw.status ?? 'active',
     arcNumber: typeof raw.arcNumber === 'number' && raw.arcNumber >= 1 ? raw.arcNumber : 1,
     eraSummaries: Array.isArray(raw.eraSummaries) ? raw.eraSummaries : [],
+    worldClock: raw.worldClock ?? defaultWorldClockForTheme(theme, language),
+    stronghold:
+      raw.stronghold ??
+      defaultStrongholdForTheme(
+        theme,
+        raw.currentLocation || locations[0]?.name || 'Base Inicial',
+        language,
+      ),
     entries: Array.isArray(raw.entries) ? raw.entries : [],
     actions: Array.isArray(raw.actions) ? raw.actions : [],
   };

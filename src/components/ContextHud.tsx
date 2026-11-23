@@ -5,16 +5,23 @@ import {
   BookOpen,
   Brain,
   Camera,
+  Check,
   CheckCircle2,
+  Coins,
   Compass,
   FilePlus2,
   Flag,
   Flame,
   Globe2,
+  Hammer,
+  Heart,
+  Home,
   Key,
+  Map as MapIcon,
   MapPin,
   MessageSquare,
   Navigation,
+  Pencil,
   Pin,
   Plus,
   Scale,
@@ -24,13 +31,35 @@ import {
   Sword,
   Target,
   Trash2,
+  UserMinus,
+  UserPlus,
+  Users,
   Wrench,
+  X,
   XCircle,
 } from 'lucide-react';
 import { useState } from 'react';
 import { DIFFICULTIES, STORY_PACE_OPTIONS, UI_COPY } from '../data/presets';
+import {
+  ATTRIBUTE_KEYS,
+  ATTRIBUTE_META,
+  EQUIP_SLOT_LABEL,
+  formatModifier,
+  getAttributeModifier,
+  getEffectiveAttributes,
+  getEquippedGearBonuses,
+  LOCATION_KIND_META,
+  LOCATION_STATUS_META,
+  MAX_INSPIRATION,
+  MAX_PARTY_SIZE,
+  RARITY_META,
+  RELATIONSHIP_META,
+  STRONGHOLD_UPGRADE_CATALOG,
+} from '../engine/rpgSystem';
 import type {
+  AttributeId,
   Campaign,
+  EquipSlot,
   FactionStanding,
   InventoryItem,
   ItemCategory,
@@ -39,6 +68,7 @@ import type {
   LocationRecord,
   NpcRecord,
   NpcStance,
+  WorldConfig,
 } from '../types/game';
 
 interface ContextHudProps {
@@ -46,11 +76,21 @@ interface ContextHudProps {
   language: LanguageId;
   isSummarizing: boolean;
   isGeneratingPortrait: boolean;
+  generatingNpcPortraitId?: string | null;
   onUseItem: (item: InventoryItem) => void;
+  onToggleEquipItem?: (itemId: string) => void;
+  onSpendAttributePoint?: (attr: AttributeId) => void;
+  onTogglePartyMember?: (npcId: string) => void;
+  onGenerateNpcPortrait?: (npcId: string) => void;
+  onBuildStrongholdUpgrade?: (upgradeId: string) => void;
+  onOpenWorldMap?: () => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
   onRemoveCanonFact: (factId: string) => void;
+  onUpdateWorldNotes?: (
+    patch: Partial<Pick<WorldConfig, 'era' | 'history' | 'premise' | 'creativePrompt'>>,
+  ) => void;
   onSummarizeNow: () => void;
   onConcludeCampaign: () => void;
   onGeneratePortrait: () => void;
@@ -98,11 +138,19 @@ export function ContextHud({
   language,
   isSummarizing,
   isGeneratingPortrait,
+  generatingNpcPortraitId,
   onUseItem,
+  onToggleEquipItem,
+  onSpendAttributePoint,
+  onTogglePartyMember,
+  onGenerateNpcPortrait,
+  onBuildStrongholdUpgrade,
+  onOpenWorldMap,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
   onRemoveCanonFact,
+  onUpdateWorldNotes,
   onSummarizeNow,
   onConcludeCampaign,
   onGeneratePortrait,
@@ -111,11 +159,38 @@ export function ContextHud({
   const [activeTab, setActiveTab] = useState<
     'sheet' | 'pack' | 'world' | 'quests' | 'chronicle'
   >('sheet');
-  const [worldSubTab, setWorldSubTab] = useState<'lore' | 'memory' | 'codex'>('lore');
+  const [worldSubTab, setWorldSubTab] = useState<'lore' | 'memory' | 'codex' | 'base'>('lore');
   const [newFactInput, setNewFactInput] = useState('');
+  const [isEditingLore, setIsEditingLore] = useState(false);
+  const [draftEra, setDraftEra] = useState(campaign.world.era);
+  const [draftHistory, setDraftHistory] = useState(campaign.world.history);
+  const [draftPremise, setDraftPremise] = useState(campaign.world.premise);
+  const [draftCreativePrompt, setDraftCreativePrompt] = useState(
+    campaign.world.creativePrompt ?? '',
+  );
+
+  const startEditingLore = () => {
+    setDraftEra(campaign.world.era);
+    setDraftHistory(campaign.world.history);
+    setDraftPremise(campaign.world.premise);
+    setDraftCreativePrompt(campaign.world.creativePrompt ?? '');
+    setIsEditingLore(true);
+  };
+
+  const saveEditingLore = () => {
+    onUpdateWorldNotes?.({
+      era: draftEra.trim() || campaign.world.era,
+      history: draftHistory.trim() || campaign.world.history,
+      premise: draftPremise.trim() || campaign.world.premise,
+      creativePrompt: draftCreativePrompt.trim() || undefined,
+    });
+    setIsEditingLore(false);
+  };
 
   const copy = UI_COPY[language];
   const { player, codex, world } = campaign;
+  const effectiveAttrs = getEffectiveAttributes(player);
+  const gearBonuses = getEquippedGearBonuses(player.inventory);
   const difficultyMeta = DIFFICULTIES.find((d) => d.id === campaign.difficulty);
   const paceMeta = STORY_PACE_OPTIONS.find((p) => p.id === world.storyPace);
 
@@ -132,6 +207,10 @@ export function ContextHud({
     codex.npcs.length + codex.locations.length + codex.canonFacts.length;
   const isEnded =
     campaign.status === 'ended_fallen' || campaign.status === 'ended_victory';
+  const partyMembers = codex.npcs.filter(
+    (n) => n.inParty && n.status === 'alive',
+  );
+  const inspirationCount = player.inspiration ?? 1;
 
   const handlePinFact = () => {
     const trimmed = newFactInput.trim();
@@ -212,9 +291,14 @@ export function ContextHud({
                   </div>
                 )}
                 <div className="min-w-0">
-                  <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
-                    {player.name}
-                  </h3>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
+                      {player.name}
+                    </h3>
+                    <span className="font-mono-tech shrink-0 rounded-md border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                      Nv.{player.level}
+                    </span>
+                  </div>
                   <p className="truncate text-xs text-[var(--text-secondary)]">
                     {player.occupation} · {player.age} anos
                   </p>
@@ -233,7 +317,92 @@ export function ContextHud({
               </button>
             </div>
 
-            {/* Vigor & Tension Bars */}
+            {/* Level XP Bar + Level Up Callout */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5">
+              <div className="mb-1 flex items-center justify-between text-[11px]">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)]">
+                  <Award className="h-3.5 w-3.5" />
+                  Experiência · Nível {player.level}
+                </span>
+                <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
+                  {player.xp} / {player.xpToNextLevel} XP
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+                <div
+                  className="h-full rounded-full bg-[var(--accent)] transition-all duration-500"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (player.xp / Math.max(1, player.xpToNextLevel)) * 100))}%`,
+                  }}
+                />
+              </div>
+              {player.attributePoints > 0 && onSpendAttributePoint && !isEnded ? (
+                <div className="mt-2 flex items-center justify-between rounded-lg border border-[var(--accent)]/60 bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent)]">
+                  <span>Ponto de Atributo disponível!</span>
+                  <span className="font-mono-tech">+{player.attributePoints}</span>
+                </div>
+              ) : null}
+            </div>
+
+            {/* BG3 6-Attribute Grid */}
+            <div>
+              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Atributos (Estilo BG3)
+              </h4>
+              <div className="grid grid-cols-3 gap-2">
+                {ATTRIBUTE_KEYS.map((key) => {
+                  const meta = ATTRIBUTE_META[key];
+                  const baseScore = player.attributes[key] ?? 10;
+                  const effScore = effectiveAttrs[key];
+                  const mod = getAttributeModifier(effScore);
+                  const gearAdd = gearBonuses[key] ?? 0;
+                  const canSpend =
+                    player.attributePoints > 0 &&
+                    baseScore < 20 &&
+                    Boolean(onSpendAttributePoint) &&
+                    !isEnded;
+
+                  return (
+                    <div
+                      key={key}
+                      title={`${meta.full[language]}: ${meta.hint[language]}`}
+                      className={`relative flex flex-col items-center rounded-xl border px-2 py-2 text-center transition ${
+                        canSpend
+                          ? 'border-[var(--accent)]/70 bg-[var(--accent-soft)]/50'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold tracking-wider text-[var(--text-muted)]">
+                        {meta.short[language]}
+                      </span>
+                      <span className="font-display mt-0.5 text-lg leading-tight font-bold text-[var(--text-primary)]">
+                        {formatModifier(mod)}
+                      </span>
+                      <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
+                        {effScore}
+                        {gearAdd !== 0 ? (
+                          <span className="ml-0.5 text-[var(--success)]">
+                            ({gearAdd > 0 ? `+${gearAdd}` : gearAdd})
+                          </span>
+                        ) : null}
+                      </span>
+                      {canSpend ? (
+                        <button
+                          type="button"
+                          onClick={() => onSpendAttributePoint?.(key)}
+                          title={`Aumentar ${meta.full[language]} (+1)`}
+                          className="mt-1.5 w-full rounded-md bg-[var(--accent)] py-0.5 text-[10px] font-bold text-[var(--accent-contrast)] transition hover:brightness-110"
+                        >
+                          +1
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Vigor, Tension & BG3 Inspiration */}
             <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
               <div>
                 <div className="mb-1 flex items-center justify-between text-xs">
@@ -282,6 +451,115 @@ export function ContextHud({
                   />
                 </div>
               </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--border-subtle)] pt-2.5 text-xs">
+                <span
+                  title="Gaste 1 Inspiração para rerrolar um dado d20 que falhou (Estilo Baldur's Gate 3)"
+                  className="inline-flex items-center gap-1.5 font-medium text-[#fbbf24]"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Inspiração BG3
+                </span>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: MAX_INSPIRATION }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={`h-2.5 w-2.5 rounded-full border transition ${
+                        i < inspirationCount
+                          ? 'border-[#fbbf24] bg-[#fbbf24] shadow-[0_0_6px_rgba(251,191,36,0.6)]'
+                          : 'border-[var(--border-strong)] bg-[var(--bg-canvas)]'
+                      }`}
+                    />
+                  ))}
+                  <span className="font-mono-tech ml-1 text-[11px] font-semibold text-[#fbbf24]">
+                    {inspirationCount}/{MAX_INSPIRATION}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Active Party Companions Strip */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <Users className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Seu Grupo ({partyMembers.length}/{MAX_PARTY_SIZE})
+                </span>
+                {partyMembers.length > 0 ? (
+                  <span className="text-[10px] text-[var(--success)]">
+                    Vantagem 2×d20 ativa
+                  </span>
+                ) : null}
+              </div>
+
+              {partyMembers.length === 0 ? (
+                <p className="text-[11px] text-[var(--text-muted)]">
+                  Nenhum companheiro no grupo. Convide aliados na aba{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('world');
+                      setWorldSubTab('codex');
+                    }}
+                    className="font-semibold text-[var(--accent)] hover:underline"
+                  >
+                    Mundo → Códice
+                  </button>{' '}
+                  para ganhar Vantagem (2× d20) nos testes!
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {partyMembers.map((member) => {
+                    const attrShort =
+                      ATTRIBUTE_META[member.assistAttribute ?? 'wis'].short[language];
+                    const rel =
+                      RELATIONSHIP_META[member.relationship ?? 'friend'] ??
+                      RELATIONSHIP_META.friend;
+                    return (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          {member.portraitUrl ? (
+                            <img
+                              src={member.portraitUrl}
+                              alt={member.name}
+                              className="h-7 w-7 shrink-0 rounded-lg object-cover border border-[var(--border-strong)]"
+                            />
+                          ) : (
+                            <span className="font-display flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[10px] font-bold text-[var(--accent)]">
+                              {member.name.slice(0, 2).toUpperCase()}
+                            </span>
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                              {member.name}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
+                              <span className="font-mono-tech font-semibold text-[var(--success)]">
+                                Vant. {attrShort}
+                              </span>
+                              <span>·</span>
+                              <span style={{ color: rel.color }}>{rel.label}</span>
+                            </div>
+                          </div>
+                        </div>
+                        {onTogglePartyMember && !isEnded ? (
+                          <button
+                            type="button"
+                            onClick={() => onTogglePartyMember(member.id)}
+                            title="Remover do grupo"
+                            className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--danger)]"
+                          >
+                            <UserMinus className="h-3 w-3" />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Difficulty & Arc Badge */}
@@ -321,32 +599,119 @@ export function ContextHud({
               </div>
             </div>
 
-            {/* Skills */}
+            {/* Leveled Skills */}
             <div>
               <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Perícias (+2 em testes)
+                Habilidades Evoluíveis
               </h4>
-              <div className="flex flex-wrap gap-1.5">
-                {player.skills.length > 0 ? (
-                  player.skills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-medium text-[var(--text-primary)]"
+              <div className="space-y-1.5">
+                {player.skillLevels.length > 0 ? (
+                  player.skillLevels.map((sk) => (
+                    <div
+                      key={sk.name}
+                      className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2"
                     >
-                      <span className="font-mono-tech text-[10px] text-[var(--accent)]">+2</span>
-                      {skill}
-                    </span>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate font-medium text-[var(--text-primary)]">
+                          {sk.name}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className="font-mono-tech rounded bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[9px] text-[var(--text-muted)]">
+                            {ATTRIBUTE_META[sk.attribute].short[language]}
+                          </span>
+                          <span className="font-mono-tech rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                            Nv.{sk.level} (+{sk.level})
+                          </span>
+                        </div>
+                      </div>
+                      {sk.level < 5 ? (
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+                          <div
+                            className="h-full rounded-full bg-[var(--accent)]/80 transition-all duration-500"
+                            style={{ width: `${Math.max(4, Math.min(100, sk.xp))}%` }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   ))
                 ) : (
-                  <span className="text-xs text-[var(--text-muted)]">—</span>
+                  <span className="text-xs text-[var(--text-muted)]">
+                    Treine ou pratique na história para desenvolver habilidades.
+                  </span>
                 )}
               </div>
+            </div>
+
+            {/* Talents / Feats */}
+            <div>
+              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Talentos & Passivas ({player.talents.length})
+              </h4>
+              {player.talents.length > 0 ? (
+                <div className="space-y-2">
+                  {player.talents.map((tal) => (
+                    <div
+                      key={tal.id}
+                      className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent-soft)]/50 p-2.5"
+                    >
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--accent)]">
+                        <Sparkles className="h-3 w-3 shrink-0" />
+                        <span>{tal.name}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-snug text-[var(--text-secondary)]">
+                        {tal.description}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Novos talentos despertam conforme você treina e supera marcos.
+                </p>
+              )}
             </div>
           </div>
         ) : null}
 
         {activeTab === 'pack' ? (
-          <div className="space-y-2.5">
+          <div className="space-y-3">
+            {/* Currency & Resources */}
+            <div className="flex items-center justify-between rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)]/60 px-3.5 py-2.5">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent)]">
+                <Coins className="h-4 w-4" />
+                Recursos / Carteira
+              </span>
+              <span className="font-mono-tech text-sm font-bold text-[var(--text-primary)]">
+                {player.currency.amount.toLocaleString('pt-BR')} {player.currency.label}
+              </span>
+            </div>
+
+            {/* Equipped Slots Strip */}
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['weapon', 'armor', 'accessory'] as EquipSlot[]).map((slot) => {
+                const eq = player.inventory.find(
+                  (i) => i.equipped && i.equipSlot === slot,
+                );
+                return (
+                  <div
+                    key={slot}
+                    className={`rounded-xl border p-2 text-center ${
+                      eq
+                        ? 'border-[var(--accent)]/50 bg-[var(--bg-elevated)]'
+                        : 'border-dashed border-[var(--border-subtle)] bg-[var(--bg-canvas)]/40'
+                    }`}
+                  >
+                    <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                      {EQUIP_SLOT_LABEL[slot]}
+                    </div>
+                    <div className="mt-0.5 truncate text-[10px] font-medium text-[var(--text-primary)]">
+                      {eq ? eq.name : 'Vazio'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             {player.inventory.length === 0 ? (
               <p className="py-6 text-center text-xs text-[var(--text-muted)]">
                 Sua mochila está vazia.
@@ -354,39 +719,101 @@ export function ContextHud({
             ) : (
               player.inventory.map((item) => {
                 const Icon = CATEGORY_ICON[item.category] ?? Backpack;
+                const rarityMeta = RARITY_META[item.rarity ?? 'common'];
+                const bonusPills: string[] = [];
+                if (item.bonuses) {
+                  for (const key of ATTRIBUTE_KEYS) {
+                    const val = item.bonuses[key];
+                    if (typeof val === 'number' && val !== 0) {
+                      bonusPills.push(
+                        `${val > 0 ? '+' : ''}${val} ${ATTRIBUTE_META[key].short[language]}`,
+                      );
+                    }
+                  }
+                  if (item.bonuses.maxVigor) {
+                    bonusPills.push(`+${item.bonuses.maxVigor} Vigor Máx`);
+                  }
+                }
                 return (
                   <div
                     key={item.id}
-                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 transition hover:border-[var(--border-strong)]"
+                    className={`rounded-xl border bg-[var(--bg-elevated)] p-3 transition ${
+                      item.equipped
+                        ? 'border-[var(--accent)] shadow-sm'
+                        : 'border-[var(--border-subtle)] hover:border-[var(--border-strong)]'
+                    }`}
                   >
                     <div className="flex items-start gap-2.5">
                       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
                         <Icon className="h-3.5 w-3.5" />
                       </span>
-                      <div>
-                        <div className="text-xs font-semibold text-[var(--text-primary)]">
-                          {item.name}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-semibold text-[var(--text-primary)]">
+                            {item.name}
+                          </span>
                           {item.quantity > 1 ? (
-                            <span className="font-mono-tech ml-1.5 text-[var(--accent)]">
+                            <span className="font-mono-tech text-[11px] text-[var(--accent)]">
                               x{item.quantity}
                             </span>
                           ) : null}
+                          {item.rarity && item.rarity !== 'common' ? (
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[9px] font-semibold"
+                              style={{
+                                color: rarityMeta.color,
+                                backgroundColor: rarityMeta.bg,
+                              }}
+                            >
+                              {rarityMeta.label}
+                            </span>
+                          ) : null}
                         </div>
+                        {bonusPills.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {bonusPills.map((bp) => (
+                              <span
+                                key={bp}
+                                className="font-mono-tech rounded bg-[var(--success)]/12 px-1.5 py-0.5 text-[9px] font-semibold text-[var(--success)]"
+                              >
+                                {bp}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                         {item.note ? (
-                          <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">
+                          <p className="mt-1 text-[11px] leading-snug text-[var(--text-muted)]">
                             {item.note}
                           </p>
                         ) : null}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={isEnded}
-                      onClick={() => onUseItem(item)}
-                      className="mt-2.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] py-1.5 text-[11px] font-medium text-[var(--accent)] transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:opacity-40"
-                    >
-                      {copy.useInAction}
-                    </button>
+                    <div className="mt-2.5 flex gap-1.5">
+                      {item.equipSlot && onToggleEquipItem ? (
+                        <button
+                          type="button"
+                          disabled={isEnded}
+                          onClick={() => onToggleEquipItem(item.id)}
+                          className={`flex-1 rounded-lg border py-1.5 text-[11px] font-semibold transition disabled:opacity-40 ${
+                            item.equipped
+                              ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)]'
+                              : 'border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--accent)]'
+                          }`}
+                        >
+                          {item.equipped
+                            ? `Equipado (${EQUIP_SLOT_LABEL[item.equipSlot]})`
+                            : `Equipar (${EQUIP_SLOT_LABEL[item.equipSlot]})`}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={isEnded}
+                        onClick={() => onUseItem(item)}
+                        className="flex-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] py-1.5 text-[11px] font-medium text-[var(--accent)] transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:opacity-40"
+                      >
+                        {copy.useInAction}
+                      </button>
+                    </div>
                   </div>
                 );
               })
@@ -398,12 +825,13 @@ export function ContextHud({
         {activeTab === 'world' ? (
           <div className="space-y-4">
             {/* Sub-pills */}
-            <div className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 p-1">
+            <div className="grid grid-cols-4 gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 p-1">
               {(
                 [
                   { id: 'lore', label: 'Lore' },
-                  { id: 'memory', label: `Memória (${codex.canonFacts.length})` },
-                  { id: 'codex', label: `Códice (${codex.npcs.length})` },
+                  { id: 'memory', label: `Memória` },
+                  { id: 'codex', label: `Códice` },
+                  { id: 'base', label: `Refúgio` },
                 ] as const
               ).map((sub) => (
                 <button
@@ -425,15 +853,110 @@ export function ContextHud({
               <div className="space-y-4">
                 <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
                   <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
-                    <span>{world.era}</span>
-                    <span>{paceMeta?.label[language]}</span>
+                    <span className="truncate">{world.era}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span>{paceMeta?.label[language]}</span>
+                      {onUpdateWorldNotes && !isEnded ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            isEditingLore
+                              ? setIsEditingLore(false)
+                              : startEditingLore()
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[var(--accent)] hover:brightness-110"
+                        >
+                          {isEditingLore ? (
+                            <>
+                              <X className="h-2.5 w-2.5" />
+                              Cancelar
+                            </>
+                          ) : (
+                            <>
+                              <Pencil className="h-2.5 w-2.5" />
+                              Editar Lore / Prompt
+                            </>
+                          )}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                  <h4 className="font-display mt-1.5 text-sm font-semibold text-[var(--text-primary)]">
-                    História do Mundo
-                  </h4>
-                  <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">
-                    {world.history || world.premise}
-                  </p>
+
+                  {isEditingLore ? (
+                    <div className="mt-3 space-y-2.5">
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          Momento / Época
+                        </label>
+                        <input
+                          type="text"
+                          value={draftEra}
+                          onChange={(e) => setDraftEra(e.target.value)}
+                          className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          História do Mundo
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={draftHistory}
+                          onChange={(e) => setDraftHistory(e.target.value)}
+                          className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          Premissa Atual
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={draftPremise}
+                          onChange={(e) => setDraftPremise(e.target.value)}
+                          className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
+                          Direção Criativa da IA (Prompt)
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={draftCreativePrompt}
+                          onChange={(e) => setDraftCreativePrompt(e.target.value)}
+                          placeholder="Ex: Ainda falta 1 semana para o surto, não existem infectados na rua ainda..."
+                          className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingLore(false)}
+                          className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 text-[11px] font-medium text-[var(--text-secondary)]"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={saveEditingLore}
+                          className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[11px] font-semibold text-[var(--accent-contrast)] hover:brightness-110"
+                        >
+                          <Check className="h-3 w-3" />
+                          Salvar na Memória
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h4 className="font-display mt-1.5 text-sm font-semibold text-[var(--text-primary)]">
+                        História do Mundo
+                      </h4>
+                      <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">
+                        {world.history || world.premise}
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 {world.worldLaws ? (
@@ -611,6 +1134,14 @@ export function ContextHud({
                     <div className="space-y-2.5">
                       {codex.npcs.map((npc) => {
                         const stance = STANCE_META[npc.stance] ?? STANCE_META.neutral;
+                        const rel =
+                          RELATIONSHIP_META[npc.relationship ?? 'stranger'] ??
+                          RELATIONSHIP_META.stranger;
+                        const affinity = npc.affinity ?? 0;
+                        const affinityPercent = Math.max(
+                          0,
+                          Math.min(100, Math.round(((affinity + 100) / 200) * 100)),
+                        );
                         const npcInitials = npc.name
                           .split(/\s+/)
                           .slice(0, 2)
@@ -623,29 +1154,87 @@ export function ContextHud({
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex items-center gap-2.5">
-                                <span className="font-display flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent)]">
-                                  {npcInitials || '?'}
-                                </span>
+                                {npc.portraitUrl ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onZoomImage?.(
+                                        npc.portraitUrl!,
+                                        `${npc.name} · ${npc.role}`,
+                                      )
+                                    }
+                                    className="h-9 w-9 shrink-0 overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[var(--bg-surface)]"
+                                  >
+                                    <img
+                                      src={npc.portraitUrl}
+                                      alt={npc.name}
+                                      className="h-full w-full object-cover"
+                                    />
+                                  </button>
+                                ) : (
+                                  <span className="font-display flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent)]">
+                                    {npcInitials || '?'}
+                                  </span>
+                                )}
                                 <div className="min-w-0">
-                                  <div className="truncate text-xs font-semibold text-[var(--text-primary)]">
-                                    {npc.name}
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                                      {npc.name}
+                                    </span>
+                                    {npc.inParty ? (
+                                      <span className="rounded bg-[var(--success)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--success)]">
+                                        GRUPO
+                                      </span>
+                                    ) : null}
                                   </div>
                                   <div className="truncate text-[11px] text-[var(--text-muted)]">
                                     {npc.role}
+                                    {npc.assistAttribute
+                                      ? ` · Ajuda ${ATTRIBUTE_META[npc.assistAttribute].short[language]}`
+                                      : ''}
                                   </div>
                                 </div>
                               </div>
                               <span
                                 className="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold"
-                                style={{ color: stance.color, backgroundColor: stance.bg }}
+                                style={{
+                                  color:
+                                    npc.status === 'alive' ? rel.color : stance.color,
+                                  backgroundColor:
+                                    npc.status === 'alive' ? rel.bg : stance.bg,
+                                }}
                               >
                                 {npc.status === 'dead'
                                   ? 'Morto'
                                   : npc.status === 'missing'
                                     ? 'Sumido'
-                                    : stance.label}
+                                    : rel.label}
                               </span>
                             </div>
+
+                            {/* Affinity / Bond Meter */}
+                            {npc.status === 'alive' ? (
+                              <div className="mt-2">
+                                <div className="mb-0.5 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Heart className="h-2.5 w-2.5" style={{ color: rel.color }} />
+                                    Afinidade
+                                  </span>
+                                  <span className="font-mono-tech" style={{ color: rel.color }}>
+                                    {affinity > 0 ? `+${affinity}` : affinity}
+                                  </span>
+                                </div>
+                                <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+                                  <div
+                                    className="h-full rounded-full transition-all duration-500"
+                                    style={{
+                                      width: `${affinityPercent}%`,
+                                      backgroundColor: rel.color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ) : null}
 
                             {npc.notes ? (
                               <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-secondary)]">
@@ -653,19 +1242,68 @@ export function ContextHud({
                               </p>
                             ) : null}
 
-                            <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-2">
+                            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 border-t border-[var(--border-subtle)] pt-2">
                               <span className="truncate text-[10px] text-[var(--text-muted)]">
-                                Visto em: {npc.lastSeenLocation}
+                                {npc.lastSeenLocation}
                               </span>
                               {npc.status === 'alive' && !isEnded ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onMentionNpc(npc)}
-                                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 text-[10px] font-medium text-[var(--accent)] hover:border-[var(--accent)]"
-                                >
-                                  <MessageSquare className="h-2.5 w-2.5" />
-                                  Interagir
-                                </button>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {onGenerateNpcPortrait ? (
+                                    <button
+                                      type="button"
+                                      disabled={Boolean(generatingNpcPortraitId)}
+                                      onClick={() => onGenerateNpcPortrait(npc.id)}
+                                      title="Gerar retrato deste NPC"
+                                      className="inline-flex items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 text-[10px] font-medium text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-45"
+                                    >
+                                      <Camera
+                                        className={`h-2.5 w-2.5 ${
+                                          generatingNpcPortraitId === npc.id
+                                            ? 'animate-spin'
+                                            : ''
+                                        }`}
+                                      />
+                                      {generatingNpcPortraitId === npc.id
+                                        ? '...'
+                                        : 'Retrato'}
+                                    </button>
+                                  ) : null}
+                                  {onTogglePartyMember ? (
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        !npc.inParty &&
+                                        partyMembers.length >= MAX_PARTY_SIZE
+                                      }
+                                      onClick={() => onTogglePartyMember(npc.id)}
+                                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold transition disabled:opacity-40 ${
+                                        npc.inParty
+                                          ? 'border-[var(--success)]/45 bg-[var(--success)]/12 text-[var(--success)]'
+                                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--accent)]'
+                                      }`}
+                                    >
+                                      {npc.inParty ? (
+                                        <>
+                                          <UserMinus className="h-2.5 w-2.5" />
+                                          No Grupo
+                                        </>
+                                      ) : (
+                                        <>
+                                          <UserPlus className="h-2.5 w-2.5" />
+                                          Convidar
+                                        </>
+                                      )}
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => onMentionNpc(npc)}
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 text-[10px] font-medium text-[var(--accent)] hover:border-[var(--accent)]"
+                                  >
+                                    <MessageSquare className="h-2.5 w-2.5" />
+                                    Falar
+                                  </button>
+                                </div>
                               ) : null}
                             </div>
                           </div>
@@ -675,16 +1313,30 @@ export function ContextHud({
                   )}
                 </div>
 
-                {/* Atlas of Locations */}
+                {/* Atlas of Locations & Dungeons */}
                 <div>
-                  <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Atlas de Locais ({codex.locations.length})
-                  </h4>
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                      Atlas & Dungeons ({codex.locations.length})
+                    </h4>
+                    {onOpenWorldMap ? (
+                      <button
+                        type="button"
+                        onClick={onOpenWorldMap}
+                        className="inline-flex items-center gap-1 rounded-md border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                      >
+                        <MapIcon className="h-3 w-3" />
+                        Mapa Visual
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="space-y-2">
                     {codex.locations.map((loc) => {
                       const isCurrent =
                         loc.name.toLowerCase() === campaign.currentLocation.toLowerCase();
                       const danger = DANGER_META[loc.danger] ?? DANGER_META.tense;
+                      const kindMeta = LOCATION_KIND_META[loc.kind ?? 'city'];
+                      const statusMeta = LOCATION_STATUS_META[loc.status ?? 'explored'];
                       return (
                         <div
                           key={loc.id}
@@ -712,6 +1364,25 @@ export function ContextHud({
                               {danger.label}
                             </span>
                           </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <span
+                              className="rounded bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 font-semibold"
+                              style={{ color: kindMeta.color }}
+                            >
+                              {kindMeta.label}
+                            </span>
+                            <span
+                              className="rounded bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 font-medium"
+                              style={{ color: statusMeta.color }}
+                            >
+                              {statusMeta.label}
+                            </span>
+                            {loc.recommendedLevel ? (
+                              <span className="font-mono-tech rounded bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 text-[var(--text-muted)]">
+                                Nv.{loc.recommendedLevel}+
+                              </span>
+                            ) : null}
+                          </div>
                           {loc.description ? (
                             <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
                               {loc.description}
@@ -725,6 +1396,123 @@ export function ContextHud({
                             >
                               <Navigation className="h-2.5 w-2.5" />
                               Seguir para este local
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {worldSubTab === 'base' ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Home className="h-4 w-4 text-[var(--accent)]" />
+                      <div>
+                        <h4 className="font-display text-sm font-semibold text-[var(--text-primary)]">
+                          {campaign.stronghold?.name || 'Refúgio'}
+                        </h4>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          {campaign.stronghold?.location || campaign.currentLocation}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-mono-tech rounded-lg border border-[var(--success)]/35 bg-[var(--success)]/12 px-2 py-0.5 text-[11px] font-semibold text-[var(--success)]">
+                      Defesa {campaign.stronghold?.defense ?? 20}
+                    </span>
+                  </div>
+                  <div className="mt-2.5 flex items-center justify-between border-t border-[var(--border-subtle)] pt-2 text-[11px]">
+                    <span className="text-[var(--text-muted)]">Recursos disponíveis</span>
+                    <span className="font-mono-tech inline-flex items-center gap-1 font-semibold text-[#fbbf24]">
+                      <Coins className="h-3 w-3" />
+                      {(player.currency?.amount ?? 0).toLocaleString('pt-BR')}{' '}
+                      {player.currency?.label ?? 'Ouro'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Installed Upgrades */}
+                {(campaign.stronghold?.upgrades?.length ?? 0) > 0 ? (
+                  <div>
+                    <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                      Melhorias Instaladas ({campaign.stronghold?.upgrades.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {campaign.stronghold?.upgrades.map((up) => (
+                        <div
+                          key={up.id}
+                          className="rounded-xl border border-[var(--success)]/30 bg-[var(--success)]/8 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-[var(--text-primary)]">
+                              {up.name}
+                            </span>
+                            <span className="text-[10px] font-semibold text-[var(--success)]">
+                              Ativo ✓
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                            {up.bonus}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Upgrade Blueprints Catalog */}
+                <div>
+                  <h4 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    <Hammer className="h-3.5 w-3.5 text-[var(--accent)]" />
+                    Construir & Fortificar
+                  </h4>
+                  <div className="space-y-2.5">
+                    {STRONGHOLD_UPGRADE_CATALOG.map((bp) => {
+                      const alreadyBuilt = Boolean(
+                        campaign.stronghold?.upgrades.some((u) => u.id === bp.id),
+                      );
+                      const canAfford = (player.currency?.amount ?? 0) >= bp.cost;
+                      return (
+                        <div
+                          key={bp.id}
+                          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs font-semibold text-[var(--text-primary)]">
+                              {bp.name[language]}
+                            </span>
+                            <span className="font-mono-tech shrink-0 text-[11px] font-semibold text-[#fbbf24]">
+                              {bp.cost} {player.currency?.label ?? 'Ouro'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                            {bp.description[language]}
+                          </p>
+                          <div className="mt-1.5 text-[10px] font-medium text-[var(--success)]">
+                            {bp.bonusLabel[language]}
+                          </div>
+                          {onBuildStrongholdUpgrade && !isEnded ? (
+                            <button
+                              type="button"
+                              disabled={alreadyBuilt || !canAfford}
+                              onClick={() => onBuildStrongholdUpgrade(bp.id)}
+                              className={`mt-2.5 w-full rounded-lg border py-1.5 text-[11px] font-semibold transition disabled:opacity-45 ${
+                                alreadyBuilt
+                                  ? 'border-[var(--success)]/35 bg-[var(--success)]/12 text-[var(--success)]'
+                                  : canAfford
+                                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[#111]'
+                                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-muted)]'
+                              }`}
+                            >
+                              {alreadyBuilt
+                                ? 'Já instalado ✓'
+                                : canAfford
+                                  ? `Construir (${bp.cost} ${player.currency?.label ?? 'Ouro'})`
+                                  : `Recursos insuficientes (${bp.cost})`}
                             </button>
                           ) : null}
                         </div>

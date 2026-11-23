@@ -1,22 +1,41 @@
+import { Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { formatOutcomeLabel } from '../engine/diceEngine';
+import { ATTRIBUTE_META, formatModifier } from '../engine/rpgSystem';
 import type { DiceRollResult, LanguageId } from '../types/game';
 
 interface DiceRollOverlayProps {
   roll: DiceRollResult | null;
   language: LanguageId;
+  inspirationCount?: number;
+  canRerollWithInspiration?: boolean;
+  onRerollWithInspiration?: () => void;
   onComplete: () => void;
 }
 
 export function DiceRollOverlay({
   roll,
   language,
+  inspirationCount = 0,
+  canRerollWithInspiration = false,
+  onRerollWithInspiration,
   onComplete,
 }: DiceRollOverlayProps) {
   const [phase, setPhase] = useState<'rolling' | 'landed'>('rolling');
   const [displayNumber, setDisplayNumber] = useState<number>(12);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+
+  const canOfferReroll = Boolean(
+    roll &&
+      canRerollWithInspiration &&
+      onRerollWithInspiration &&
+      inspirationCount > 0 &&
+      !roll.rerolledWithInspiration &&
+      (roll.outcome === 'failure' ||
+        roll.outcome === 'critical_failure' ||
+        roll.outcome === 'partial'),
+  );
 
   useEffect(() => {
     if (!roll) return;
@@ -33,9 +52,12 @@ export function DiceRollOverlay({
       setPhase('landed');
     }, 640);
 
-    const closeTimer = window.setTimeout(() => {
-      onCompleteRef.current();
-    }, 1620);
+    const closeTimer = window.setTimeout(
+      () => {
+        onCompleteRef.current();
+      },
+      canOfferReroll ? 3900 : 1750,
+    );
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === ' ') {
@@ -51,7 +73,7 @@ export function DiceRollOverlay({
       window.clearTimeout(closeTimer);
       window.removeEventListener('keydown', handleKey);
     };
-  }, [roll]);
+  }, [roll, canOfferReroll]);
 
   if (!roll) return null;
 
@@ -71,10 +93,29 @@ export function DiceRollOverlay({
       aria-label="Rolagem de destino"
       className="fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-black/55 backdrop-blur-sm"
     >
-      <div className="relative flex w-full max-w-xs flex-col items-center rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)]/95 px-7 py-7 text-center shadow-[var(--shadow-elevated)]">
+      <div
+        onClick={(e) => {
+          if (canOfferReroll && phase === 'landed') {
+            e.stopPropagation();
+          }
+        }}
+        className="relative flex w-full max-w-xs flex-col items-center rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)]/95 px-7 py-7 text-center shadow-[var(--shadow-elevated)]"
+      >
         <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--accent)]">
-          Teste de Destino · d20
+          {roll.rollMode === 'advantage'
+            ? 'Vantagem · 2× d20'
+            : roll.rollMode === 'disadvantage'
+              ? 'Desvantagem · 2× d20'
+              : roll.rerolledWithInspiration
+                ? 'Inspiração BG3 · Rerrolado'
+                : 'Teste de Destino · d20'}
         </span>
+
+        {roll.advantageSource ? (
+          <span className="mt-1 rounded-full bg-[var(--success)]/12 px-2.5 py-0.5 text-[10px] font-medium text-[var(--success)]">
+            Ajuda do Grupo: {roll.advantageSource}
+          </span>
+        ) : null}
 
         {/* Animated Icosahedron d20 SVG */}
         <div
@@ -132,10 +173,59 @@ export function DiceRollOverlay({
                 {formatOutcomeLabel(roll.outcome, language)}
               </div>
               <div className="font-mono-tech text-xs text-[var(--text-secondary)]">
-                d20 ({roll.roll})
-                {roll.bonus > 0 ? ` + ${roll.bonus} (${roll.bonusSource})` : ''} ={' '}
-                <strong className="text-[var(--text-primary)]">{roll.total}</strong> vs DC {roll.dc}
+                {roll.rolls ? (
+                  <>
+                    2×d20 (
+                    <span
+                      className={
+                        roll.rolls[0] === roll.roll
+                          ? 'font-bold text-[var(--text-primary)]'
+                          : 'line-through opacity-55'
+                      }
+                    >
+                      {roll.rolls[0]}
+                    </span>
+                    ,{' '}
+                    <span
+                      className={
+                        roll.rolls[1] === roll.roll && roll.rolls[0] !== roll.roll
+                          ? 'font-bold text-[var(--text-primary)]'
+                          : roll.rolls[1] === roll.roll
+                            ? 'font-bold text-[var(--text-primary)]'
+                            : 'line-through opacity-55'
+                      }
+                    >
+                      {roll.rolls[1]}
+                    </span>
+                    )
+                  </>
+                ) : (
+                  <>d20 ({roll.roll})</>
+                )}
+                {roll.attribute && typeof roll.attributeMod === 'number' && roll.attributeMod !== 0
+                  ? ` ${roll.attributeMod > 0 ? '+' : '-'} ${Math.abs(roll.attributeMod)} (${ATTRIBUTE_META[roll.attribute].short[language]})`
+                  : ''}
+                {roll.skillLevelBonus && roll.skillLevelBonus > 0 && roll.bonusSource
+                  ? ` + ${roll.skillLevelBonus} (${roll.bonusSource})`
+                  : !roll.attribute && roll.bonus !== 0
+                    ? ` ${formatModifier(roll.bonus)}${roll.bonusSource ? ` (${roll.bonusSource})` : ''}`
+                    : ''}{' '}
+                = <strong className="text-[var(--text-primary)]">{roll.total}</strong> vs DC {roll.dc}
               </div>
+
+              {canOfferReroll ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRerollWithInspiration?.();
+                  }}
+                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-xl border border-[#fbbf24]/50 bg-[#fbbf24]/15 px-3.5 py-2 text-xs font-semibold text-[#fbbf24] transition hover:bg-[#fbbf24]/25"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Gastar 1 Inspiração · Rerrolar d20 ({inspirationCount} disp.)</span>
+                </button>
+              ) : null}
             </div>
           )}
         </div>

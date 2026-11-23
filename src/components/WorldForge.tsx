@@ -10,6 +10,7 @@ import {
   Flame,
   KeyRound,
   Loader2,
+  Minus,
   Plus,
   Scale,
   Shield,
@@ -28,6 +29,22 @@ import {
   type FactionSeed,
 } from '../data/presets';
 import {
+  ATTRIBUTE_KEYS,
+  ATTRIBUTE_META,
+  computeMaxVigor,
+  computePointBuySpent,
+  defaultCurrencyForTheme,
+  formatModifier,
+  getAttributeModifier,
+  getPresetAttributesForArchetype,
+  inferEquipSlotFromCategory,
+  POINT_BUY_BUDGET,
+  POINT_BUY_MAX,
+  POINT_BUY_MIN,
+  syncSkillLevels,
+  xpRequiredForLevel,
+} from '../engine/rpgSystem';
+import {
   requestForgeWorld,
   requestPortraitIllustration,
   shouldUseGemini,
@@ -35,7 +52,9 @@ import {
 } from '../services/storyApi';
 import type {
   AppSettings,
+  AttributeId,
   Campaign,
+  CharacterAttributes,
   DifficultyId,
   ForgeArchitectMode,
   InventoryItem,
@@ -166,12 +185,22 @@ export function WorldForge({
   const [occupation, setOccupation] = useState(initialArch.label[lang]);
   const [traits, setTraits] = useState<string[]>(initialArch.traits[lang]);
   const [skills, setSkills] = useState<string[]>(initialArch.skills[lang]);
+  const [attributes, setAttributes] = useState<CharacterAttributes>(() =>
+    getPresetAttributesForArchetype(initialArch.id, 'fantasy'),
+  );
+  const [startingCurrency, setStartingCurrency] = useState<{
+    amount: number;
+    label: string;
+  } | null>(null);
   const [starterItem, setStarterItem] = useState<InventoryItem>({
     id: 'starter_1',
     name: initialArch.starterItem.name[lang],
     category: initialArch.starterItem.category,
     quantity: 1,
     note: initialArch.starterItem.note[lang],
+    rarity: 'uncommon',
+    equipSlot: inferEquipSlotFromCategory(initialArch.starterItem.category),
+    equipped: initialArch.starterItem.category === 'weapon',
   });
   const [customTrait, setCustomTrait] = useState('');
   const [customSkill, setCustomSkill] = useState('');
@@ -216,6 +245,21 @@ export function WorldForge({
   const themePreset = WORLD_THEMES[primaryTheme];
   const geminiConnected = shouldUseGemini(settings, apiHealth);
 
+  const pointsSpent = computePointBuySpent(attributes);
+  const pointsRemaining = POINT_BUY_BUDGET - pointsSpent;
+
+  const adjustAttribute = (key: AttributeId, delta: 1 | -1) => {
+    setAttributes((prev) => {
+      const nextVal = prev[key] + delta;
+      if (nextVal < POINT_BUY_MIN || nextVal > POINT_BUY_MAX) return prev;
+      const candidate = { ...prev, [key]: nextVal };
+      if (delta > 0 && computePointBuySpent(candidate) > POINT_BUY_BUDGET) {
+        return prev;
+      }
+      return candidate;
+    });
+  };
+
   const applyForgedProtagonist = (
     protag: NonNullable<Awaited<ReturnType<typeof requestForgeWorld>>['protagonist']>,
   ) => {
@@ -225,12 +269,28 @@ export function WorldForge({
     setOccupation(protag.occupation);
     setTraits(protag.traits);
     setSkills(protag.skills);
+    if (protag.attributes) {
+      setAttributes({
+        str: Math.max(8, Math.min(15, Math.round(protag.attributes.str ?? 10))),
+        dex: Math.max(8, Math.min(15, Math.round(protag.attributes.dex ?? 10))),
+        con: Math.max(8, Math.min(15, Math.round(protag.attributes.con ?? 10))),
+        int: Math.max(8, Math.min(15, Math.round(protag.attributes.int ?? 10))),
+        wis: Math.max(8, Math.min(15, Math.round(protag.attributes.wis ?? 10))),
+        cha: Math.max(8, Math.min(15, Math.round(protag.attributes.cha ?? 10))),
+      });
+    }
+    if (protag.startingCurrency) {
+      setStartingCurrency(protag.startingCurrency);
+    }
     setStarterItem({
       id: `starter_ai_${Date.now()}`,
       name: protag.starterItem.name,
       category: protag.starterItem.category,
       quantity: 1,
       note: protag.starterItem.note,
+      rarity: 'uncommon',
+      equipSlot: inferEquipSlotFromCategory(protag.starterItem.category),
+      equipped: protag.starterItem.category === 'weapon',
     });
     setPortraitUrl(undefined);
     setPortraitEngine(undefined);
@@ -368,12 +428,16 @@ export function WorldForge({
     setOccupation(arch.label[language]);
     setTraits([...arch.traits[language]]);
     setSkills([...arch.skills[language]]);
+    setAttributes(getPresetAttributesForArchetype(arch.id, activeTheme));
     setStarterItem({
       id: `starter_${arch.id}`,
       name: arch.starterItem.name[language],
       category: arch.starterItem.category,
       quantity: 1,
       note: arch.starterItem.note[language],
+      rarity: 'uncommon',
+      equipSlot: inferEquipSlotFromCategory(arch.starterItem.category),
+      equipped: arch.starterItem.category === 'weapon',
     });
     const randomPool = RANDOM_PROTAGONISTS[activeTheme];
     if (!playerName.trim()) {
@@ -456,11 +520,20 @@ export function WorldForge({
         occupation: occupation.trim() || themePreset.archetypes[0].label[language],
         portraitUrl,
         portraitEngine,
-        vigor: 100,
-        maxVigor: 100,
+        level: 1,
+        xp: 0,
+        xpToNextLevel: xpRequiredForLevel(1),
+        attributePoints: 0,
+        attributes: { ...attributes },
+        vigor: computeMaxVigor(1, attributes.con),
+        maxVigor: computeMaxVigor(1, attributes.con),
         tension: 20,
         traits,
         skills,
+        skillLevels: syncSkillLevels(skills),
+        talents: [],
+        currency:
+          startingCurrency ?? defaultCurrencyForTheme(primaryTheme, language),
         inventory: [starterItem],
         quests: [],
         journal: [],
@@ -1161,6 +1234,78 @@ export function WorldForge({
                     onChange={(e) => setOccupation(e.target.value)}
                     className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                   />
+                </div>
+              </div>
+
+              {/* BG3 Point Buy Attributes */}
+              <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]/70 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-primary)]">
+                      Atributos do Personagem (Estilo Baldur’s Gate 3)
+                    </label>
+                    <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                      Distribua seus pontos entre 8 e 15. Você ganhará mais pontos ao subir de nível na história.
+                    </p>
+                  </div>
+                  <span
+                    className={`font-mono-tech rounded-full border px-3 py-1 text-xs font-semibold ${
+                      pointsRemaining > 0
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    Pontos restantes: {pointsRemaining} / {POINT_BUY_BUDGET}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  {ATTRIBUTE_KEYS.map((key) => {
+                    const meta = ATTRIBUTE_META[key];
+                    const score = attributes[key];
+                    const mod = getAttributeModifier(score);
+                    const canDec = score > POINT_BUY_MIN;
+                    const nextCandidate = { ...attributes, [key]: score + 1 };
+                    const canInc =
+                      score < POINT_BUY_MAX &&
+                      computePointBuySpent(nextCandidate) <= POINT_BUY_BUDGET;
+
+                    return (
+                      <div
+                        key={key}
+                        title={meta.hint[language]}
+                        className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-center"
+                      >
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--accent)]">
+                          {meta.short[language]} · {meta.full[language]}
+                        </div>
+                        <div className="font-display mt-1 text-2xl font-bold text-[var(--text-primary)]">
+                          {formatModifier(mod)}
+                        </div>
+                        <div className="mt-2 flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!canDec}
+                            onClick={() => adjustAttribute(key, -1)}
+                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:opacity-35"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="font-mono-tech w-7 text-sm font-bold text-[var(--text-primary)]">
+                            {score}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={!canInc}
+                            onClick={() => adjustAttribute(key, 1)}
+                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:opacity-35"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

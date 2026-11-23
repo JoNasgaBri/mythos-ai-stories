@@ -372,6 +372,50 @@ export function SettingsDrawer({
                     className="h-4 w-4 accent-[var(--accent)]"
                   />
                 </div>
+
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-[var(--text-primary)]">
+                        Som Ambiente Procedural
+                      </div>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        Trilha sonora sutil sintetizada no navegador de acordo com o tema do mundo.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings.ambientSoundEnabled}
+                      onChange={(e) =>
+                        onUpdateSettings({ ambientSoundEnabled: e.target.checked })
+                      }
+                      className="h-4 w-4 accent-[var(--accent)]"
+                    />
+                  </div>
+                  {settings.ambientSoundEnabled ? (
+                    <div className="mt-3">
+                      <div className="mb-1 flex justify-between text-xs text-[var(--text-secondary)]">
+                        <span>Volume do Ambiente</span>
+                        <span className="font-mono-tech text-[var(--accent)]">
+                          {Math.round(settings.ambientVolume * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={5}
+                        max={100}
+                        step={5}
+                        value={Math.round(settings.ambientVolume * 100)}
+                        onChange={(e) =>
+                          onUpdateSettings({
+                            ambientVolume: Number(e.target.value) / 100,
+                          })
+                        }
+                        className="w-full accent-[var(--accent)]"
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </>
           ) : null}
