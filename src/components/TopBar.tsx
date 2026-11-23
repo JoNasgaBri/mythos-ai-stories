@@ -60,126 +60,149 @@ export function TopBar({
   const timeStr = clock
     ? formatClockTime(clock.hour ?? 8, clock.minute ?? 30)
     : null;
+  const urgentCountdown =
+    Boolean(clock?.countdown) && (clock?.countdown?.daysLeft ?? 99) <= 2;
 
   return (
-    <header className="sticky top-0 z-30 border-b border-[var(--border-subtle)]/80 bg-[var(--bg-glass)] backdrop-blur-2xl">
-      <div className="mx-auto grid h-10 max-w-[1600px] grid-cols-[1fr_auto_1fr] items-center gap-2 px-2.5 sm:h-9 sm:px-4">
-        {/* Left: GNOME Activities / Left Zen Rail Toggle + Brand */}
-        <div className="flex min-w-0 items-center gap-1.5">
-          {isStage ? (
-            <button
-              type="button"
-              onClick={onToggleLeftRail}
-              title={
-                leftRailMode === 'pinned'
-                  ? 'Modo Zen Compacto (Barra Esquerda)'
-                  : leftRailMode === 'compact'
-                    ? 'Fixar Barra Esquerda em Split'
-                    : 'Mostrar Barra Esquerda'
-              }
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
-                leftRailMode === 'pinned'
-                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                  : 'border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <PanelLeft className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
+    <header className="pointer-events-none sticky top-0 z-30 w-full px-2.5 pt-2 pb-1 sm:px-4">
+      <div className="mx-auto grid h-9 w-full max-w-[1860px] grid-cols-[1fr_auto_1fr] items-center gap-2">
+        {/* Left Floating Island: Zen Left Toggle + Navigation + Brand */}
+        <div className="flex min-w-0 items-center justify-start">
+          <div className="pointer-events-auto inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-[var(--border-subtle)]/90 bg-[var(--bg-glass)] px-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl">
+            {isStage ? (
+              <button
+                type="button"
+                onClick={onToggleLeftRail}
+                title={
+                  leftRailMode === 'pinned'
+                    ? 'Modo Zen Compacto (Barra Esquerda)'
+                    : leftRailMode === 'compact'
+                      ? 'Fixar Barra Esquerda em Split'
+                      : 'Mostrar Barra Esquerda'
+                }
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+                  leftRailMode === 'pinned'
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <PanelLeft className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
 
-          {view !== 'home' ? (
+            {view !== 'home' ? (
+              <button
+                type="button"
+                onClick={onBackHome}
+                title={copy.backHome}
+                className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">{copy.backHome}</span>
+              </button>
+            ) : null}
+
             <button
               type="button"
               onClick={onBackHome}
-              title={copy.backHome}
-              className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]"
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 text-left transition hover:bg-[var(--bg-surface)]"
             >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">{copy.backHome}</span>
+              <Compass className="h-3.5 w-3.5 text-[var(--accent)]" />
+              <span className="font-display text-xs font-semibold tracking-[0.18em] text-[var(--text-primary)]">
+                MYTHOS
+              </span>
             </button>
-          ) : null}
 
-          <button
-            type="button"
-            onClick={onBackHome}
-            className="flex shrink-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 text-left transition hover:bg-[var(--bg-surface)]"
-          >
-            <Compass className="h-3.5 w-3.5 text-[var(--accent)]" />
-            <span className="font-display text-xs font-semibold tracking-[0.18em] text-[var(--text-primary)]">
-              MYTHOS
-            </span>
-          </button>
-
-          {isStage && campaign ? (
-            <span
-              title={campaign.world.title}
-              className="hidden max-w-[160px] truncate border-l border-[var(--border-subtle)] pl-2 text-[11px] font-medium text-[var(--text-muted)] xl:inline"
-            >
-              {campaign.world.title}
-            </span>
-          ) : null}
+            {isStage && campaign ? (
+              <span
+                title={campaign.world.title}
+                className="hidden max-w-[180px] truncate border-l border-[var(--border-subtle)]/80 pr-2 pl-2.5 text-[11px] font-medium text-[var(--text-muted)] xl:inline"
+              >
+                {campaign.world.title}
+              </span>
+            ) : null}
+          </div>
         </div>
 
-        {/* Center: Iconic GNOME Center Clock, Weather, Location & Countdown Pill */}
-        <div className="flex min-w-0 items-center justify-center gap-1.5">
+        {/* Center Floating Dynamic Island (iPhone-inspired pill, only during stage) */}
+        <div className="flex min-w-0 items-center justify-center">
           {isStage && campaign ? (
-            <>
+            <div
+              className={`pointer-events-auto inline-flex h-9 items-center gap-1 rounded-full border bg-[var(--bg-surface)]/92 px-2 shadow-[0_8px_30px_rgba(0,0,0,0.42)] backdrop-blur-2xl transition-all duration-300 hover:scale-[1.01] ${
+                urgentCountdown
+                  ? 'border-[var(--warning)]/55'
+                  : 'border-[var(--border-strong)]/80 hover:border-[var(--accent)]/60'
+              }`}
+            >
               {clock && timeStr ? (
                 <button
                   type="button"
                   onClick={onOpenClock}
                   title={`Dia ${clock.day} · ${timeStr} · ${weatherMeta.label[settings.language]} — Clique para ajustar relógio, ritmo e clima`}
-                  className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--border-subtle)]/80 bg-[var(--bg-surface)]/80 px-2.5 text-[11px] font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)]"
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-[11px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--bg-elevated)]"
                 >
                   <WeatherIcon
-                    className="h-3 w-3 shrink-0"
+                    className="h-3.5 w-3.5 shrink-0"
                     style={{ color: weatherMeta.color }}
                   />
-                  <span className="font-mono-tech font-semibold">
+                  <span className="font-mono-tech font-semibold tracking-tight">
                     <span className="hidden sm:inline">D{clock.day} · </span>
                     {timeStr}
                   </span>
                 </button>
               ) : null}
 
+              <span className="hidden h-3.5 w-px bg-[var(--border-subtle)] md:block" />
+
               <button
                 type="button"
                 onClick={onOpenMap}
                 title={`Local atual: ${campaign.currentLocation} (Abrir Mapa Visual)`}
-                className="hidden h-7 max-w-[165px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-transparent px-2 text-[11px] text-[var(--text-secondary)] transition hover:border-[var(--border-subtle)] hover:bg-[var(--bg-surface)] hover:text-[var(--accent)] md:inline-flex"
+                className="hidden h-7 max-w-[200px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] text-[var(--text-secondary)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--accent)] md:inline-flex xl:max-w-[250px]"
               >
                 <MapPin className="h-3 w-3 shrink-0 text-[var(--accent)]" />
                 <span className="truncate">{campaign.currentLocation}</span>
               </button>
 
               {clock?.countdown ? (
-                <button
-                  type="button"
-                  onClick={onOpenClock}
-                  title={`${clock.countdown.daysLeft}d · ${clock.countdown.label}`}
-                  className="hidden h-6 max-w-[175px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-[var(--warning)]/35 bg-[var(--warning)]/12 px-2 text-[10px] font-semibold text-[var(--warning)] transition hover:brightness-110 lg:inline-flex xl:max-w-[220px]"
-                >
-                  <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">
-                    {clock.countdown.daysLeft}d · {clock.countdown.label}
-                  </span>
-                </button>
+                <>
+                  <span className="hidden h-3.5 w-px bg-[var(--border-subtle)] lg:block" />
+                  <button
+                    type="button"
+                    onClick={onOpenClock}
+                    title={`${clock.countdown.daysLeft}d · ${clock.countdown.label}`}
+                    className={`hidden h-6 max-w-[200px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[10px] font-semibold transition hover:brightness-110 lg:inline-flex xl:max-w-[260px] ${
+                      urgentCountdown
+                        ? 'bg-[var(--warning)]/18 text-[var(--warning)]'
+                        : 'bg-[var(--bg-elevated)] text-[var(--warning)]'
+                    }`}
+                  >
+                    <AlertTriangle
+                      className={`h-3 w-3 shrink-0 ${
+                        urgentCountdown ? 'animate-pulse' : ''
+                      }`}
+                    />
+                    <span className="truncate">
+                      {clock.countdown.daysLeft}d · {clock.countdown.label}
+                    </span>
+                  </button>
+                </>
               ) : null}
-            </>
+            </div>
           ) : null}
         </div>
 
-        {/* Right: GNOME Quick Settings Pill + Right Zen Split Toggle */}
-        <div className="flex items-center justify-end gap-1.5">
-          <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--border-subtle)]/80 bg-[var(--bg-surface)]/75 px-1 py-0.5">
+        {/* Right Floating Island: System Controls + Zen Right Split Toggle */}
+        <div className="flex items-center justify-end">
+          <div className="pointer-events-auto inline-flex h-9 shrink-0 items-center gap-0.5 rounded-full border border-[var(--border-subtle)]/90 bg-[var(--bg-glass)] px-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl">
             <button
               type="button"
               onClick={() => onOpenSettings('ai')}
               title={usingGemini ? 'Gemini IA Conectado' : 'Modo Demo Local'}
-              className={`inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[10px] font-semibold transition ${
+              className={`inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[10px] font-semibold transition ${
                 usingGemini
                   ? 'text-[var(--success)] hover:bg-[var(--success)]/12'
-                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
               }`}
             >
               <Sparkles className="h-3 w-3 shrink-0" />
@@ -197,10 +220,10 @@ export function TopBar({
                     ? 'Silenciar Som Ambiente'
                     : 'Ativar Som Ambiente'
                 }
-                className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
+                className={`flex h-7 w-7 items-center justify-center rounded-full transition ${
                   settings.ambientSoundEnabled
                     ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
                 }`}
               >
                 {settings.ambientSoundEnabled ? (
@@ -219,7 +242,7 @@ export function TopBar({
                   ? 'Modo Papel Claro'
                   : 'Modo Atmosférico Escuro'
               }
-              className="hidden h-6 w-6 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] sm:flex"
+              className="hidden h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] sm:flex"
             >
               {settings.colorMode === 'dark' ? (
                 <Sun className="h-3.5 w-3.5" />
@@ -232,30 +255,33 @@ export function TopBar({
               type="button"
               onClick={() => onOpenSettings('game')}
               title="Configurações"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]"
             >
               <Settings className="h-3.5 w-3.5" />
             </button>
-          </div>
 
-          {isStage ? (
-            <button
-              type="button"
-              onClick={onToggleRightHud}
-              title={
-                rightHudOpen
-                  ? 'Recolher Painel Direito (Ficha & Mundo)'
-                  : 'Expandir Painel Direito (Ficha & Mundo)'
-              }
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
-                rightHudOpen
-                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                  : 'border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <PanelRight className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
+            {isStage ? (
+              <>
+                <span className="mx-0.5 h-3.5 w-px bg-[var(--border-subtle)]" />
+                <button
+                  type="button"
+                  onClick={onToggleRightHud}
+                  title={
+                    rightHudOpen
+                      ? 'Recolher Painel Direito (Ficha & Mundo)'
+                      : 'Expandir Painel Direito (Ficha & Mundo)'
+                  }
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+                    rightHudOpen
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                      : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <PanelRight className="h-3.5 w-3.5" />
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
     </header>

@@ -438,7 +438,7 @@ export function StoryStage({
   }
 
   return (
-    <div className="relative z-10 mx-auto flex h-[calc(100dvh-2.6rem)] max-w-[1600px] gap-3 px-2.5 py-2.5 sm:h-[calc(100dvh-2.35rem)] sm:gap-4 sm:px-4 sm:py-3">
+    <div className="relative z-10 mx-auto flex h-[calc(100dvh-3.05rem)] w-full max-w-[1860px] gap-3 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-2.5">
       {/* Left Zen Browser Retractable Tactical Rail */}
       <ZenLeftRail
         campaign={campaign}
@@ -467,7 +467,7 @@ export function StoryStage({
       <section className="flex min-w-0 flex-1 flex-col">
         {/* Scrollable Editorial Chronicle */}
         <div className="flex-1 overflow-y-auto pr-1 pb-6">
-          <div className="mx-auto max-w-[740px] space-y-6 pt-2">
+          <div className="mx-auto max-w-[960px] space-y-6 pt-2 2xl:max-w-[1060px]">
             {campaign.entries.map((entry, idx) => {
               if (entry.role === 'prologue') {
                 const isIllustrating = illustratingEntryId === entry.id;
@@ -971,7 +971,7 @@ export function StoryStage({
 
         {/* Bottom Command Dock */}
         {!isEnded ? (
-          <div className="mx-auto w-full max-w-[740px] shrink-0 pt-2">
+          <div className="mx-auto w-full max-w-[960px] shrink-0 pt-2 2xl:max-w-[1060px]">
             {isVigorCrisis ? (
               <div className="animate-beat-enter rounded-2xl border border-[var(--danger)]/60 bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-elevated)]">
                 <div className="flex items-start gap-3">
@@ -1336,7 +1336,7 @@ export function StoryStage({
 
       {/* Desktop Right Zen Browser Split / Auto-Peek HUD */}
       {!focusMode ? (
-        <aside className="relative hidden w-[340px] shrink-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block xl:w-[375px]">
+        <aside className="relative hidden w-[350px] shrink-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block xl:w-[395px] 2xl:w-[415px]">
           <button
             type="button"
             onClick={onToggleRightHud}
@@ -1390,7 +1390,7 @@ export function StoryStage({
           ) : (
             <div
               onMouseLeave={() => setRightHudPeek(false)}
-              className="fixed top-11 right-2.5 bottom-2.5 z-40 flex w-[355px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-canvas)]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+              className="fixed top-12 right-3 bottom-3 z-40 flex w-[380px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-canvas)]/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
             >
               <div className="mb-1.5 flex items-center justify-between px-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
