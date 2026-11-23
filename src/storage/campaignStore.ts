@@ -3,6 +3,7 @@ import {
   computeMaxVigor,
   DEFAULT_ATTRIBUTES,
   defaultAffinityFromStance,
+  defaultBaseSuppliesForTheme,
   defaultCurrencyForTheme,
   defaultHourForPeriod,
   defaultStrongholdForTheme,
@@ -101,6 +102,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     ? rawPlayer.inventory.map((item) => ({
         ...item,
         rarity: item.rarity ?? 'common',
+        storage: item.storage ?? 'carry',
         equipSlot:
           item.equipSlot ?? inferEquipSlotFromCategory(item.category, item.name),
       }))
@@ -154,6 +156,27 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       typeof rawClock?.shortRestsUsedToday === 'number'
         ? Math.max(0, Math.min(2, Math.round(rawClock.shortRestsUsedToday)))
         : 0,
+  };
+
+  const defaultBase = defaultStrongholdForTheme(
+    theme,
+    raw.currentLocation || locations[0]?.name || 'Base Inicial',
+    language,
+  );
+  const rawBase = raw.stronghold;
+  const defaultSupplies = defaultBaseSuppliesForTheme(theme);
+  const normalizedStronghold = {
+    ...defaultBase,
+    ...(rawBase ?? {}),
+    upgrades: Array.isArray(rawBase?.upgrades) ? rawBase.upgrades : [],
+    supplies: {
+      ammo: rawBase?.supplies?.ammo ?? defaultSupplies.ammo,
+      fuel: rawBase?.supplies?.fuel ?? defaultSupplies.fuel,
+      food: rawBase?.supplies?.food ?? defaultSupplies.food,
+      meds: rawBase?.supplies?.meds ?? defaultSupplies.meds,
+      materials: rawBase?.supplies?.materials ?? defaultSupplies.materials,
+    },
+    vehicles: Array.isArray(rawBase?.vehicles) ? rawBase.vehicles : [],
   };
 
   return {
@@ -224,13 +247,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     arcNumber: typeof raw.arcNumber === 'number' && raw.arcNumber >= 1 ? raw.arcNumber : 1,
     eraSummaries: Array.isArray(raw.eraSummaries) ? raw.eraSummaries : [],
     worldClock: normalizedClock,
-    stronghold:
-      raw.stronghold ??
-      defaultStrongholdForTheme(
-        theme,
-        raw.currentLocation || locations[0]?.name || 'Base Inicial',
-        language,
-      ),
+    stronghold: normalizedStronghold,
     entries: Array.isArray(raw.entries) ? raw.entries : [],
     actions: Array.isArray(raw.actions) ? raw.actions : [],
   };

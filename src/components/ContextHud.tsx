@@ -17,6 +17,7 @@ import {
   Heart,
   Home,
   Key,
+  Layers,
   Map as MapIcon,
   MapPin,
   MessageSquare,
@@ -86,6 +87,7 @@ interface ContextHudProps {
   onBuildStrongholdUpgrade?: (upgradeId: string) => void;
   onOpenWorldMap?: () => void;
   onOpenCharacterInventory?: () => void;
+  onOpenBaseBlueprint?: () => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
@@ -149,6 +151,7 @@ export function ContextHud({
   onBuildStrongholdUpgrade,
   onOpenWorldMap,
   onOpenCharacterInventory,
+  onOpenBaseBlueprint,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
@@ -1449,6 +1452,16 @@ export function ContextHud({
                       {player.currency?.label ?? 'Ouro'}
                     </span>
                   </div>
+                  {onOpenBaseBlueprint ? (
+                    <button
+                      type="button"
+                      onClick={onOpenBaseBlueprint}
+                      className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-[var(--accent)]/55 bg-[var(--accent-soft)] py-1.5 text-[11px] font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)] hover:text-[#111]"
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      <span>Abrir Planta Visual da Base</span>
+                    </button>
+                  ) : null}
                 </div>
 
                 {/* Installed Upgrades */}

@@ -1,11 +1,13 @@
 import type {
   ActionIntent,
   AttributeId,
+  BaseSupplies,
   CharacterAttributes,
   EquipSlot,
   InventoryItem,
   ItemBonuses,
   ItemRarity,
+  ItemStorageLocation,
   LanguageId,
   LocationKind,
   LocationStatus,
@@ -14,6 +16,7 @@ import type {
   RelationshipTier,
   SkillProgress,
   StrongholdState,
+  SupplyType,
   TimeAdvanceMode,
   WeatherType,
   WorldClock,
@@ -837,6 +840,68 @@ export const STRONGHOLD_UPGRADE_CATALOG: StrongholdBlueprintUpgrade[] = [
   },
 ];
 
+export const SUPPLY_KEYS: SupplyType[] = [
+  'ammo',
+  'fuel',
+  'food',
+  'meds',
+  'materials',
+];
+
+export function getSupplyMetaForTheme(
+  theme: WorldThemeId,
+): Record<SupplyType, { label: string; unit: string; color: string; maxBar: number }> {
+  if (theme === 'fantasy') {
+    return {
+      ammo: { label: 'Flechas & Cargas', unit: 'un.', color: '#fbbf24', maxBar: 100 },
+      fuel: { label: 'Óleo & Lenha', unit: 'un.', color: '#fb923c', maxBar: 30 },
+      food: { label: 'Rações & Água', unit: 'dias', color: '#4ade80', maxBar: 30 },
+      meds: { label: 'Poções & Ervas', unit: 'doses', color: '#f472b6', maxBar: 20 },
+      materials: { label: 'Minério & Peças', unit: 'un.', color: '#94a3b8', maxBar: 50 },
+    };
+  }
+  return {
+    ammo: { label: 'Munição', unit: 'un.', color: '#fbbf24', maxBar: 200 },
+    fuel: { label: 'Combustível', unit: 'gal.', color: '#fb923c', maxBar: 30 },
+    food: { label: 'Comida & Água', unit: 'dias', color: '#4ade80', maxBar: 30 },
+    meds: { label: 'Medicina', unit: 'kits', color: '#f472b6', maxBar: 20 },
+    materials: { label: 'Materiais & Peças', unit: 'un.', color: '#60a5fa', maxBar: 50 },
+  };
+}
+
+export function defaultBaseSuppliesForTheme(theme: WorldThemeId): BaseSupplies {
+  if (theme === 'fantasy') {
+    return { ammo: 20, fuel: 4, food: 7, meds: 3, materials: 10 };
+  }
+  return { ammo: 0, fuel: 0, food: 3, meds: 1, materials: 5 };
+}
+
+export function isVehicleLikeItem(name: string): boolean {
+  return /\b(caminhonete|ford\s+f-?\d+|carro|ve[ií]culo|moto|motocicleta|jipe|van|barco|lancha|cavalo|montaria|carro[cç]a|nave|helic[oó]ptero|pickup|truck|car\b|jeep|motorcycle|boat|horse|ship)\b/i.test(
+    name,
+  );
+}
+
+export function inferItemStorage(
+  name: string,
+  category: InventoryItem['category'],
+  quantity = 1,
+): ItemStorageLocation {
+  const n = name.toLowerCase();
+  if (isVehicleLikeItem(n)) return 'base';
+  if (
+    /\b(lote|estoque|gal[aã]o|gal[oõ]es|combust[ií]vel|gasolina|diesel|muni[cç][aã]o|provis[oõ]es|mantas?\s+solares?|pain[eé]l\s+solar|gerador|filtros?\s+de\s+[aá]gua|ferragens|correntes?\s+de\s+ancoragem|barril|caixa\s+de|suprimentos|enlatad|crate|stockpile|fuel|ammo|generator|solar\s+panel)\b/i.test(
+      n,
+    )
+  ) {
+    return 'base';
+  }
+  if (quantity >= 5 && (category === 'misc' || category === 'consumable')) {
+    return 'base';
+  }
+  return 'carry';
+}
+
 export function defaultStrongholdForTheme(
   theme: WorldThemeId,
   location: string,
@@ -854,5 +919,7 @@ export function defaultStrongholdForTheme(
     location: location || 'Base Inicial',
     defense: 20,
     upgrades: [],
+    supplies: defaultBaseSuppliesForTheme(theme),
+    vehicles: [],
   };
 }

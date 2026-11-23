@@ -149,6 +149,11 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
                 type: 'string',
                 enum: ['weapon', 'offhand', 'head', 'armor', 'accessory', 'utility'],
               },
+              storage: {
+                type: 'string',
+                enum: ['carry', 'base', 'vehicle'],
+                description: 'Where this item belongs: "carry" (pocket/backpack on protagonist), "base" (heavy crates, stockpiles, generators, stored spares at refuge), or "vehicle" (trunk/cargo).',
+              },
               bonuses: {
                 type: 'object',
                 properties: {
@@ -168,6 +173,29 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         removeItems: {
           type: 'array',
           items: { type: 'string' },
+        },
+        supplyDeltas: {
+          type: 'object',
+          description: 'Track bulk strategic base supplies separately from individual pocket items (ammo, fuel, food, meds, materials).',
+          properties: {
+            ammo: { type: 'integer' },
+            fuel: { type: 'integer' },
+            food: { type: 'integer' },
+            meds: { type: 'integer' },
+            materials: { type: 'integer' },
+          },
+        },
+        upsertVehicle: {
+          type: 'object',
+          description: 'Register or update a vehicle or mount (car, truck, boat, horse, ship) in the player’s Garage/Fleet instead of stuffing it into the backpack.',
+          properties: {
+            name: { type: 'string' },
+            kind: { type: 'string' },
+            fuelDelta: { type: 'integer' },
+            conditionDelta: { type: 'integer' },
+            note: { type: 'string' },
+          },
+          required: ['name'],
         },
         addTraits: {
           type: 'array',
@@ -801,7 +829,15 @@ function buildCompactStateContext(campaign: Campaign): string {
         equippedGear: campaign.player.inventory
           .filter((i) => i.equipped)
           .map((i) => `${i.name} [${i.equipSlot}]`),
-        inventory: campaign.player.inventory.map((i) => `${i.name} (x${i.quantity})`),
+        carryingInBackpack: campaign.player.inventory
+          .filter((i) => (i.storage ?? 'carry') === 'carry')
+          .map((i) => `${i.name} (x${i.quantity})`),
+        storedAtBase: campaign.player.inventory
+          .filter((i) => i.storage === 'base')
+          .map((i) => `${i.name} (x${i.quantity})`),
+        vehicleTrunk: campaign.player.inventory
+          .filter((i) => i.storage === 'vehicle')
+          .map((i) => `${i.name} (x${i.quantity})`),
         activeQuests: campaign.player.quests
           .filter((q) => q.status === 'active')
           .map((q) => q.title),
@@ -822,6 +858,10 @@ function buildCompactStateContext(campaign: Campaign): string {
             location: campaign.stronghold.location,
             defense: campaign.stronghold.defense,
             upgrades: campaign.stronghold.upgrades.map((u) => `${u.name} (${u.bonus})`),
+            supplies: campaign.stronghold.supplies ?? null,
+            vehicles: (campaign.stronghold.vehicles ?? []).map(
+              (v) => `${v.name} (${v.kind}, fuel ${v.fuel}%, condition ${v.condition}%)`,
+            ),
           }
         : null,
       activeParty: campaign.codex.npcs

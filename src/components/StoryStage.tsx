@@ -83,6 +83,7 @@ interface StoryStageProps {
   onBuildStrongholdUpgrade?: (upgradeId: string) => void;
   onOpenWorldMap?: () => void;
   onOpenCharacterInventory?: () => void;
+  onOpenBaseBlueprint?: () => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -148,6 +149,7 @@ export function StoryStage({
   onBuildStrongholdUpgrade,
   onOpenWorldMap,
   onOpenCharacterInventory,
+  onOpenBaseBlueprint,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -1178,6 +1180,7 @@ export function StoryStage({
             onBuildStrongholdUpgrade={onBuildStrongholdUpgrade}
             onOpenWorldMap={onOpenWorldMap}
             onOpenCharacterInventory={onOpenCharacterInventory}
+            onOpenBaseBlueprint={onOpenBaseBlueprint}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
@@ -1243,6 +1246,10 @@ export function StoryStage({
                 onOpenCharacterInventory={() => {
                   setMobileHudOpen(false);
                   onOpenCharacterInventory?.();
+                }}
+                onOpenBaseBlueprint={() => {
+                  setMobileHudOpen(false);
+                  onOpenBaseBlueprint?.();
                 }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}

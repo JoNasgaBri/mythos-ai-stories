@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { BaseBlueprintModal } from './components/BaseBlueprintModal';
 import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
@@ -26,15 +27,20 @@ import {
   ATTRIBUTE_META,
   computeMaxVigor,
   DEFAULT_ATTRIBUTES,
+  defaultBaseSuppliesForTheme,
   defaultCurrencyForTheme,
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
   formatClockTime,
   getEffectiveAttributes,
   getEquippedGearBonuses,
+  getSupplyMetaForTheme,
+  inferItemStorage,
+  isVehicleLikeItem,
   MAX_PARTY_SIZE,
   MAX_SHORT_RESTS_PER_DAY,
   STRONGHOLD_UPGRADE_CATALOG,
+  SUPPLY_KEYS,
   xpRequiredForLevel,
 } from './engine/rpgSystem';
 import {
@@ -78,13 +84,16 @@ import type {
   DiceRollResult,
   DifficultyId,
   InventoryItem,
+  ItemStorageLocation,
   JournalEntry,
   LocationRecord,
   SaveSlot,
   StateDelta,
   StoryEntry,
+  SupplyType,
   TacticalAction,
   ToastMessage,
+  VehicleRecord,
   WorldClock,
   WorldConfig,
   WorldThemeId,
@@ -146,6 +155,7 @@ export function App() {
   const [clockOpen, setClockOpen] = useState(false);
   const [restModalOpen, setRestModalOpen] = useState(false);
   const [charInventoryOpen, setCharInventoryOpen] = useState(false);
+  const [baseBlueprintOpen, setBaseBlueprintOpen] = useState(false);
   const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
   const [undoStack, setUndoStack] = useState<Campaign[]>([]);
   const [lastTurnMeta, setLastTurnMeta] = useState<{
@@ -1095,6 +1105,78 @@ export function App() {
         }
       }
 
+      // Base Strategic Supplies delta
+      if (response.stateChanges?.supplyDeltas) {
+        const baseSupplies = {
+          ...(nextStronghold.supplies ??
+            defaultBaseSuppliesForTheme(optimisticCampaign.world.primaryTheme)),
+        };
+        const supMeta = getSupplyMetaForTheme(optimisticCampaign.world.primaryTheme);
+        let changed = false;
+        for (const k of SUPPLY_KEYS) {
+          const delta = response.stateChanges.supplyDeltas[k];
+          if (typeof delta === 'number' && delta !== 0) {
+            const rounded = Math.round(delta);
+            baseSupplies[k] = Math.max(0, (baseSupplies[k] ?? 0) + rounded);
+            changed = true;
+            extraDeltas.push({
+              kind: 'base',
+              label: `${rounded > 0 ? '+' : ''}${rounded} ${supMeta[k].label}`,
+              positive: rounded > 0,
+            });
+          }
+        }
+        if (changed) {
+          nextStronghold = { ...nextStronghold, supplies: baseSupplies };
+        }
+      }
+
+      // Garage / Vehicle upsert
+      if (response.stateChanges?.upsertVehicle?.name?.trim()) {
+        const uv = response.stateChanges.upsertVehicle;
+        const currentVehicles = [...(nextStronghold.vehicles ?? [])];
+        const existingIdx = currentVehicles.findIndex(
+          (v) => v.name.toLowerCase() === uv.name.trim().toLowerCase(),
+        );
+        if (existingIdx >= 0) {
+          const prevV = currentVehicles[existingIdx];
+          currentVehicles[existingIdx] = {
+            ...prevV,
+            kind: uv.kind?.trim() || prevV.kind,
+            fuel: Math.max(
+              0,
+              Math.min(100, prevV.fuel + Math.round(uv.fuelDelta ?? 0)),
+            ),
+            condition: Math.max(
+              0,
+              Math.min(100, prevV.condition + Math.round(uv.conditionDelta ?? 0)),
+            ),
+            note: uv.note?.trim() || prevV.note,
+          };
+        } else {
+          currentVehicles.push({
+            id: `veh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: uv.name.trim(),
+            kind: uv.kind?.trim() || 'Veículo / Transporte',
+            fuel: Math.max(
+              0,
+              Math.min(100, 80 + Math.round(uv.fuelDelta ?? 0)),
+            ),
+            condition: Math.max(
+              0,
+              Math.min(100, 100 + Math.round(uv.conditionDelta ?? 0)),
+            ),
+            note: uv.note?.trim(),
+          });
+          extraDeltas.push({
+            kind: 'base',
+            label: `Garagem: ${uv.name.trim()}`,
+            positive: true,
+          });
+        }
+        nextStronghold = { ...nextStronghold, vehicles: currentVehicles };
+      }
+
       const nextStatus = evaluateStatus(nextPlayer.vigor, nextPlayer.tension);
       const nextActions = toTacticalActions(response.actions);
       const allDeltas: StateDelta[] = [
@@ -1882,6 +1964,194 @@ export function App() {
     pushToast('vigor', `${target.name} usado · +25 Vigor`);
   };
 
+  const handleMoveItemStorage = (
+    itemId: string,
+    targetStorage: ItemStorageLocation,
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const target = camp.player.inventory.find((i) => i.id === itemId);
+    if (!target) return;
+
+    const nextInventory = camp.player.inventory.map((i) => {
+      if (i.id !== itemId) return i;
+      return {
+        ...i,
+        storage: targetStorage,
+        equipped: targetStorage === 'carry' ? i.equipped : false,
+      };
+    });
+
+    const gear = getEquippedGearBonuses(nextInventory);
+    const nextMaxVigor = computeMaxVigor(
+      camp.player.level,
+      (camp.player.attributes.con ?? 10) + (gear.con ?? 0),
+      gear.maxVigor ?? 0,
+    );
+
+    persistActiveCampaign({
+      ...camp,
+      player: {
+        ...camp.player,
+        inventory: nextInventory,
+        maxVigor: nextMaxVigor,
+        vigor: Math.min(nextMaxVigor, camp.player.vigor),
+      },
+    });
+
+    const destLabel =
+      targetStorage === 'base'
+        ? 'Depósito da Base'
+        : targetStorage === 'vehicle'
+          ? 'Porta-Malas'
+          : 'Mochila';
+    pushToast('base', `${target.name} → ${destLabel}`);
+  };
+
+  const handleAutoOrganizeInventory = () => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+
+    const base =
+      camp.stronghold ??
+      defaultStrongholdForTheme(
+        camp.world.primaryTheme,
+        camp.currentLocation,
+        camp.language,
+      );
+    const supplies = {
+      ...(base.supplies ??
+        defaultBaseSuppliesForTheme(camp.world.primaryTheme)),
+    };
+    const vehicles: VehicleRecord[] = [...(base.vehicles ?? [])];
+
+    let movedToBase = 0;
+    let vehiclesPromoted = 0;
+    const nextInventory: InventoryItem[] = [];
+
+    for (const item of camp.player.inventory) {
+      if (!item.equipped && isVehicleLikeItem(item.name)) {
+        const exists = vehicles.some(
+          (v) => v.name.toLowerCase() === item.name.toLowerCase(),
+        );
+        if (!exists) {
+          vehicles.push({
+            id: `veh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: item.name,
+            kind: 'Veículo / Frota',
+            fuel: 80,
+            condition: 100,
+            note: item.note,
+          });
+        }
+        vehiclesPromoted += 1;
+        continue;
+      }
+
+      if (
+        !item.equipped &&
+        (item.storage ?? 'carry') === 'carry' &&
+        inferItemStorage(item.name, item.category, item.quantity) === 'base'
+      ) {
+        nextInventory.push({ ...item, storage: 'base' });
+        movedToBase += 1;
+        const lower = item.name.toLowerCase();
+        if (/(combust[ií]vel|gasolina|diesel|gal[aã]o|gal[oõ]es|fuel)/i.test(lower)) {
+          supplies.fuel += Math.max(1, item.quantity);
+        } else if (/(muni[cç][aã]o|ammo|cartucho|balas)/i.test(lower)) {
+          supplies.ammo += Math.max(20, item.quantity * 20);
+        } else if (/(provis[oõ]es|comida|ra[cç][aã]o|enlatad|filtro.*água|food)/i.test(lower)) {
+          supplies.food += Math.max(3, item.quantity * 2);
+        } else if (/(m[eé]dic|trauma|primeiros socorros|rem[eé]dio|medkit)/i.test(lower)) {
+          supplies.meds += Math.max(1, item.quantity);
+        } else if (/(ferrag|corrent|solar|gerador|pe[cç]a|material)/i.test(lower)) {
+          supplies.materials += Math.max(3, item.quantity * 2);
+        }
+      } else {
+        nextInventory.push(item);
+      }
+    }
+
+    if (movedToBase === 0 && vehiclesPromoted === 0) {
+      pushToast('info', 'Sua mochila já está bem organizada!');
+      return;
+    }
+
+    persistActiveCampaign({
+      ...camp,
+      player: {
+        ...camp.player,
+        inventory: nextInventory,
+      },
+      stronghold: {
+        ...base,
+        supplies,
+        vehicles,
+      },
+    });
+
+    const parts: string[] = [];
+    if (movedToBase > 0) parts.push(`${movedToBase} item(ns) → Base`);
+    if (vehiclesPromoted > 0) parts.push(`${vehiclesPromoted} veículo(s) → Garagem`);
+    pushToast('base', `Auto-organizado: ${parts.join(' · ')}`);
+  };
+
+  const handleAdjustSupply = (supply: SupplyType, delta: number) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const base =
+      camp.stronghold ??
+      defaultStrongholdForTheme(
+        camp.world.primaryTheme,
+        camp.currentLocation,
+        camp.language,
+      );
+    const supplies = {
+      ...(base.supplies ??
+        defaultBaseSuppliesForTheme(camp.world.primaryTheme)),
+    };
+    supplies[supply] = Math.max(0, (supplies[supply] ?? 0) + Math.round(delta));
+
+    persistActiveCampaign({
+      ...camp,
+      stronghold: {
+        ...base,
+        supplies,
+      },
+    });
+  };
+
+  const handleRefuelVehicle = (vehicleId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp || !camp.stronghold) return;
+    const supplies = {
+      ...(camp.stronghold.supplies ??
+        defaultBaseSuppliesForTheme(camp.world.primaryTheme)),
+    };
+    if ((supplies.fuel ?? 0) <= 0) {
+      pushToast('error', 'Sem combustível disponível no estoque da base.');
+      return;
+    }
+    const target = (camp.stronghold.vehicles ?? []).find(
+      (v) => v.id === vehicleId,
+    );
+    if (!target || target.fuel >= 100) return;
+
+    supplies.fuel = Math.max(0, supplies.fuel - 1);
+    const nextVehicles = (camp.stronghold.vehicles ?? []).map((v) =>
+      v.id === vehicleId ? { ...v, fuel: Math.min(100, v.fuel + 25) } : v,
+    );
+    persistActiveCampaign({
+      ...camp,
+      stronghold: {
+        ...camp.stronghold,
+        supplies,
+        vehicles: nextVehicles,
+      },
+    });
+    pushToast('base', `${target.name} abastecido (+25% tanque)`);
+  };
+
   const handleConfirmRest = async (payload: RestChoicePayload) => {
     const camp = activeCampaignRef.current;
     if (!camp || isBusy || camp.status !== 'active') return;
@@ -2252,6 +2522,7 @@ export function App() {
           onBuildStrongholdUpgrade={handleBuildStrongholdUpgrade}
           onOpenWorldMap={() => setWorldMapOpen(true)}
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
+          onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
           onSendAction={handleSendAction}
@@ -2327,10 +2598,23 @@ export function App() {
             isGeneratingPortrait={isGeneratingPortrait}
             onClose={() => setCharInventoryOpen(false)}
             onToggleEquipItem={handleToggleEquipItem}
+            onMoveItemStorage={handleMoveItemStorage}
+            onAutoOrganizeInventory={handleAutoOrganizeInventory}
+            onAdjustSupply={handleAdjustSupply}
+            onRefuelVehicle={handleRefuelVehicle}
             onConsumeItemNow={handleConsumeItemNow}
             onUseItemInScene={(item) => setQueuedUseItem(item)}
             onSpendAttributePoint={handleSpendAttributePoint}
             onGeneratePortrait={() => void handleGeneratePortrait()}
+            onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
+          />
+          <BaseBlueprintModal
+            open={baseBlueprintOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            onClose={() => setBaseBlueprintOpen(false)}
+            onBuildUpgrade={handleBuildStrongholdUpgrade}
+            onOpenInventory={() => setCharInventoryOpen(true)}
           />
         </>
       ) : null}

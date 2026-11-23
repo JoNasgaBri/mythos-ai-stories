@@ -74,11 +74,28 @@ export interface StrongholdUpgrade {
   builtTurn: number;
 }
 
+export type ItemStorageLocation = 'carry' | 'base' | 'vehicle';
+
+export type SupplyType = 'ammo' | 'fuel' | 'food' | 'meds' | 'materials';
+
+export type BaseSupplies = Record<SupplyType, number>;
+
+export interface VehicleRecord {
+  id: string;
+  name: string;
+  kind: string;
+  fuel: number; // 0 to 100
+  condition: number; // 0 to 100
+  note?: string;
+}
+
 export interface StrongholdState {
   name: string;
   location: string;
   defense: number;
   upgrades: StrongholdUpgrade[];
+  supplies?: BaseSupplies;
+  vehicles?: VehicleRecord[];
 }
 
 export type AttributeId = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
@@ -162,6 +179,7 @@ export interface InventoryItem {
   rarity?: ItemRarity;
   equipSlot?: EquipSlot;
   equipped?: boolean;
+  storage?: ItemStorageLocation;
   bonuses?: ItemBonuses;
 }
 
@@ -462,9 +480,18 @@ export interface AiStateChanges {
     note?: string;
     rarity?: ItemRarity;
     equipSlot?: EquipSlot;
+    storage?: ItemStorageLocation;
     bonuses?: ItemBonuses;
   }>;
   removeItems?: string[];
+  supplyDeltas?: Partial<BaseSupplies>;
+  upsertVehicle?: {
+    name: string;
+    kind?: string;
+    fuelDelta?: number;
+    conditionDelta?: number;
+    note?: string;
+  };
   addTraits?: string[];
   addSkills?: string[];
   skillTraining?: Array<{

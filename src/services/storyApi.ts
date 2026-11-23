@@ -16,6 +16,7 @@ import {
   deriveRelationshipFromAffinity,
   getEquippedGearBonuses,
   inferEquipSlotFromCategory,
+  inferItemStorage,
   inferNpcAssistAttribute,
   inferSkillAttribute,
   MAX_INSPIRATION,
@@ -441,6 +442,8 @@ export function applyStateChanges(
           quantity: qty,
           note: item.note,
           rarity: item.rarity ?? 'common',
+          storage:
+            item.storage ?? inferItemStorage(item.name, category, qty),
           equipSlot:
             item.equipSlot ?? inferEquipSlotFromCategory(category, item.name),
           equipped: false,
