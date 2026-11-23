@@ -5,6 +5,7 @@ import {
   EyeOff,
   FastForward,
   Flame,
+  Heart,
   Map as MapIcon,
   MapPin,
   Moon,
@@ -42,6 +43,7 @@ interface TopBarProps {
   onOpenMap?: () => void;
   onOpenClock?: () => void;
   onOpenCharacterInventory?: () => void;
+  onOpenRelationships?: () => void;
   onLongRest?: () => void;
   onToggleAmbientSound?: () => void;
   onToggleFocus: () => void;
@@ -66,6 +68,7 @@ export function TopBar({
   onOpenMap,
   onOpenClock,
   onOpenCharacterInventory,
+  onOpenRelationships,
   onLongRest,
   onToggleAmbientSound,
   onToggleFocus,
@@ -205,6 +208,30 @@ export function TopBar({
                   <Shield className="h-3.5 w-3.5 text-[var(--accent)]" />
                   <span className="hidden lg:inline">Inventário</span>
                 </button>
+              ) : null}
+
+              {onOpenRelationships ? (
+                (() => {
+                  const partyCount = campaign.codex.npcs.filter(
+                    (n) => n.inParty && n.status === 'alive',
+                  ).length;
+                  return (
+                    <button
+                      type="button"
+                      onClick={onOpenRelationships}
+                      title="Abrir Companheiros & Relacionamentos (Fichas BG3 & Teia SVG)"
+                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[#f472b6] hover:text-[#f472b6]"
+                    >
+                      <Heart className="h-3.5 w-3.5 text-[#f472b6]" />
+                      <span className="hidden lg:inline">Vínculos</span>
+                      {partyCount > 0 ? (
+                        <span className="font-mono-tech rounded bg-[#f472b6]/15 px-1 text-[10px] font-semibold text-[#f472b6]">
+                          {partyCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })()
               ) : null}
 
               <button

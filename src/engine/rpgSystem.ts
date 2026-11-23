@@ -748,6 +748,27 @@ export function inferNpcAssistAttribute(role: string, notes = ''): AttributeId {
   return 'con';
 }
 
+export function defaultNpcAttributes(
+  assistAttribute: AttributeId,
+): CharacterAttributes {
+  const base: CharacterAttributes = {
+    str: 10,
+    dex: 11,
+    con: 11,
+    int: 11,
+    wis: 11,
+    cha: 11,
+  };
+  base[assistAttribute] = 15;
+  if (assistAttribute === 'cha') base.wis = 13;
+  else if (assistAttribute === 'int') base.wis = 13;
+  else if (assistAttribute === 'dex') base.wis = 12;
+  else if (assistAttribute === 'str') base.con = 14;
+  else if (assistAttribute === 'wis') base.int = 12;
+  else base.str = 12;
+  return base;
+}
+
 export interface StrongholdBlueprintUpgrade {
   id: string;
   name: Record<LanguageId, string>;

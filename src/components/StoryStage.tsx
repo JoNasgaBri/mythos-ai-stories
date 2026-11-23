@@ -74,6 +74,8 @@ interface StoryStageProps {
   onConsumeRestoredDraft?: () => void;
   queuedUseItem?: InventoryItem | null;
   onConsumeQueuedUseItem?: () => void;
+  queuedSayNpc?: NpcRecord | null;
+  onConsumeQueuedSayNpc?: () => void;
   onUndoTurn?: () => void;
   onRegenerateTurn?: () => void;
   onRerollLastTurn?: () => void;
@@ -84,6 +86,7 @@ interface StoryStageProps {
   onOpenWorldMap?: () => void;
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
+  onOpenRelationships?: (npcId?: string) => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -140,6 +143,8 @@ export function StoryStage({
   onConsumeRestoredDraft,
   queuedUseItem,
   onConsumeQueuedUseItem,
+  queuedSayNpc,
+  onConsumeQueuedSayNpc,
   onUndoTurn,
   onRegenerateTurn,
   onRerollLastTurn,
@@ -150,6 +155,7 @@ export function StoryStage({
   onOpenWorldMap,
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
+  onOpenRelationships,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -207,6 +213,14 @@ export function StoryStage({
     onConsumeQueuedUseItem?.();
     textareaRef.current?.focus();
   }, [onConsumeQueuedUseItem, queuedUseItem]);
+
+  useEffect(() => {
+    if (!queuedSayNpc) return;
+    setInputMode('say');
+    setInputText(`Para ${queuedSayNpc.name}: `);
+    onConsumeQueuedSayNpc?.();
+    textareaRef.current?.focus();
+  }, [onConsumeQueuedSayNpc, queuedSayNpc]);
 
   const isEnded =
     campaign.status === 'ended_fallen' || campaign.status === 'ended_victory';
@@ -1181,6 +1195,7 @@ export function StoryStage({
             onOpenWorldMap={onOpenWorldMap}
             onOpenCharacterInventory={onOpenCharacterInventory}
             onOpenBaseBlueprint={onOpenBaseBlueprint}
+            onOpenRelationships={onOpenRelationships}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
@@ -1250,6 +1265,10 @@ export function StoryStage({
                 onOpenBaseBlueprint={() => {
                   setMobileHudOpen(false);
                   onOpenBaseBlueprint?.();
+                }}
+                onOpenRelationships={(npcId) => {
+                  setMobileHudOpen(false);
+                  onOpenRelationships?.(npcId);
                 }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}

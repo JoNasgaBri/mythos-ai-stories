@@ -6,6 +6,7 @@ import {
   defaultBaseSuppliesForTheme,
   defaultCurrencyForTheme,
   defaultHourForPeriod,
+  defaultNpcAttributes,
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
   derivePeriodFromHour,
@@ -66,6 +67,27 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       typeof n.affinity === 'number'
         ? Math.max(-100, Math.min(100, Math.round(n.affinity)))
         : defaultAffinityFromStance(n.stance);
+    const assistAttr =
+      n.assistAttribute ?? inferNpcAssistAttribute(n.role || '', n.notes || '');
+    const attrs = n.attributes
+      ? {
+          str: n.attributes.str ?? 10,
+          dex: n.attributes.dex ?? 10,
+          con: n.attributes.con ?? 10,
+          int: n.attributes.int ?? 10,
+          wis: n.attributes.wis ?? 10,
+          cha: n.attributes.cha ?? 10,
+        }
+      : defaultNpcAttributes(assistAttr);
+    const npcLevel =
+      typeof n.level === 'number' && n.level >= 1
+        ? Math.min(20, Math.round(n.level))
+        : Math.max(1, raw.player?.level ?? 1);
+    const npcMaxVigor =
+      typeof n.maxVigor === 'number' && n.maxVigor >= 50
+        ? n.maxVigor
+        : computeMaxVigor(npcLevel, attrs.con, 0);
+
     return {
       ...n,
       affinity,
@@ -73,9 +95,20 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
         n.relationship ?? deriveRelationshipFromAffinity(affinity),
       inParty: Boolean(n.inParty),
       portraitUrl: n.portraitUrl,
-      assistAttribute:
-        n.assistAttribute ?? inferNpcAssistAttribute(n.role || '', n.notes || ''),
+      assistAttribute: assistAttr,
       assistSpecialty: n.assistSpecialty,
+      level: npcLevel,
+      vigor:
+        typeof n.vigor === 'number'
+          ? Math.max(0, Math.min(npcMaxVigor, n.vigor))
+          : npcMaxVigor,
+      maxVigor: npcMaxVigor,
+      attributes: attrs,
+      skills: Array.isArray(n.skills) ? n.skills : [],
+      traits: Array.isArray(n.traits) ? n.traits : [],
+      likes: Array.isArray(n.likes) ? n.likes : [],
+      dislikes: Array.isArray(n.dislikes) ? n.dislikes : [],
+      bondMemories: Array.isArray(n.bondMemories) ? n.bondMemories : [],
     };
   });
 

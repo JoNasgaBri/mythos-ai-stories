@@ -205,6 +205,12 @@ export type NpcStance = 'ally' | 'neutral' | 'suspicious' | 'hostile' | 'unknown
 
 export type NpcStatus = 'alive' | 'missing' | 'dead';
 
+export interface NpcBondMemory {
+  turn: number;
+  text: string;
+  approved?: boolean;
+}
+
 export interface NpcRecord {
   id: string;
   name: string;
@@ -217,6 +223,20 @@ export interface NpcRecord {
   portraitUrl?: string;
   assistAttribute?: AttributeId;
   assistSpecialty?: string;
+  age?: number;
+  height?: string;
+  appearance?: string;
+  personality?: string;
+  currentMood?: string;
+  level?: number;
+  vigor?: number;
+  maxVigor?: number;
+  attributes?: CharacterAttributes;
+  skills?: string[];
+  traits?: string[];
+  likes?: string[];
+  dislikes?: string[];
+  bondMemories?: NpcBondMemory[];
   lastSeenLocation: string;
   notes: string;
   firstMetTurn: number;
@@ -520,6 +540,17 @@ export interface AiStateChanges {
     relationship?: RelationshipTier;
     assistAttribute?: AttributeId;
     assistSpecialty?: string;
+    age?: number;
+    height?: string;
+    appearance?: string;
+    personality?: string;
+    currentMood?: string;
+    skills?: string[];
+    traits?: string[];
+    likes?: string[];
+    dislikes?: string[];
+    attributes?: Partial<CharacterAttributes>;
+    bondMemory?: string;
     notes?: string;
   }>;
   companionReactions?: Array<{

@@ -88,6 +88,7 @@ interface ContextHudProps {
   onOpenWorldMap?: () => void;
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
+  onOpenRelationships?: (npcId?: string) => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
@@ -152,6 +153,7 @@ export function ContextHud({
   onOpenWorldMap,
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
+  onOpenRelationships,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
@@ -486,12 +488,21 @@ export function ContextHud({
 
             {/* Active Party Companions Strip */}
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   <Users className="h-3.5 w-3.5 text-[var(--accent)]" />
                   Seu Grupo ({partyMembers.length}/{MAX_PARTY_SIZE})
                 </span>
-                {partyMembers.length > 0 ? (
+                {onOpenRelationships ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenRelationships(partyMembers[0]?.id)}
+                    className="inline-flex items-center gap-1 rounded-md border border-[#f472b6]/35 bg-[#f472b6]/10 px-2 py-0.5 text-[10px] font-semibold text-[#f472b6] transition hover:bg-[#f472b6]/20"
+                  >
+                    <Heart className="h-2.5 w-2.5" />
+                    Fichas & Vínculos
+                  </button>
+                ) : partyMembers.length > 0 ? (
                   <span className="text-[10px] text-[var(--success)]">
                     Vantagem 2×d20 ativa
                   </span>
@@ -524,9 +535,14 @@ export function ContextHud({
                     return (
                       <div
                         key={member.id}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 transition hover:border-[#f472b6]/50"
                       >
-                        <div className="flex min-w-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenRelationships?.(member.id)}
+                          title="Abrir Ficha Completa deste Companheiro"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        >
                           {member.portraitUrl ? (
                             <img
                               src={member.portraitUrl}
@@ -539,8 +555,20 @@ export function ContextHud({
                             </span>
                           )}
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold text-[var(--text-primary)]">
-                              {member.name}
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                                {member.name}
+                              </span>
+                              {member.height || member.age ? (
+                                <span className="truncate text-[9px] text-[var(--text-muted)]">
+                                  {[
+                                    member.age ? `${member.age}a` : '',
+                                    member.height ?? '',
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                              ) : null}
                             </div>
                             <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
                               <span className="font-mono-tech font-semibold text-[var(--success)]">
@@ -550,7 +578,7 @@ export function ContextHud({
                               <span style={{ color: rel.color }}>{rel.label}</span>
                             </div>
                           </div>
-                        </div>
+                        </button>
                         {onTogglePartyMember && !isEnded ? (
                           <button
                             type="button"
@@ -1142,9 +1170,21 @@ export function ContextHud({
               <div className="space-y-5">
                 {/* NPCs */}
                 <div>
-                  <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Pessoas & Relações ({codex.npcs.length})
-                  </h4>
+                  <div className="mb-2.5 flex items-center justify-between gap-2">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                      Pessoas & Relações ({codex.npcs.length})
+                    </h4>
+                    {onOpenRelationships ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenRelationships()}
+                        className="inline-flex items-center gap-1 rounded-md border border-[#f472b6]/40 bg-[#f472b6]/10 px-2 py-0.5 text-[10px] font-semibold text-[#f472b6] hover:bg-[#f472b6]/20"
+                      >
+                        <Heart className="h-3 w-3" />
+                        Menu de Vínculos
+                      </button>
+                    ) : null}
+                  </div>
                   {codex.npcs.length === 0 ? (
                     <p className="rounded-xl border border-dashed border-[var(--border-subtle)] p-4 text-center text-xs text-[var(--text-muted)]">
                       Nenhum NPC registrado ainda.
@@ -1267,6 +1307,17 @@ export function ContextHud({
                               </span>
                               {npc.status === 'alive' && !isEnded ? (
                                 <div className="flex flex-wrap items-center gap-1">
+                                  {onOpenRelationships ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenRelationships(npc.id)}
+                                      title="Ver Ficha Completa, Atributos e Vínculo"
+                                      className="inline-flex items-center gap-1 rounded-md border border-[#f472b6]/40 bg-[#f472b6]/10 px-2 py-1 text-[10px] font-semibold text-[#f472b6] hover:bg-[#f472b6]/20"
+                                    >
+                                      <Heart className="h-2.5 w-2.5" />
+                                      Ficha
+                                    </button>
+                                  ) : null}
                                   {onGenerateNpcPortrait ? (
                                     <button
                                       type="button"

@@ -256,7 +256,8 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         },
         upsertNpcs: {
           type: 'array',
-          description: 'Register or update notable NPCs, bonds, friendships, romance, or rivalries.',
+          description:
+            'Register or update notable NPCs, party companions, friendships, romance, or rivalries — including biometrics, appearance, personality, mood, BG3 attributes, skills, traits, likes/dislikes, and memorable bond moments.',
           items: {
             type: 'object',
             properties: {
@@ -286,6 +287,62 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
               assistSpecialty: {
                 type: 'string',
                 description: 'Short specialty label (e.g. Medicina, Negociação, Tiro, Magia).',
+              },
+              age: {
+                type: 'integer',
+                description: 'Character age in years when known or established.',
+              },
+              height: {
+                type: 'string',
+                description: 'Character height (e.g. "1,90m", "1,72m") when known or described.',
+              },
+              appearance: {
+                type: 'string',
+                description: 'Concise visual appearance description (hair, eyes, build, typical outfit).',
+              },
+              personality: {
+                type: 'string',
+                description: 'Core temperament, voice, values, and behavioral quirks.',
+              },
+              currentMood: {
+                type: 'string',
+                description: 'Short 1-3 word emotional state right now (e.g. "Carinhosa", "Em alerta", "Divertida").',
+              },
+              skills: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Concrete abilities or proficiencies this NPC possesses.',
+              },
+              traits: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Short personality or physical traits (e.g. "Protetora", "Atleta", "Sarcástica").',
+              },
+              likes: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Things, gestures, or gifts this NPC loves.',
+              },
+              dislikes: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Things this NPC dislikes or disapproves of.',
+              },
+              attributes: {
+                type: 'object',
+                description: 'Optional BG3 6-stat block (8-20) reflecting this companion’s build.',
+                properties: {
+                  str: { type: 'integer' },
+                  dex: { type: 'integer' },
+                  con: { type: 'integer' },
+                  int: { type: 'integer' },
+                  wis: { type: 'integer' },
+                  cha: { type: 'integer' },
+                },
+              },
+              bondMemory: {
+                type: 'string',
+                description: 'Optional 1-sentence memorable moment shared with the protagonist to log in their Bond Diary.',
               },
               notes: { type: 'string' },
             },
@@ -765,7 +822,7 @@ function buildSystemInstruction(
     `Current Arc / Book: ${campaign.arcNumber ?? 1}`,
     `Difficulty Mode: ${campaign.difficulty}. CREATIVE & FAITHFUL DIFFICULTY: Match the chosen difficulty faithfully AND creatively within the current scene’s genre/timeline. On easy, offer forgiving openings; on hard/insane/good-luck, make NPCs sharper, finances/supplies tighter, rivals cleverer, and mistakes truly costly — without breaking timeline logic or forcing arbitrary combat.`,
     'BG3 PROGRESSION & INFINITE SANDBOX: Read the protagonist’s BG3 attributes (STR/DEX/CON/INT/WIS/CHA), level, leveled skills, talents, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain (15-80), training/practice with skillTraining (growing or creating skills!), breakthroughs with addTalents, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
-    'ACTIVE PARTY COMPANIONS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about.',
+    'ACTIVE PARTY COMPANIONS & RELATIONSHIPS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about. Whenever introducing or interacting closely with a party companion, romance partner, or recurring NPC whose sheet lacks details, populate their age, height, appearance, personality, currentMood, attributes (6 BG3 stats), skills, traits, likes, dislikes, and a concise bondMemory via stateChanges.upsertNpcs. Always honor any player-edited biometrics, height, age, appearance, or skills present in activeParty/knownNpcs without contradicting them.',
     campaign.freeformMode && campaign.turnCount <= 3
       ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
       : '',
@@ -871,8 +928,20 @@ function buildCompactStateContext(campaign: Campaign): string {
           role: n.role,
           relationship: n.relationship ?? 'friend',
           affinity: n.affinity ?? 0,
+          age: n.age ?? null,
+          height: n.height ?? null,
+          appearance: n.appearance ?? null,
+          personality: n.personality ?? null,
+          currentMood: n.currentMood ?? null,
+          level: n.level ?? campaign.player.level,
+          vigor: `${n.vigor ?? 100}/${n.maxVigor ?? 100}`,
+          attributes: n.attributes ?? null,
           assistAttribute: n.assistAttribute ?? 'wis',
           assistSpecialty: n.assistSpecialty || n.role,
+          skills: (n.skills ?? []).slice(0, 6),
+          traits: (n.traits ?? []).slice(0, 6),
+          likes: (n.likes ?? []).slice(0, 4),
+          dislikes: (n.dislikes ?? []).slice(0, 4),
         })),
       permanentCanonFacts: canonFacts,
       factions: campaign.codex.factions.map((f) => ({
@@ -888,6 +957,11 @@ function buildCompactStateContext(campaign: Campaign): string {
         relationship: n.relationship ?? 'stranger',
         affinity: n.affinity ?? 0,
         status: n.status,
+        age: n.age ?? null,
+        height: n.height ?? null,
+        currentMood: n.currentMood ?? null,
+        personality: n.personality ?? null,
+        skills: (n.skills ?? []).slice(0, 4),
         lastSeenLocation: n.lastSeenLocation,
         notes: n.notes,
       })),

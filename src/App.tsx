@@ -4,6 +4,7 @@ import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
+import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
 import { SanctuaryHome } from './components/SanctuaryHome';
 import { SaveSlotsDrawer } from './components/SaveSlotsDrawer';
@@ -29,8 +30,10 @@ import {
   DEFAULT_ATTRIBUTES,
   defaultBaseSuppliesForTheme,
   defaultCurrencyForTheme,
+  defaultNpcAttributes,
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
+  deriveRelationshipFromAffinity,
   formatClockTime,
   getEffectiveAttributes,
   getEquippedGearBonuses,
@@ -87,6 +90,7 @@ import type {
   ItemStorageLocation,
   JournalEntry,
   LocationRecord,
+  NpcRecord,
   SaveSlot,
   StateDelta,
   StoryEntry,
@@ -156,7 +160,10 @@ export function App() {
   const [restModalOpen, setRestModalOpen] = useState(false);
   const [charInventoryOpen, setCharInventoryOpen] = useState(false);
   const [baseBlueprintOpen, setBaseBlueprintOpen] = useState(false);
+  const [relationshipsOpen, setRelationshipsOpen] = useState(false);
+  const [relationshipsFocusNpcId, setRelationshipsFocusNpcId] = useState<string | null>(null);
   const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
+  const [queuedSayNpc, setQueuedSayNpc] = useState<NpcRecord | null>(null);
   const [undoStack, setUndoStack] = useState<Campaign[]>([]);
   const [lastTurnMeta, setLastTurnMeta] = useState<{
     preTurnSnapshot: Campaign;
@@ -1867,6 +1874,149 @@ export function App() {
     }
   };
 
+  const openRelationships = (npcId?: string) => {
+    setRelationshipsFocusNpcId(npcId ?? null);
+    setRelationshipsOpen(true);
+  };
+
+  const handleUpdateNpcProfile = (npcId: string, patch: Partial<NpcRecord>) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const target = camp.codex.npcs.find((n) => n.id === npcId);
+    if (!target) return;
+
+    const nextNpcs = camp.codex.npcs.map((n) => {
+      if (n.id !== npcId) return n;
+      const mergedAttrs = patch.attributes
+        ? {
+            ...(n.attributes ?? defaultNpcAttributes(n.assistAttribute ?? 'wis')),
+            ...patch.attributes,
+          }
+        : n.attributes ?? defaultNpcAttributes(n.assistAttribute ?? 'wis');
+      const nextLevel = patch.level ?? n.level ?? camp.player.level;
+      const nextMaxVigor = computeMaxVigor(nextLevel, mergedAttrs.con, 0);
+      const currentVigor = n.vigor ?? nextMaxVigor;
+      const nextVigor = Math.max(
+        1,
+        Math.min(nextMaxVigor, currentVigor + Math.max(0, nextMaxVigor - (n.maxVigor ?? nextMaxVigor))),
+      );
+      return {
+        ...n,
+        ...patch,
+        level: nextLevel,
+        attributes: mergedAttrs,
+        maxVigor: nextMaxVigor,
+        vigor: nextVigor,
+      };
+    });
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      codex: {
+        ...camp.codex,
+        npcs: nextNpcs,
+      },
+    });
+    pushToast('bond', `Ficha de ${target.name} salva na memória da IA!`);
+  };
+
+  const handleGiftItemToNpc = (npcId: string, itemId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const npc = camp.codex.npcs.find((n) => n.id === npcId);
+    const item = camp.player.inventory.find((i) => i.id === itemId);
+    if (!npc || !item) return;
+
+    const rarityGain: Record<string, number> = {
+      common: 8,
+      uncommon: 12,
+      rare: 16,
+      epic: 22,
+      legendary: 30,
+    };
+    const itemLower = `${item.name} ${item.note ?? ''}`.toLowerCase();
+    const matchedLike = (npc.likes ?? []).some((like) =>
+      like
+        .toLowerCase()
+        .split(/\s+/)
+        .some((w) => w.length >= 4 && itemLower.includes(w)),
+    );
+    const gain = (rarityGain[item.rarity ?? 'common'] ?? 8) + (matchedLike ? 6 : 0);
+
+    const nextInventory = camp.player.inventory
+      .map((i) => (i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i))
+      .filter((i) => i.quantity > 0);
+
+    const nextAffinity = Math.min(100, (npc.affinity ?? 0) + gain);
+    const nextRelationship =
+      npc.relationship === 'romance' || npc.relationship === 'partner'
+        ? npc.relationship
+        : deriveRelationshipFromAffinity(nextAffinity, npc.relationship);
+
+    const nextNpcs = camp.codex.npcs.map((n) =>
+      n.id === npcId
+        ? {
+            ...n,
+            affinity: nextAffinity,
+            relationship: nextRelationship,
+            stance: nextAffinity >= 15 ? ('ally' as const) : n.stance,
+            currentMood: matchedLike ? 'Encantada(o)' : 'Grata(o)',
+            bondMemories: [
+              ...(n.bondMemories ?? []),
+              {
+                turn: camp.turnCount,
+                text: `Presenteou com ${item.name}${matchedLike ? ' (adorou!)' : ''} (+${gain} afinidade).`,
+                approved: true,
+              },
+            ].slice(-15),
+          }
+        : n,
+    );
+
+    const giftEntry: StoryEntry = {
+      id: `entry_gift_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: `Você presenteou ${npc.name} com ${item.name}. Afinidade +${gain}${matchedLike ? ' (Bônus de gosto pessoal!)' : ''}.`,
+      timestamp: Date.now(),
+    };
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        inventory: nextInventory,
+      },
+      codex: {
+        ...camp.codex,
+        npcs: nextNpcs,
+      },
+      entries: [...camp.entries, giftEntry],
+    });
+    pushToast(
+      'bond',
+      `${npc.name} adorou ${item.name}! (+${gain} afinidade)`,
+    );
+  };
+
+  const handleSpendQualityTime = (npc: NpcRecord) => {
+    const isRomantic =
+      npc.relationship === 'romance' || npc.relationship === 'partner';
+    const actionPrompt = isRomantic
+      ? `Passar um momento especial a sós com ${npc.name}, conversando com carinho, ouvindo seus pensamentos e fortalecendo nosso relacionamento.`
+      : `Passar um tempo conversando em particular com ${npc.name} para conhecer melhor sua história, habilidades e fortalecer nosso vínculo.`;
+    void handleSendAction(
+      actionPrompt,
+      'diplomatic',
+      'safe',
+      false,
+      false,
+      'cha',
+    );
+  };
+
   const handleBuildStrongholdUpgrade = (upgradeId: string) => {
     const camp = activeCampaignRef.current;
     if (!camp) return;
@@ -2439,6 +2589,7 @@ export function App() {
         onOpenMap={() => setWorldMapOpen(true)}
         onOpenClock={() => setClockOpen(true)}
         onOpenCharacterInventory={() => setCharInventoryOpen(true)}
+        onOpenRelationships={() => openRelationships()}
         onLongRest={() => setRestModalOpen(true)}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
@@ -2523,8 +2674,11 @@ export function App() {
           onOpenWorldMap={() => setWorldMapOpen(true)}
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
           onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
+          onOpenRelationships={(npcId) => openRelationships(npcId)}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
+          queuedSayNpc={queuedSayNpc}
+          onConsumeQueuedSayNpc={() => setQueuedSayNpc(null)}
           onSendAction={handleSendAction}
           onTypingActivity={handleTypingActivity}
           onSummarizeNow={() =>
@@ -2615,6 +2769,20 @@ export function App() {
             onClose={() => setBaseBlueprintOpen(false)}
             onBuildUpgrade={handleBuildStrongholdUpgrade}
             onOpenInventory={() => setCharInventoryOpen(true)}
+          />
+          <RelationshipsModal
+            open={relationshipsOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            initialNpcId={relationshipsFocusNpcId}
+            generatingNpcPortraitId={generatingNpcPortraitId}
+            onClose={() => setRelationshipsOpen(false)}
+            onTogglePartyMember={handleTogglePartyMember}
+            onGenerateNpcPortrait={(npcId) => void handleGenerateNpcPortrait(npcId)}
+            onUpdateNpcProfile={handleUpdateNpcProfile}
+            onGiftItemToNpc={handleGiftItemToNpc}
+            onTalkToNpc={(npc) => setQueuedSayNpc(npc)}
+            onSpendQualityTime={handleSpendQualityTime}
           />
         </>
       ) : null}

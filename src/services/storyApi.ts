@@ -13,6 +13,7 @@ import {
 import {
   computeMaxVigor,
   defaultAffinityFromStance,
+  defaultNpcAttributes,
   deriveRelationshipFromAffinity,
   getEquippedGearBonuses,
   inferEquipSlotFromCategory,
@@ -347,11 +348,22 @@ export async function requestPortraitIllustration(
 
 export async function requestNpcPortrait(
   world: Pick<WorldConfig, 'title' | 'primaryTheme' | 'era' | 'creativePrompt'>,
-  npc: Pick<NpcRecord, 'name' | 'role' | 'notes'>,
+  npc: Pick<
+    NpcRecord,
+    'name' | 'role' | 'notes' | 'age' | 'height' | 'appearance' | 'personality'
+  >,
   settings: AppSettings,
   health: ApiHealthStatus,
 ): Promise<IllustrationResponse> {
   if (shouldUseGemini(settings, health)) {
+    const visualTraits = [
+      npc.age ? `Age ${npc.age}` : '',
+      npc.height ? `Height ${npc.height}` : '',
+      npc.appearance?.trim() || '',
+      npc.personality?.trim() ? `Expression/vibe: ${npc.personality.trim()}` : '',
+      npc.notes ? npc.notes.slice(0, 140) : '',
+    ].filter(Boolean);
+
     return postJson<IllustrationResponse>(
       '/api/story/illustrate',
       {
@@ -362,7 +374,7 @@ export async function requestNpcPortrait(
         creativePrompt: world.creativePrompt,
         characterName: npc.name,
         characterOccupation: npc.role,
-        characterTraits: npc.notes ? [npc.notes.slice(0, 140)] : [],
+        characterTraits: visualTraits,
       },
       settings,
     );
@@ -818,6 +830,55 @@ export function applyCodexChanges(
         if (rawNpc.notes) existing.notes = rawNpc.notes;
         if (rawNpc.assistAttribute) existing.assistAttribute = rawNpc.assistAttribute;
         if (rawNpc.assistSpecialty) existing.assistSpecialty = rawNpc.assistSpecialty;
+        if (typeof rawNpc.age === 'number' && rawNpc.age >= 14 && rawNpc.age <= 999) {
+          existing.age = Math.round(rawNpc.age);
+        }
+        if (rawNpc.height?.trim()) existing.height = rawNpc.height.trim();
+        if (rawNpc.appearance?.trim()) existing.appearance = rawNpc.appearance.trim();
+        if (rawNpc.personality?.trim()) existing.personality = rawNpc.personality.trim();
+        if (rawNpc.currentMood?.trim()) existing.currentMood = rawNpc.currentMood.trim();
+        if (rawNpc.attributes) {
+          const baseA =
+            existing.attributes ??
+            defaultNpcAttributes(existing.assistAttribute ?? 'wis');
+          existing.attributes = {
+            str: rawNpc.attributes.str ?? baseA.str,
+            dex: rawNpc.attributes.dex ?? baseA.dex,
+            con: rawNpc.attributes.con ?? baseA.con,
+            int: rawNpc.attributes.int ?? baseA.int,
+            wis: rawNpc.attributes.wis ?? baseA.wis,
+            cha: rawNpc.attributes.cha ?? baseA.cha,
+          };
+        }
+        if (Array.isArray(rawNpc.skills) && rawNpc.skills.length > 0) {
+          const merged = new Set(existing.skills ?? []);
+          for (const s of rawNpc.skills) if (s?.trim()) merged.add(s.trim());
+          existing.skills = Array.from(merged);
+        }
+        if (Array.isArray(rawNpc.traits) && rawNpc.traits.length > 0) {
+          const merged = new Set(existing.traits ?? []);
+          for (const t of rawNpc.traits) if (t?.trim()) merged.add(t.trim());
+          existing.traits = Array.from(merged);
+        }
+        if (Array.isArray(rawNpc.likes) && rawNpc.likes.length > 0) {
+          const merged = new Set(existing.likes ?? []);
+          for (const l of rawNpc.likes) if (l?.trim()) merged.add(l.trim());
+          existing.likes = Array.from(merged);
+        }
+        if (Array.isArray(rawNpc.dislikes) && rawNpc.dislikes.length > 0) {
+          const merged = new Set(existing.dislikes ?? []);
+          for (const d of rawNpc.dislikes) if (d?.trim()) merged.add(d.trim());
+          existing.dislikes = Array.from(merged);
+        }
+        if (rawNpc.bondMemory?.trim()) {
+          const memories = [...(existing.bondMemories ?? [])];
+          memories.unshift({
+            turn,
+            text: rawNpc.bondMemory.trim(),
+            approved: (rawNpc.affinityDelta ?? 0) >= 0,
+          });
+          existing.bondMemories = memories.slice(0, 15);
+        }
 
         const deltaAff =
           typeof rawNpc.affinityDelta === 'number'
@@ -860,6 +921,22 @@ export function applyCodexChanges(
         const relationship =
           rawNpc.relationship ?? deriveRelationshipFromAffinity(affinity);
 
+        const assistAttr =
+          rawNpc.assistAttribute ??
+          inferNpcAssistAttribute(rawNpc.role || '', rawNpc.notes || '');
+        const baseAttrs = defaultNpcAttributes(assistAttr);
+        const attrs = rawNpc.attributes
+          ? {
+              str: rawNpc.attributes.str ?? baseAttrs.str,
+              dex: rawNpc.attributes.dex ?? baseAttrs.dex,
+              con: rawNpc.attributes.con ?? baseAttrs.con,
+              int: rawNpc.attributes.int ?? baseAttrs.int,
+              wis: rawNpc.attributes.wis ?? baseAttrs.wis,
+              cha: rawNpc.attributes.cha ?? baseAttrs.cha,
+            }
+          : baseAttrs;
+        const maxHp = computeMaxVigor(1, attrs.con, 0);
+
         const created: NpcRecord = {
           id: `npc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: rawNpc.name,
@@ -869,10 +946,35 @@ export function applyCodexChanges(
           affinity,
           relationship,
           inParty: false,
-          assistAttribute:
-            rawNpc.assistAttribute ??
-            inferNpcAssistAttribute(rawNpc.role || '', rawNpc.notes || ''),
+          assistAttribute: assistAttr,
           assistSpecialty: rawNpc.assistSpecialty,
+          age:
+            typeof rawNpc.age === 'number' && rawNpc.age >= 14 && rawNpc.age <= 999
+              ? Math.round(rawNpc.age)
+              : undefined,
+          height: rawNpc.height?.trim() || undefined,
+          appearance: rawNpc.appearance?.trim() || undefined,
+          personality: rawNpc.personality?.trim() || undefined,
+          currentMood: rawNpc.currentMood?.trim() || undefined,
+          level: 1,
+          vigor: maxHp,
+          maxVigor: maxHp,
+          attributes: attrs,
+          skills: Array.isArray(rawNpc.skills)
+            ? rawNpc.skills.map((s) => s.trim()).filter(Boolean)
+            : [],
+          traits: Array.isArray(rawNpc.traits)
+            ? rawNpc.traits.map((t) => t.trim()).filter(Boolean)
+            : [],
+          likes: Array.isArray(rawNpc.likes)
+            ? rawNpc.likes.map((l) => l.trim()).filter(Boolean)
+            : [],
+          dislikes: Array.isArray(rawNpc.dislikes)
+            ? rawNpc.dislikes.map((d) => d.trim()).filter(Boolean)
+            : [],
+          bondMemories: rawNpc.bondMemory?.trim()
+            ? [{ turn, text: rawNpc.bondMemory.trim(), approved: true }]
+            : [],
           lastSeenLocation: currentLocation,
           notes: rawNpc.notes || '',
           firstMetTurn: turn,
@@ -902,6 +1004,17 @@ export function applyCodexChanges(
           nextAff,
           target.relationship,
         );
+        const memories = [...(target.bondMemories ?? [])];
+        memories.unshift({
+          turn,
+          text:
+            reaction.reason?.trim() ||
+            (reaction.approved
+              ? 'Aprovou sua atitude na cena.'
+              : 'Desaprovou sua escolha na cena.'),
+          approved: reaction.approved,
+        });
+        target.bondMemories = memories.slice(0, 15);
       }
       deltas.push({
         kind: 'bond',
