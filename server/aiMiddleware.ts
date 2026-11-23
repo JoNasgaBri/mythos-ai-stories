@@ -28,6 +28,22 @@ interface MiddlewareEnv {
 type NextFn = (err?: unknown) => void;
 
 function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+  const preParsed = (req as IncomingMessage & { body?: unknown }).body;
+  if (preParsed !== undefined && preParsed !== null) {
+    try {
+      if (typeof preParsed === 'string') {
+        return Promise.resolve((preParsed ? JSON.parse(preParsed) : {}) as T);
+      }
+      if (Buffer.isBuffer(preParsed)) {
+        const text = preParsed.toString('utf8');
+        return Promise.resolve((text ? JSON.parse(text) : {}) as T);
+      }
+      return Promise.resolve(preParsed as T);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
