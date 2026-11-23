@@ -30,6 +30,8 @@ import type {
   AppSettings,
   Campaign,
   CanonFact,
+  CraftRequest,
+  CraftResponse,
   DiceRollResult,
   EpilogueResponse,
   FactionRecord,
@@ -37,6 +39,7 @@ import type {
   ForgedWorldBlueprint,
   IllustrationResponse,
   InventoryItem,
+  ItemRarity,
   JournalSummaryResponse,
   LanguageId,
   LocationRecord,
@@ -51,6 +54,7 @@ import type {
   TalentRecord,
   WorldCodex,
   WorldConfig,
+  WorldRumorsResponse,
   WorldThemeId,
 } from '../types/game';
 
@@ -267,6 +271,156 @@ export async function requestForgeWorld(
   }
   await briefDemoDelay(520);
   return demoForgeWorld(request);
+}
+
+export async function requestWorldRumors(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<WorldRumorsResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<WorldRumorsResponse>(
+      '/api/story/rumors',
+      { campaign: stripHeavyMediaForApi(campaign) },
+      settings,
+    );
+  }
+  await briefDemoDelay(420);
+  const theme = campaign.world.primaryTheme;
+  const channelByTheme: Record<WorldThemeId, { name: string; sub: string; src: string }> = {
+    zombies: {
+      name: 'Frequência 104.7 FM & Rede Local',
+      sub: 'Sinal intermitente · Monitorando boletins civis',
+      src: 'Boletim de Emergência',
+    },
+    apocalyptic: {
+      name: 'Onda Curta & Rádio dos Comboios',
+      sub: 'Estática moderada · Transmissões da região',
+      src: 'Operador da Estrada',
+    },
+    cyberpunk: {
+      name: 'Feed da Darknet & Rede Urbana',
+      sub: 'Canal criptografado · Sinais da cidade',
+      src: 'Broker Anônimo',
+    },
+    mystery: {
+      name: 'Edição Extra & Boletim Policial',
+      sub: 'Recortes do dia · Rumores da cidade',
+      src: 'Gazeta Local',
+    },
+    fantasy: {
+      name: 'Quadro da Taverna & Pergaminhos',
+      sub: 'Contratos recentes e boatos de viajantes',
+      src: 'Estalajadeiro',
+    },
+  };
+  const ch = channelByTheme[theme] ?? channelByTheme.fantasy;
+  const loc = campaign.currentLocation || 'Setor Central';
+  return {
+    channelName: ch.name,
+    channelSubtitle: ch.sub,
+    items: [
+      {
+        headline: `Movimentação incomum perto de ${loc}`,
+        source: ch.src,
+        body: `Testemunhas relatam comboios fechados e racionamento discreto de suprimentos nas últimas horas. Nenhuma autoridade confirmou o motivo oficial.`,
+        locationHint: loc,
+        urgency: 'urgent',
+        hookAction: `Investigar os relatos de movimentação incomum perto de ${loc} e descobrir o que está sendo escondido.`,
+        questTitle: `Sinal em ${loc}`,
+      },
+      {
+        headline: 'Estoque privado disponível para troca rápida',
+        source: 'Canal Comunitário',
+        body: 'Um comerciante local está liquidando ferramentas, peças reforçadas e mantimentos antes de deixar a região.',
+        locationHint: 'Distrito Comercial',
+        urgency: 'medium',
+        hookAction: 'Ir até o comerciante no Distrito Comercial para negociar peças, suprimentos e informações.',
+        questTitle: 'Liquidação de Suprimentos',
+      },
+      {
+        headline: 'Rumor sobre abrigo reforçado fora da rota principal',
+        source: 'Viajante de Passagem',
+        body: 'Comentários discretos falam de um ponto elevado com gerador próprio e boa visibilidade das estradas.',
+        locationHint: 'Colinas do Norte',
+        urgency: 'low',
+        hookAction: 'Buscar informações sobre o abrigo reforçado nas Colinas do Norte e verificar sua localização no mapa.',
+        questTitle: 'Rota das Colinas',
+      },
+    ],
+    engineUsed: 'demo',
+  };
+}
+
+const RARITY_UPGRADE_STEP: Record<ItemRarity, ItemRarity> = {
+  common: 'uncommon',
+  uncommon: 'rare',
+  rare: 'epic',
+  epic: 'legendary',
+  legendary: 'legendary',
+};
+
+export async function requestCraftUpgrade(
+  campaign: Campaign,
+  request: CraftRequest,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<CraftResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<CraftResponse>(
+      '/api/story/craft',
+      { campaign: stripHeavyMediaForApi(campaign), request },
+      settings,
+    );
+  }
+  await briefDemoDelay(480);
+  if (request.targetKind === 'vehicle') {
+    const veh = (campaign.stronghold?.vehicles ?? []).find((v) => v.id === request.targetId);
+    const baseName = veh?.name ?? 'Veículo';
+    const idea = request.blueprintIdea?.trim();
+    return {
+      success: true,
+      narrativeLog: `Na oficina da base, você aplicou ${request.materialsSpent} materiais para reforçar ${baseName}${idea ? ` (${idea})` : ''}, elevando sua resistência estrutural e confiabilidade em estrada.`,
+      upgradedVehicle: {
+        name: baseName.includes('Reforçad') || baseName.includes('Blindad')
+          ? baseName
+          : `${baseName} (Reforçado)`,
+        kind: veh?.kind ?? 'Veículo',
+        conditionGain: 25,
+        fuelGain: 10,
+        note: idea
+          ? `Modificação da oficina: ${idea}. Chassi e proteção reforçados.`
+          : 'Blindagem leve, suspensão revisada e compartimento otimizado na oficina.',
+      },
+      xpGain: 40,
+      engineUsed: 'demo',
+    };
+  }
+
+  const item = campaign.player.inventory.find((i) => i.id === request.targetId);
+  const nextRarity = RARITY_UPGRADE_STEP[item?.rarity ?? 'common'];
+  const idea = request.blueprintIdea?.trim();
+  return {
+    success: true,
+    narrativeLog: `Você trabalhou com precisão na bancada combinando ${item?.name ?? 'o equipamento'} com ${request.materialsSpent} materiais${idea ? ` para ${idea}` : ''}, criando uma versão aprimorada.`,
+    upgradedItem: {
+      name: item?.name.includes('Aprimorad')
+        ? item.name
+        : `${item?.name ?? 'Equipamento'} (Aprimorado)`,
+      category: item?.category ?? 'tool',
+      rarity: nextRarity,
+      note: idea
+        ? `Customizado na bancada: ${idea}.`
+        : 'Reforçado e calibrado na bancada da base.',
+      equipSlot: item?.equipSlot ?? 'utility',
+      bonuses: {
+        ...(item?.bonuses ?? {}),
+        dex: ((item?.bonuses?.dex ?? 0) + 1),
+      },
+    },
+    xpGain: 35,
+    engineUsed: 'demo',
+  };
 }
 
 export async function requestSceneIllustration(

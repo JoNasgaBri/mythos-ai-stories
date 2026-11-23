@@ -12,6 +12,7 @@ import {
   Flame,
   Fuel,
   Gem,
+  Hammer,
   Home,
   Key,
   Layers,
@@ -68,6 +69,7 @@ interface CharacterInventoryModalProps {
   onSpendAttributePoint: (attr: AttributeId) => void;
   onGeneratePortrait: () => void;
   onOpenBaseBlueprint: () => void;
+  onOpenWorkbench?: () => void;
 }
 
 type PackFilter = 'all' | 'gear' | 'consumable' | 'clue' | 'relic';
@@ -107,6 +109,7 @@ export function CharacterInventoryModal({
   onSpendAttributePoint,
   onGeneratePortrait,
   onOpenBaseBlueprint,
+  onOpenWorkbench,
 }: CharacterInventoryModalProps) {
   const [mobileSection, setMobileSection] = useState<'doll' | 'pack' | 'stats'>(
     'pack',
@@ -276,6 +279,20 @@ export function CharacterInventoryModal({
               <Layers className="h-3.5 w-3.5" />
               <span>Planta da Base</span>
             </button>
+
+            {onOpenWorkbench ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenWorkbench();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#fb923c]/45 bg-[#fb923c]/12 px-3 py-1.5 text-xs font-semibold text-[#fb923c] transition hover:bg-[#fb923c]/20"
+              >
+                <Hammer className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Bancada</span>
+              </button>
+            ) : null}
 
             <div className="flex items-center gap-1.5 rounded-xl border border-[#fbbf24]/40 bg-[#fbbf24]/10 px-3 py-1.5 text-xs font-semibold text-[#fbbf24]">
               <Coins className="h-3.5 w-3.5" />

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AiNarrationPreferences,
   Campaign,
+  CraftRequest,
   DiceRollResult,
   ForgeWorldRequest,
   LanguageId,
@@ -10,6 +11,7 @@ import type {
 } from '../src/types/game.js';
 import {
   generateCampaignEpilogue,
+  generateCraftUpgrade,
   generateForgedWorld,
   generateJournalSummary,
   generateLivingWorldPulse,
@@ -17,6 +19,7 @@ import {
   generateStoryStart,
   generateStoryTurn,
   generateVisualAsset,
+  generateWorldRumors,
   type VisualAssetParams,
 } from './geminiEngine.js';
 
@@ -228,6 +231,27 @@ export function createAiMiddleware(env: MiddlewareEnv) {
         const result = await generateForgedWorld(
           apiKey,
           resolveModel(body.model, env),
+          body.request,
+        );
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/rumors') {
+        const body = await readJsonBody<{ campaign: Campaign }>(req);
+        const result = await generateWorldRumors(apiKey, body.campaign);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/craft') {
+        const body = await readJsonBody<{
+          campaign: Campaign;
+          request: CraftRequest;
+        }>(req);
+        const result = await generateCraftUpgrade(
+          apiKey,
+          body.campaign,
           body.request,
         );
         sendJson(res, 200, result);

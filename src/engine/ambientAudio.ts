@@ -12,7 +12,10 @@ class AmbientAudioEngine {
   private isPlaying = false;
   private currentTheme: WorldThemeId = 'fantasy';
   private currentWeather: WeatherType = 'cloudy';
+  private currentTension = 20;
   private volume = 0.35;
+  private tensionGain: GainNode | null = null;
+  private tensionPulseLfo: OscillatorNode | null = null;
 
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -62,6 +65,8 @@ class AmbientAudioEngine {
     }
     this.activeSources = [];
     this.activeNodes = [];
+    this.tensionGain = null;
+    this.tensionPulseLfo = null;
   }
 
   private buildThemeSoundscape(ctx: AudioContext, theme: WorldThemeId): void {
@@ -203,12 +208,38 @@ class AmbientAudioEngine {
     droneFilter.connect(droneGain);
     droneGain.connect(this.masterGain);
 
+    // Dynamic tension layer: soft sub-bass suspense pulse that emerges when scene tension > 35
+    const tensionOsc = ctx.createOscillator();
+    tensionOsc.type = 'sine';
+    tensionOsc.frequency.value = 44.0;
+    const tensionFilter = ctx.createBiquadFilter();
+    tensionFilter.type = 'lowpass';
+    tensionFilter.frequency.value = 110;
+    const tensionBaseGain = ctx.createGain();
+    const tensionPulseLfo = ctx.createOscillator();
+    const tensionPulseDepth = ctx.createGain();
+    const tensionRatio = Math.max(0, Math.min(1, (this.currentTension - 35) / 65));
+    tensionBaseGain.gain.value = tensionRatio * 0.12;
+    tensionPulseLfo.frequency.value = 0.55 + tensionRatio * 0.85;
+    tensionPulseDepth.gain.value = tensionRatio * 0.045;
+
+    tensionPulseLfo.connect(tensionPulseDepth);
+    tensionPulseDepth.connect(tensionBaseGain.gain);
+    tensionOsc.connect(tensionFilter);
+    tensionFilter.connect(tensionBaseGain);
+    tensionBaseGain.connect(this.masterGain);
+
+    this.tensionGain = tensionBaseGain;
+    this.tensionPulseLfo = tensionPulseLfo;
+
     noiseSrc.start();
     osc1.start();
     osc2.start();
     lfo.start();
+    tensionOsc.start();
+    tensionPulseLfo.start();
 
-    this.activeSources = [noiseSrc, osc1, osc2, lfo];
+    this.activeSources = [noiseSrc, osc1, osc2, lfo, tensionOsc, tensionPulseLfo];
     this.activeNodes = [
       noiseSrc,
       filter,
@@ -219,6 +250,11 @@ class AmbientAudioEngine {
       droneGain,
       lfo,
       lfoGain,
+      tensionOsc,
+      tensionFilter,
+      tensionBaseGain,
+      tensionPulseLfo,
+      tensionPulseDepth,
     ];
   }
 
@@ -255,6 +291,18 @@ class AmbientAudioEngine {
     this.currentWeather = weather;
     if (this.isPlaying && this.ctx) {
       this.buildThemeSoundscape(this.ctx, this.currentTheme);
+    }
+  }
+
+  public setTension(tension: number): void {
+    const clamped = Math.max(0, Math.min(100, tension));
+    if (Math.abs(clamped - this.currentTension) < 2) return;
+    this.currentTension = clamped;
+    if (this.isPlaying && this.ctx && this.tensionGain && this.tensionPulseLfo) {
+      const ratio = Math.max(0, Math.min(1, (clamped - 35) / 65));
+      const now = this.ctx.currentTime;
+      this.tensionGain.gain.setTargetAtTime(ratio * 0.12, now, 0.4);
+      this.tensionPulseLfo.frequency.setTargetAtTime(0.55 + ratio * 0.85, now, 0.4);
     }
   }
 

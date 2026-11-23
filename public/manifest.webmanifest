@@ -1,0 +1,20 @@
+{
+  "name": "MYTHOS — Crônicas Vivas com IA",
+  "short_name": "MYTHOS",
+  "description": "RPG narrativo vivo com IA, mapa interativo, ficha BG3, companheiros, base e áudio imersivo.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0f0c",
+  "theme_color": "#0b0f0c",
+  "categories": ["games", "entertainment", "books"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

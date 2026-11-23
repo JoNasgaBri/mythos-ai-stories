@@ -441,6 +441,7 @@ export interface Campaign {
   freeformMode?: boolean;
   worldClock?: WorldClock;
   stronghold?: StrongholdState;
+  rumors?: WorldRumorItem[];
   engineUsed: 'gemini' | 'demo';
 }
 
@@ -713,5 +714,66 @@ export interface ForgedWorldBlueprint {
       note: string;
     };
   };
+  engineUsed: 'gemini' | 'demo';
+}
+
+export type RumorUrgency = 'low' | 'medium' | 'urgent';
+
+export interface WorldRumorItem {
+  id: string;
+  headline: string;
+  source: string;
+  body: string;
+  locationHint?: string;
+  urgency: RumorUrgency;
+  hookAction: string;
+  questTitle?: string;
+  dayGenerated: number;
+  timeGenerated: string;
+  investigated?: boolean;
+}
+
+export interface WorldRumorsResponse {
+  channelName: string;
+  channelSubtitle: string;
+  items: Array<{
+    headline: string;
+    source: string;
+    body: string;
+    locationHint?: string;
+    urgency: RumorUrgency;
+    hookAction: string;
+    questTitle?: string;
+  }>;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface CraftRequest {
+  targetKind: 'item' | 'vehicle';
+  targetId: string;
+  secondaryItemId?: string;
+  materialsSpent: number;
+  blueprintIdea?: string;
+}
+
+export interface CraftResponse {
+  success: boolean;
+  narrativeLog: string;
+  upgradedItem?: {
+    name: string;
+    category: ItemCategory;
+    rarity: ItemRarity;
+    note: string;
+    equipSlot?: EquipSlot;
+    bonuses?: Partial<CharacterAttributes> & { maxVigor?: number };
+  };
+  upgradedVehicle?: {
+    name: string;
+    kind: string;
+    conditionGain: number;
+    fuelGain: number;
+    note: string;
+  };
+  xpGain: number;
   engineUsed: 'gemini' | 'demo';
 }

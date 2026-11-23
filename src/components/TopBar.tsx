@@ -5,12 +5,14 @@ import {
   EyeOff,
   FastForward,
   Flame,
+  Hammer,
   Heart,
   Map as MapIcon,
   MapPin,
   Moon,
   Pause,
   Play,
+  Radio,
   Save,
   Settings,
   Shield,
@@ -44,6 +46,8 @@ interface TopBarProps {
   onOpenClock?: () => void;
   onOpenCharacterInventory?: () => void;
   onOpenRelationships?: () => void;
+  onOpenRumors?: () => void;
+  onOpenWorkbench?: () => void;
   onLongRest?: () => void;
   onToggleAmbientSound?: () => void;
   onToggleFocus: () => void;
@@ -69,6 +73,8 @@ export function TopBar({
   onOpenClock,
   onOpenCharacterInventory,
   onOpenRelationships,
+  onOpenRumors,
+  onOpenWorkbench,
   onLongRest,
   onToggleAmbientSound,
   onToggleFocus,
@@ -232,6 +238,42 @@ export function TopBar({
                     </button>
                   );
                 })()
+              ) : null}
+
+              {onOpenRumors ? (
+                (() => {
+                  const freshRumors = (campaign.rumors ?? []).filter(
+                    (r) => !r.investigated,
+                  ).length;
+                  return (
+                    <button
+                      type="button"
+                      onClick={onOpenRumors}
+                      title="Rádio, Boletins & Quadro de Rumores Vivos"
+                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[#38bdf8] hover:text-[#38bdf8]"
+                    >
+                      <Radio className="h-3.5 w-3.5 text-[#38bdf8]" />
+                      <span className="hidden xl:inline">Rádio</span>
+                      {freshRumors > 0 ? (
+                        <span className="font-mono-tech rounded bg-[#38bdf8]/15 px-1 text-[10px] font-semibold text-[#38bdf8]">
+                          {freshRumors}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })()
+              ) : null}
+
+              {onOpenWorkbench ? (
+                <button
+                  type="button"
+                  onClick={onOpenWorkbench}
+                  title="Bancada de Crafting & Oficina (Aprimorar Itens e Veículos)"
+                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[#fb923c] hover:text-[#fb923c]"
+                >
+                  <Hammer className="h-3.5 w-3.5 text-[#fb923c]" />
+                  <span className="hidden 2xl:inline">Bancada</span>
+                </button>
               ) : null}
 
               <button

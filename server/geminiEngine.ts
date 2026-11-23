@@ -7,22 +7,28 @@ import {
 import type {
   AiNarrationPreferences,
   Campaign,
+  CraftRequest,
+  CraftResponse,
   DiceRollResult,
   EpilogueResponse,
+  EquipSlot,
   FactionStanding,
   ForgeWorldRequest,
   ForgedWorldBlueprint,
   IllustrationKind,
   IllustrationResponse,
   ItemCategory,
+  ItemRarity,
   JournalSummaryResponse,
   LanguageId,
   NarrativePerspective,
   NarrativeStyle,
   ResponseLength,
+  RumorUrgency,
   SpeechResponse,
   StoryPace,
   StoryTurnResponse,
+  WorldRumorsResponse,
   WorldThemeId,
 } from '../src/types/game.js';
 
@@ -1340,26 +1346,39 @@ export async function generateVisualAsset(
   };
 }
 
-const TTS_VOICE_BY_THEME: Record<WorldThemeId, { voice: string; style: string }> = {
+const TTS_VOICE_BY_THEME: Record<
+  WorldThemeId,
+  { voice: string; dialogueVoice: string; style: string; dialogueStyle: string }
+> = {
   fantasy: {
     voice: 'Charon',
+    dialogueVoice: 'Aoede',
     style: 'Warm, atmospheric dark-fantasy audiobook narrator with steady dramatic pacing.',
+    dialogueStyle: 'Expressive character voice acting with natural emotional inflection.',
   },
   cyberpunk: {
     voice: 'Fenrir',
+    dialogueVoice: 'Kore',
     style: 'Cool, sharp neo-noir sci-fi narrator with subtle midnight tension.',
+    dialogueStyle: 'Crisp, grounded character dialogue with urban attitude.',
   },
   mystery: {
     voice: 'Orus',
+    dialogueVoice: 'Aoede',
     style: 'Measured, classic noir detective storyteller with intriguing pauses.',
+    dialogueStyle: 'Intimate, nuanced character voice with subtle suspense.',
   },
   zombies: {
     voice: 'Puck',
+    dialogueVoice: 'Kore',
     style: 'Grounded, urgent survival thriller narrator with crisp clarity.',
+    dialogueStyle: 'Natural, emotionally present character dialogue.',
   },
   apocalyptic: {
     voice: 'Charon',
+    dialogueVoice: 'Aoede',
     style: 'Gravelly, contemplative wasteland chronicler with resonant weight.',
+    dialogueStyle: 'Human, warm, determined character voice.',
   },
 };
 
@@ -1368,6 +1387,38 @@ const TTS_LANG_CODE: Record<LanguageId, string> = {
   en: 'en-US',
   fr: 'fr-FR',
 };
+
+interface SpeechSegment {
+  speaker: 'Narrator' | 'Character';
+  text: string;
+}
+
+function splitAudiobookSegments(input: string): SpeechSegment[] {
+  // Split narration vs quoted dialogue ("...", “...”, «...»)
+  const regex = /(["“«][^"”»]{6,420}["”»])/g;
+  const parts = input.split(regex).filter((p) => p.trim().length > 0);
+  const segments: SpeechSegment[] = [];
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const isQuote =
+      (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith('“') && trimmed.endsWith('”')) ||
+      (trimmed.startsWith('«') && trimmed.endsWith('»'));
+    const cleanChunk = isQuote ? trimmed.slice(1, -1).trim() : trimmed;
+    if (!cleanChunk) continue;
+
+    const speaker: 'Narrator' | 'Character' = isQuote ? 'Character' : 'Narrator';
+    const prev = segments[segments.length - 1];
+    if (prev && prev.speaker === speaker) {
+      prev.text = `${prev.text} ${cleanChunk}`;
+    } else {
+      segments.push({ speaker, text: cleanChunk });
+    }
+  }
+  return segments;
+}
 
 export async function generateSceneSpeech(
   apiKey: string,
@@ -1383,6 +1434,64 @@ export async function generateSceneSpeech(
   const client = new GoogleGenAI({ apiKey });
   const profile = TTS_VOICE_BY_THEME[theme] ?? TTS_VOICE_BY_THEME.fantasy;
   const langCode = TTS_LANG_CODE[language] ?? 'pt-BR';
+
+  const segments = splitAudiobookSegments(cleanText);
+  const hasBothSpeakers =
+    segments.some((s) => s.speaker === 'Narrator') &&
+    segments.some((s) => s.speaker === 'Character');
+
+  // Try Multi-Voice Audiobook mode when scene has both narration and quoted dialogue
+  if (hasBothSpeakers && segments.length >= 2 && segments.length <= 24) {
+    try {
+      const multiInteraction = await client.interactions.create({
+        model: 'gemini-3.8-flash-tts',
+        input: segments.map((seg) => ({
+          type: 'text' as const,
+          text: `${seg.speaker}: ${seg.text}`,
+          annotations: [
+            {
+              type: 'speech_metadata' as const,
+              speaker: seg.speaker,
+              style:
+                seg.speaker === 'Narrator'
+                  ? profile.style
+                  : profile.dialogueStyle,
+            },
+          ],
+        })),
+        response_format: {
+          type: 'audio',
+          mime_type: 'audio/wav',
+        },
+        generation_config: {
+          speech_config: [
+            {
+              speaker: 'Narrator',
+              voice: profile.voice,
+              language: langCode,
+            },
+            {
+              speaker: 'Character',
+              voice: profile.dialogueVoice,
+              language: langCode,
+            },
+          ],
+        },
+      });
+
+      const multiAudio = multiInteraction.output_audio;
+      if (multiAudio?.data) {
+        const mimeType = multiAudio.mime_type || 'audio/wav';
+        return {
+          dataUrl: `data:${mimeType};base64,${multiAudio.data}`,
+          mimeType,
+          engineUsed: 'gemini',
+        };
+      }
+    } catch {
+      // Seamlessly fall back to crisp single-speaker audiobook narration below
+    }
+  }
 
   const interaction = await client.interactions.create({
     model: 'gemini-3.8-flash-tts',
@@ -1606,6 +1715,324 @@ export async function generateForgedWorld(
       ).trim(),
     factions,
     protagonist,
+    engineUsed: 'gemini',
+  };
+}
+
+const WORLD_RUMORS_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    channelName: {
+      type: 'string',
+      description: 'In-world channel or board name (e.g. "Frequência 104.7 FM & Rede Local", "Quadro da Taverna", "Feed Darknet").',
+    },
+    channelSubtitle: {
+      type: 'string',
+      description: 'Short evocative status line matching current day, time, and weather.',
+    },
+    items: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        properties: {
+          headline: { type: 'string', description: 'Punchy, atmospheric headline (4-10 words).' },
+          source: { type: 'string', description: 'Specific in-world source (radio host, bulletin, mercenary, rumor mill, anonymous post).' },
+          body: { type: 'string', description: '2-3 rich sentences detailing the news/rumor, grounded in the current timeline, weather, and world events.' },
+          locationHint: { type: 'string', description: 'Relevant place or district mentioned.' },
+          urgency: { type: 'string', enum: ['low', 'medium', 'urgent'] },
+          hookAction: { type: 'string', description: 'Ready-to-play 1-sentence protagonist action to investigate or follow up on this rumor.' },
+          questTitle: { type: 'string', description: 'Short quest title if the player chooses to track/investigate this rumor.' },
+        },
+        required: ['headline', 'source', 'body', 'urgency', 'hookAction'],
+      },
+    },
+  },
+  required: ['channelName', 'channelSubtitle', 'items'],
+};
+
+const VALID_URGENCY = new Set<RumorUrgency>(['low', 'medium', 'urgent']);
+
+export async function generateWorldRumors(
+  apiKey: string,
+  campaign: Campaign,
+): Promise<WorldRumorsResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const clock = campaign.worldClock;
+  const timeStr = clock
+    ? `Day ${clock.day}, ${String(clock.hour ?? 8).padStart(2, '0')}:${String(clock.minute ?? 30).padStart(2, '0')} (${clock.weather})`
+    : 'Current day';
+
+  const systemInstruction = [
+    'You are the MYTHOS Living World Broadcast & Rumor Desk.',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Generate 3 immersive, playable in-world dispatches, news bulletins, intercepted messages, or tavern rumors happening OUTSIDE the protagonist’s window right now.',
+    'STRICT TIMELINE FIDELITY: Match the exact era, genre, current day/time/weather, countdown (if any), and recent story canon. If the story is BEFORE a catastrophe/outbreak, keep society running normally with subtle alarming anomalies, supply shortages, rumors, or local opportunities — NEVER prematurely trigger an apocalypse.',
+    'Make at least 1 rumor connect to an existing faction, NPC, or location, and 1 rumor offer a concrete opportunity (supplies, trade, secret, alliance, or side-quest).',
+  ].join('\n');
+
+  const compact = buildCompactStateContext(campaign);
+  const prompt = [
+    `World: ${campaign.world.title} (${campaign.world.primaryTheme} / ${campaign.world.era})`,
+    `Current Time & Weather: ${timeStr}`,
+    clock?.countdown
+      ? `Active Countdown: ${clock.countdown.daysLeft} days left — ${clock.countdown.label}`
+      : '',
+    `Previous Rumors Already Heard (do NOT repeat): ${(campaign.rumors ?? []).slice(0, 6).map((r) => r.headline).join(' | ') || 'None'}`,
+    '',
+    'WORLD STATE:',
+    compact,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: prompt,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: WORLD_RUMORS_SCHEMA,
+    },
+    generation_config: {
+      max_output_tokens: 4096,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<Partial<WorldRumorsResponse>>(
+    interaction.output_text,
+  );
+
+  const items = Array.isArray(parsed.items)
+    ? parsed.items
+        .filter((i) => i && String(i.headline || '').trim())
+        .slice(0, 3)
+        .map((i) => ({
+          headline: String(i.headline).trim(),
+          source: String(i.source || 'Boletim Local').trim(),
+          body: String(i.body || '').trim(),
+          locationHint: i.locationHint ? String(i.locationHint).trim() : undefined,
+          urgency: VALID_URGENCY.has(i.urgency as RumorUrgency)
+            ? (i.urgency as RumorUrgency)
+            : 'medium',
+          hookAction:
+            String(i.hookAction || '').trim() ||
+            `Investigar o boato: ${String(i.headline).trim()}`,
+          questTitle: i.questTitle ? String(i.questTitle).trim() : undefined,
+        }))
+    : [];
+
+  return {
+    channelName: String(parsed.channelName || 'Rede de Rumores & Boletins').trim(),
+    channelSubtitle: String(parsed.channelSubtitle || timeStr).trim(),
+    items,
+    engineUsed: 'gemini',
+  };
+}
+
+const CRAFT_UPGRADE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    success: { type: 'boolean' },
+    narrativeLog: {
+      type: 'string',
+      description: '2-3 vivid sentences describing the hands-on crafting/modification process at the workbench or garage and its tangible result.',
+    },
+    upgradedItem: {
+      type: 'object',
+      description: 'Required when targetKind is "item".',
+      properties: {
+        name: { type: 'string' },
+        category: {
+          type: 'string',
+          enum: ['weapon', 'tool', 'relic', 'consumable', 'clue', 'misc'],
+        },
+        rarity: {
+          type: 'string',
+          enum: ['common', 'uncommon', 'rare', 'epic', 'legendary'],
+        },
+        note: { type: 'string' },
+        equipSlot: {
+          type: 'string',
+          enum: ['weapon', 'offhand', 'head', 'armor', 'accessory', 'utility'],
+        },
+        bonuses: {
+          type: 'object',
+          properties: {
+            str: { type: 'integer' },
+            dex: { type: 'integer' },
+            con: { type: 'integer' },
+            int: { type: 'integer' },
+            wis: { type: 'integer' },
+            cha: { type: 'integer' },
+            maxVigor: { type: 'integer' },
+          },
+        },
+      },
+      required: ['name', 'category', 'rarity', 'note'],
+    },
+    upgradedVehicle: {
+      type: 'object',
+      description: 'Required when targetKind is "vehicle".',
+      properties: {
+        name: { type: 'string' },
+        kind: { type: 'string' },
+        conditionGain: { type: 'integer', description: '0 to 40 condition restoration/reinforcement.' },
+        fuelGain: { type: 'integer', description: '0 to 25 bonus fuel efficiency/tank gain.' },
+        note: { type: 'string' },
+      },
+      required: ['name', 'kind', 'conditionGain', 'fuelGain', 'note'],
+    },
+    xpGain: { type: 'integer', description: 'Workshop crafting XP (20-65).' },
+  },
+  required: ['success', 'narrativeLog', 'xpGain'],
+};
+
+const VALID_RARITIES = new Set<ItemRarity>([
+  'common',
+  'uncommon',
+  'rare',
+  'epic',
+  'legendary',
+]);
+const VALID_SLOTS = new Set<EquipSlot>([
+  'weapon',
+  'offhand',
+  'head',
+  'armor',
+  'accessory',
+  'utility',
+]);
+
+export async function generateCraftUpgrade(
+  apiKey: string,
+  campaign: Campaign,
+  req: CraftRequest,
+): Promise<CraftResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const targetItem =
+    req.targetKind === 'item'
+      ? campaign.player.inventory.find((i) => i.id === req.targetId)
+      : undefined;
+  const targetVehicle =
+    req.targetKind === 'vehicle'
+      ? (campaign.stronghold?.vehicles ?? []).find((v) => v.id === req.targetId)
+      : undefined;
+  const secondaryItem = req.secondaryItemId
+    ? campaign.player.inventory.find((i) => i.id === req.secondaryItemId)
+    : undefined;
+
+  const hasWorkshop = Boolean(
+    campaign.stronghold?.upgrades.some((u) => u.id === 'workshop'),
+  );
+
+  const systemInstruction = [
+    'You are the MYTHOS Master Artificer, Armorer & Mechanic.',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Evaluate the player’s crafting or upgrade project using the selected target item/vehicle, optional secondary component, and Base Materials spent.',
+    'Keep results grounded and believable inside this world’s era and laws (e.g., realistic tactical/armor/vehicle mods in modern survival, runic/masterwork forging in fantasy, cyber-mods in sci-fi).',
+    'Reward clever combinations with a crisp upgraded name, upgraded rarity (up to +1 or +2 tiers), realistic stat bonuses (+1 to +2 on 1-2 relevant BG3 attributes, or +10 to +20 maxVigor for armor/gear), and a concise vivid narrativeLog.',
+    hasWorkshop
+      ? 'BONUS: The protagonist has an active Workshop/Oficina at their Base — allow refined, higher-craftsmanship results.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const payload = JSON.stringify(
+    {
+      world: {
+        title: campaign.world.title,
+        theme: campaign.world.primaryTheme,
+        era: campaign.world.era,
+        laws: campaign.world.worldLaws,
+      },
+      protagonist: {
+        name: campaign.player.name,
+        level: campaign.player.level,
+        skills: campaign.player.skillLevels.map((s) => `${s.name} Nv.${s.level}`),
+        hasWorkshop,
+      },
+      project: {
+        targetKind: req.targetKind,
+        targetItem: targetItem ?? null,
+        targetVehicle: targetVehicle ?? null,
+        secondaryComponent: secondaryItem ?? null,
+        materialsSpent: req.materialsSpent,
+        playerIdea: req.blueprintIdea?.trim() || 'Reforçar e aprimorar com os materiais disponíveis.',
+      },
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: `Craft and return the upgraded item or vehicle JSON:\n${payload}`,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: CRAFT_UPGRADE_SCHEMA,
+    },
+    generation_config: {
+      max_output_tokens: 4096,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<Partial<CraftResponse>>(
+    interaction.output_text,
+  );
+
+  const rawItem = parsed.upgradedItem;
+  const upgradedItem =
+    req.targetKind === 'item' && rawItem
+      ? {
+          name: String(rawItem.name || targetItem?.name || 'Item Aprimorado').trim(),
+          category: VALID_ITEM_CATEGORIES.has(rawItem.category as ItemCategory)
+            ? (rawItem.category as ItemCategory)
+            : targetItem?.category ?? 'tool',
+          rarity: VALID_RARITIES.has(rawItem.rarity as ItemRarity)
+            ? (rawItem.rarity as ItemRarity)
+            : 'rare',
+          note: String(rawItem.note || 'Aprimorado na bancada da base.').trim(),
+          equipSlot: VALID_SLOTS.has(rawItem.equipSlot as EquipSlot)
+            ? (rawItem.equipSlot as EquipSlot)
+            : targetItem?.equipSlot,
+          bonuses: rawItem.bonuses,
+        }
+      : undefined;
+
+  const rawVeh = parsed.upgradedVehicle;
+  const upgradedVehicle =
+    req.targetKind === 'vehicle' && rawVeh
+      ? {
+          name: String(rawVeh.name || targetVehicle?.name || 'Veículo Reforçado').trim(),
+          kind: String(rawVeh.kind || targetVehicle?.kind || 'Veículo').trim(),
+          conditionGain: Math.max(
+            0,
+            Math.min(45, Math.round(Number(rawVeh.conditionGain) || 15)),
+          ),
+          fuelGain: Math.max(
+            0,
+            Math.min(25, Math.round(Number(rawVeh.fuelGain) || 0)),
+          ),
+          note: String(rawVeh.note || 'Blindagem e sistemas reforçados na oficina.').trim(),
+        }
+      : undefined;
+
+  return {
+    success: parsed.success !== false,
+    narrativeLog:
+      String(parsed.narrativeLog || '').trim() ||
+      'Horas de trabalho preciso na bancada transformaram o equipamento em uma peça muito superior.',
+    upgradedItem,
+    upgradedVehicle,
+    xpGain: Math.max(15, Math.min(75, Math.round(Number(parsed.xpGain) || 35))),
     engineUsed: 'gemini',
   };
 }

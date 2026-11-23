@@ -25,6 +25,7 @@ interface BaseBlueprintModalProps {
   onClose: () => void;
   onBuildUpgrade: (upgradeId: string) => void;
   onOpenInventory: () => void;
+  onOpenWorkbench?: () => void;
 }
 
 type BlueprintRoomId =
@@ -121,6 +122,7 @@ export function BaseBlueprintModal({
   onClose,
   onBuildUpgrade,
   onOpenInventory,
+  onOpenWorkbench,
 }: BaseBlueprintModalProps) {
   const [selectedRoomId, setSelectedRoomId] =
     useState<BlueprintRoomId>('depot');
@@ -199,6 +201,19 @@ export function BaseBlueprintModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenWorkbench ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenWorkbench();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#fb923c]/45 bg-[#fb923c]/12 px-3 py-1.5 text-xs font-semibold text-[#fb923c] transition hover:bg-[#fb923c]/20"
+              >
+                <Hammer className="h-3.5 w-3.5" />
+                <span>Abrir Bancada</span>
+              </button>
+            ) : null}
             <span className="font-mono-tech inline-flex items-center gap-1 rounded-xl border border-[#fbbf24]/40 bg-[#fbbf24]/10 px-2.5 py-1 text-xs font-semibold text-[#fbbf24]">
               <Coins className="h-3.5 w-3.5" />
               {(player.currency?.amount ?? 0).toLocaleString('pt-BR')}{' '}

@@ -4,6 +4,7 @@ import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
+import { NewsRumorsModal } from './components/NewsRumorsModal';
 import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
 import { SanctuaryHome } from './components/SanctuaryHome';
@@ -13,6 +14,7 @@ import { StoryStage } from './components/StoryStage';
 import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
 import { WeatherAtmosphere } from './components/WeatherAtmosphere';
+import { WorkbenchModal } from './components/WorkbenchModal';
 import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
 import { createInstantDemoCampaign } from './data/presets';
@@ -51,6 +53,7 @@ import {
   applyStateChanges,
   fetchApiHealth,
   requestCampaignEpilogue,
+  requestCraftUpgrade,
   requestJournalSummary,
   requestLivingWorldPulse,
   requestNpcPortrait,
@@ -59,6 +62,7 @@ import {
   requestSceneSpeech,
   requestStoryStart,
   requestStoryTurn,
+  requestWorldRumors,
   shouldUseGemini,
   type ApiHealthStatus,
 } from './services/storyApi';
@@ -84,6 +88,8 @@ import type {
   CampaignEpilogue,
   CampaignStatus,
   ChapterTransitionEvent,
+  CraftRequest,
+  CraftResponse,
   DiceRollResult,
   DifficultyId,
   InventoryItem,
@@ -100,6 +106,7 @@ import type {
   VehicleRecord,
   WorldClock,
   WorldConfig,
+  WorldRumorItem,
   WorldThemeId,
 } from './types/game';
 
@@ -162,6 +169,11 @@ export function App() {
   const [baseBlueprintOpen, setBaseBlueprintOpen] = useState(false);
   const [relationshipsOpen, setRelationshipsOpen] = useState(false);
   const [relationshipsFocusNpcId, setRelationshipsFocusNpcId] = useState<string | null>(null);
+  const [rumorsOpen, setRumorsOpen] = useState(false);
+  const [isFetchingRumors, setIsFetchingRumors] = useState(false);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [isCrafting, setIsCrafting] = useState(false);
+  const [lastCraftResult, setLastCraftResult] = useState<CraftResponse | null>(null);
   const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
   const [queuedSayNpc, setQueuedSayNpc] = useState<NpcRecord | null>(null);
   const [undoStack, setUndoStack] = useState<Campaign[]>([]);
@@ -264,17 +276,21 @@ export function App() {
     view === 'stage' && activeCampaign?.worldClock?.weatherType
       ? activeCampaign.worldClock.weatherType
       : 'cloudy';
+  const activeTension =
+    view === 'stage' && activeCampaign ? activeCampaign.player.tension : 15;
 
   useEffect(() => {
     if (settings.ambientSoundEnabled) {
       ambientAudio.start(effectiveTheme, settings.ambientVolume);
       ambientAudio.setTheme(effectiveTheme);
       ambientAudio.setWeather(activeWeather);
+      ambientAudio.setTension(activeTension);
       ambientAudio.setVolume(settings.ambientVolume);
     } else {
       ambientAudio.stop();
     }
   }, [
+    activeTension,
     activeWeather,
     effectiveTheme,
     settings.ambientSoundEnabled,
@@ -2017,6 +2033,247 @@ export function App() {
     );
   };
 
+  const handleFetchRumors = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isFetchingRumors) return;
+    setIsFetchingRumors(true);
+    try {
+      const res = await requestWorldRumors(camp, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+      const clock = latest.worldClock;
+      const dayGenerated = clock?.day ?? 1;
+      const timeGenerated = formatClockTime(clock?.hour ?? 8, clock?.minute ?? 30);
+      const freshItems: WorldRumorItem[] = res.items.map((item, idx) => ({
+        id: `rumor_${Date.now()}_${idx}`,
+        headline: item.headline,
+        source: item.source,
+        body: item.body,
+        locationHint: item.locationHint,
+        urgency: item.urgency,
+        hookAction: item.hookAction,
+        questTitle: item.questTitle,
+        dayGenerated,
+        timeGenerated,
+        investigated: false,
+      }));
+      persistActiveCampaign({
+        ...latest,
+        rumors: [...freshItems, ...(latest.rumors ?? [])].slice(0, 12),
+      });
+      pushToast('info', `${freshItems.length} novos boletins captados em ${res.channelName}!`);
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao captar boletins do mundo.',
+      );
+    } finally {
+      setIsFetchingRumors(false);
+    }
+  };
+
+  const handleTrackRumorQuest = (rumor: WorldRumorItem) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const title = rumor.questTitle || rumor.headline;
+    const exists = camp.player.quests.some(
+      (q) => q.title.toLowerCase() === title.toLowerCase(),
+    );
+    if (exists) return;
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        quests: [
+          ...camp.player.quests,
+          {
+            id: `quest_rumor_${Date.now()}`,
+            title,
+            description: `${rumor.body}${rumor.locationHint ? ` (Local: ${rumor.locationHint})` : ''}`,
+            status: 'active',
+            primary: false,
+          },
+        ],
+      },
+    });
+    pushToast('quest', `Missão adicionada: ${title}`);
+  };
+
+  const handleInvestigateRumor = (rumor: WorldRumorItem) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const title = rumor.questTitle || rumor.headline;
+    const exists = camp.player.quests.some(
+      (q) => q.title.toLowerCase() === title.toLowerCase(),
+    );
+    const nextQuests = exists
+      ? camp.player.quests
+      : [
+          ...camp.player.quests,
+          {
+            id: `quest_rumor_${Date.now()}`,
+            title,
+            description: `${rumor.body}${rumor.locationHint ? ` (Local: ${rumor.locationHint})` : ''}`,
+            status: 'active' as const,
+            primary: false,
+          },
+        ];
+
+    const updated: Campaign = {
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        quests: nextQuests,
+      },
+      rumors: (camp.rumors ?? []).map((r) =>
+        r.id === rumor.id ? { ...r, investigated: true } : r,
+      ),
+    };
+    persistActiveCampaign(updated);
+    void handleSendAction(
+      rumor.hookAction,
+      'investigate',
+      'low',
+      false,
+      false,
+      'wis',
+    );
+  };
+
+  const handleExecuteCraft = async (request: CraftRequest) => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isCrafting) return;
+    setIsCrafting(true);
+    try {
+      const res = await requestCraftUpgrade(camp, request, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+
+      const stronghold =
+        latest.stronghold ??
+        defaultStrongholdForTheme(
+          latest.world.primaryTheme,
+          latest.currentLocation,
+          latest.language,
+        );
+      const currentSupplies =
+        stronghold.supplies ?? defaultBaseSuppliesForTheme(latest.world.primaryTheme);
+      const nextMaterials = Math.max(
+        0,
+        currentSupplies.materials - Math.max(0, request.materialsSpent),
+      );
+
+      let nextInventory = [...latest.player.inventory];
+      if (request.secondaryItemId) {
+        nextInventory = nextInventory
+          .map((item) =>
+            item.id === request.secondaryItemId
+              ? { ...item, quantity: item.quantity - 1 }
+              : item,
+          )
+          .filter((item) => item.quantity > 0);
+      }
+
+      let nextVehicles = [...(stronghold.vehicles ?? [])];
+      if (request.targetKind === 'item' && res.upgradedItem) {
+        nextInventory = nextInventory.map((item) =>
+          item.id === request.targetId
+            ? {
+                ...item,
+                name: res.upgradedItem!.name,
+                category: res.upgradedItem!.category,
+                rarity: res.upgradedItem!.rarity,
+                note: res.upgradedItem!.note,
+                equipSlot: res.upgradedItem!.equipSlot ?? item.equipSlot,
+                bonuses: res.upgradedItem!.bonuses ?? item.bonuses,
+              }
+            : item,
+        );
+      } else if (request.targetKind === 'vehicle' && res.upgradedVehicle) {
+        nextVehicles = nextVehicles.map((veh) =>
+          veh.id === request.targetId
+            ? {
+                ...veh,
+                name: res.upgradedVehicle!.name,
+                kind: res.upgradedVehicle!.kind,
+                condition: Math.min(100, veh.condition + res.upgradedVehicle!.conditionGain),
+                fuel: Math.min(100, veh.fuel + res.upgradedVehicle!.fuelGain),
+                note: res.upgradedVehicle!.note,
+              }
+            : veh,
+        );
+      }
+
+      // Award crafting XP & check level-up
+      let nextLevel = latest.player.level;
+      let nextXp = latest.player.xp + res.xpGain;
+      let nextXpReq = latest.player.xpToNextLevel;
+      let nextAttrPoints = latest.player.attributePoints;
+      while (nextXp >= nextXpReq) {
+        nextXp -= nextXpReq;
+        nextLevel += 1;
+        nextXpReq = xpRequiredForLevel(nextLevel);
+        nextAttrPoints += 2;
+      }
+      const gear = getEquippedGearBonuses(nextInventory);
+      const nextMaxVigor = computeMaxVigor(
+        nextLevel,
+        latest.player.attributes.con + (gear.con ?? 0),
+        gear.maxVigor ?? 0,
+      );
+
+      const craftEntry: StoryEntry = {
+        id: `entry_craft_${Date.now()}`,
+        role: 'system',
+        turn: latest.turnCount,
+        text: `Bancada: ${res.narrativeLog}`,
+        timestamp: Date.now(),
+      };
+
+      persistActiveCampaign({
+        ...latest,
+        interactionId: undefined,
+        player: {
+          ...latest.player,
+          level: nextLevel,
+          xp: nextXp,
+          xpToNextLevel: nextXpReq,
+          attributePoints: nextAttrPoints,
+          maxVigor: nextMaxVigor,
+          vigor: Math.min(nextMaxVigor, latest.player.vigor),
+          inventory: nextInventory,
+        },
+        stronghold: {
+          ...stronghold,
+          supplies: {
+            ...currentSupplies,
+            materials: nextMaterials,
+          },
+          vehicles: nextVehicles,
+        },
+        entries: [...latest.entries, craftEntry],
+      });
+
+      setLastCraftResult(res);
+      pushToast(
+        'base',
+        res.upgradedVehicle
+          ? `Veículo modificado: ${res.upgradedVehicle.name} (+${res.xpGain} XP)`
+          : `Item aprimorado: ${res.upgradedItem?.name ?? 'Equipamento'} (+${res.xpGain} XP)`,
+      );
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao processar projeto na bancada.',
+      );
+    } finally {
+      setIsCrafting(false);
+    }
+  };
+
   const handleBuildStrongholdUpgrade = (upgradeId: string) => {
     const camp = activeCampaignRef.current;
     if (!camp) return;
@@ -2590,6 +2847,11 @@ export function App() {
         onOpenClock={() => setClockOpen(true)}
         onOpenCharacterInventory={() => setCharInventoryOpen(true)}
         onOpenRelationships={() => openRelationships()}
+        onOpenRumors={() => setRumorsOpen(true)}
+        onOpenWorkbench={() => {
+          setLastCraftResult(null);
+          setWorkbenchOpen(true);
+        }}
         onLongRest={() => setRestModalOpen(true)}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
@@ -2761,6 +3023,10 @@ export function App() {
             onSpendAttributePoint={handleSpendAttributePoint}
             onGeneratePortrait={() => void handleGeneratePortrait()}
             onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
+            onOpenWorkbench={() => {
+              setLastCraftResult(null);
+              setWorkbenchOpen(true);
+            }}
           />
           <BaseBlueprintModal
             open={baseBlueprintOpen}
@@ -2769,6 +3035,10 @@ export function App() {
             onClose={() => setBaseBlueprintOpen(false)}
             onBuildUpgrade={handleBuildStrongholdUpgrade}
             onOpenInventory={() => setCharInventoryOpen(true)}
+            onOpenWorkbench={() => {
+              setLastCraftResult(null);
+              setWorkbenchOpen(true);
+            }}
           />
           <RelationshipsModal
             open={relationshipsOpen}
@@ -2783,6 +3053,27 @@ export function App() {
             onGiftItemToNpc={handleGiftItemToNpc}
             onTalkToNpc={(npc) => setQueuedSayNpc(npc)}
             onSpendQualityTime={handleSpendQualityTime}
+          />
+          <NewsRumorsModal
+            open={rumorsOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            isFetching={isFetchingRumors}
+            isBusy={isBusy}
+            onClose={() => setRumorsOpen(false)}
+            onFetchRumors={() => void handleFetchRumors()}
+            onInvestigateRumor={handleInvestigateRumor}
+            onTrackRumorQuest={handleTrackRumorQuest}
+          />
+          <WorkbenchModal
+            open={workbenchOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            isCrafting={isCrafting}
+            lastResult={lastCraftResult}
+            onClearResult={() => setLastCraftResult(null)}
+            onClose={() => setWorkbenchOpen(false)}
+            onExecuteCraft={(req) => void handleExecuteCraft(req)}
           />
         </>
       ) : null}
