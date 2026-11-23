@@ -399,7 +399,7 @@ export function StoryStage({
   }
 
   return (
-    <div className="relative z-10 mx-auto flex h-[calc(100vh-3.5rem)] max-w-[1440px] gap-6 px-4 py-4 sm:px-6">
+    <div className="relative z-10 mx-auto flex h-[calc(100dvh-5.65rem)] max-w-[1440px] gap-6 px-4 py-4 sm:px-6">
       {/* Main Narrative Theater */}
       <section className="flex min-w-0 flex-1 flex-col">
         {/* Scrollable Editorial Chronicle */}
