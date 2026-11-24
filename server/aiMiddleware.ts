@@ -7,6 +7,7 @@ import type {
   ForgeWorldRequest,
   LanguageId,
   ResponseLength,
+  WorldEventCategory,
   WorldThemeId,
 } from '../src/types/game.js';
 import {
@@ -19,6 +20,7 @@ import {
   generateStoryStart,
   generateStoryTurn,
   generateVisualAsset,
+  generateWorldEvent,
   generateWorldRumors,
   type VisualAssetParams,
 } from './geminiEngine.js';
@@ -254,6 +256,22 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           body.campaign,
           body.request,
         );
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/event') {
+        const body = await readJsonBody<{
+          campaign: Campaign;
+          lastActionText?: string;
+          suggestedCategory?: WorldEventCategory;
+          triggerReason?: string;
+        }>(req);
+        const result = await generateWorldEvent(apiKey, body.campaign, {
+          lastActionText: body.lastActionText,
+          suggestedCategory: body.suggestedCategory,
+          triggerReason: body.triggerReason,
+        });
         sendJson(res, 200, result);
         return;
       }

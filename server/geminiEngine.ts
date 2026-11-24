@@ -6,7 +6,10 @@ import {
   getProficiencyBonus,
 } from '../src/engine/rpgSystem.js';
 import type {
+  ActionIntent,
+  ActionRisk,
   AiNarrationPreferences,
+  AttributeId,
   Campaign,
   CraftRequest,
   CraftResponse,
@@ -31,6 +34,8 @@ import type {
   StoryBeatKind,
   StoryPace,
   StoryTurnResponse,
+  WorldEventCategory,
+  WorldEventResponse,
   WorldRumorsResponse,
   WorldThemeId,
 } from '../src/types/game.js';
@@ -2180,6 +2185,257 @@ export async function generateCraftUpgrade(
     upgradedItem,
     upgradedVehicle,
     xpGain: Math.max(15, Math.min(75, Math.round(Number(parsed.xpGain) || 35))),
+    engineUsed: 'gemini',
+  };
+}
+
+const WORLD_EVENT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      description: 'Short, gripping event title (3-7 words).',
+    },
+    category: {
+      type: 'string',
+      enum: ['dilemma', 'opportunity', 'crisis', 'encounter', 'base', 'weather'],
+    },
+    urgency: {
+      type: 'string',
+      enum: ['low', 'medium', 'urgent'],
+    },
+    description: {
+      type: 'string',
+      description:
+        '2-3 vivid, grounded sentences describing the unexpected event unfolding right now in the living world, consistent with the exact day, time, weather, timeline, and recent player decision.',
+    },
+    companionReaction: {
+      type: 'object',
+      description:
+        'Optional 1-sentence reaction from an active party companion (if activeParty is non-empty) commenting on the situation before the player decides.',
+      properties: {
+        speaker: { type: 'string' },
+        quote: { type: 'string' },
+      },
+      required: ['speaker', 'quote'],
+    },
+    choices: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        properties: {
+          label: {
+            type: 'string',
+            description: 'Clear, decisive action button label (5-12 words).',
+          },
+          consequenceHint: {
+            type: 'string',
+            description:
+              'Concise preview of expected trade-off or stakes (e.g. "-2 Remédios · +12 Afinidade · Novo contato").',
+          },
+          intent: {
+            type: 'string',
+            enum: ['bold', 'stealth', 'diplomatic', 'investigate', 'survival', 'item'],
+          },
+          risk: {
+            type: 'string',
+            enum: ['safe', 'low', 'medium', 'high'],
+          },
+          requiresRoll: {
+            type: 'boolean',
+            description: 'True only if this choice carries real risk or skill challenge.',
+          },
+          attribute: {
+            type: 'string',
+            enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+          },
+          supplyDeltas: {
+            type: 'object',
+            properties: {
+              ammo: { type: 'integer' },
+              fuel: { type: 'integer' },
+              food: { type: 'integer' },
+              meds: { type: 'integer' },
+              materials: { type: 'integer' },
+            },
+          },
+          currencyDelta: { type: 'integer' },
+          vigorDelta: { type: 'integer' },
+          tensionDelta: { type: 'integer' },
+          defenseDelta: { type: 'integer' },
+          affinityDelta: { type: 'integer' },
+          targetNpcName: { type: 'string' },
+          narrativeHook: {
+            type: 'string',
+            description:
+              'Ready-to-play 1-2 sentence protagonist action describing this decision in the context of the event so the next narration turn resolves it seamlessly.',
+          },
+        },
+        required: ['label', 'consequenceHint', 'intent', 'risk', 'requiresRoll', 'narrativeHook'],
+      },
+    },
+  },
+  required: ['title', 'category', 'urgency', 'description', 'choices'],
+};
+
+const VALID_EVENT_CATEGORIES = new Set<WorldEventCategory>([
+  'dilemma',
+  'opportunity',
+  'crisis',
+  'encounter',
+  'base',
+  'weather',
+]);
+const VALID_INTENTS = new Set<ActionIntent>([
+  'bold',
+  'stealth',
+  'diplomatic',
+  'investigate',
+  'survival',
+  'item',
+]);
+const VALID_RISKS = new Set<ActionRisk>(['safe', 'low', 'medium', 'high']);
+const VALID_ATTRS = new Set<AttributeId>(['str', 'dex', 'con', 'int', 'wis', 'cha']);
+
+export async function generateWorldEvent(
+  apiKey: string,
+  campaign: Campaign,
+  options?: {
+    lastActionText?: string;
+    suggestedCategory?: WorldEventCategory;
+    triggerReason?: string;
+  },
+): Promise<WorldEventResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const clock = campaign.worldClock;
+  const timeStr = clock
+    ? `Day ${clock.day}, ${String(clock.hour ?? 8).padStart(2, '0')}:${String(clock.minute ?? 30).padStart(2, '0')} (${clock.weather})`
+    : 'Current moment';
+
+  const systemInstruction = [
+    'You are the MYTHOS AI Storyteller (inspired by RimWorld, Frostpunk, and Baldur’s Gate 3).',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Create ONE unforgettable, playable dynamic world event that forces a meaningful player decision with real trade-offs.',
+    'STRICT TIMELINE FIDELITY: Respect the exact era, current day/time/weather, countdown, and canon facts. If the story takes place BEFORE an apocalypse/outbreak, keep society running (neighbors, police, supply shortages, rumors, power flickers, suspicious visitors) — NEVER spawn zombies or ruins prematurely.',
+    'BUTTERFLY EFFECT: When lastPlayerAction is provided, feel free to either make this event a subtle ripple of that decision OR an organic external surprise happening in the region.',
+    'BALANCED TRADE-OFFS: Give 3 genuinely distinct choices (e.g. Compassionate/Generous vs Tactical/Cautious vs Bold/Opportunistic). Only use modest, realistic supplyDeltas (-3 to +4), currencyDelta, defenseDelta (-5 to +10), affinityDelta (-15 to +15), and set requiresRoll=true ONLY on genuinely risky options.',
+    'COMPANION REACTION: If activeParty has a companion, include companionReaction with their exact name and a crisp 1-sentence opinion true to their personality.',
+  ].join('\n');
+
+  const prompt = [
+    `World: ${campaign.world.title} (${campaign.world.primaryTheme} · ${campaign.world.era})`,
+    `Current Time & Weather: ${timeStr}`,
+    clock?.countdown
+      ? `Active Countdown: ${clock.countdown.daysLeft} days left — ${clock.countdown.label}`
+      : '',
+    options?.suggestedCategory
+      ? `Storyteller Suggested Category: ${options.suggestedCategory}`
+      : '',
+    options?.triggerReason ? `Trigger Context: ${options.triggerReason}` : '',
+    options?.lastActionText
+      ? `Most Recent Player Decision: "${options.lastActionText.slice(0, 260)}"`
+      : '',
+    `Past Events Already Resolved (do NOT repeat): ${(campaign.eventHistory ?? []).slice(-6).map((e) => e.title).join(' | ') || 'None'}`,
+    '',
+    'CAMPAIGN STATE:',
+    buildCompactStateContext(campaign),
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: prompt,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: WORLD_EVENT_SCHEMA,
+    },
+    generation_config: {
+      max_output_tokens: 4096,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<Partial<WorldEventResponse>>(
+    interaction.output_text,
+  );
+
+  const category: WorldEventCategory = VALID_EVENT_CATEGORIES.has(
+    parsed.category as WorldEventCategory,
+  )
+    ? (parsed.category as WorldEventCategory)
+    : options?.suggestedCategory ?? 'dilemma';
+
+  const urgency: RumorUrgency = VALID_URGENCY.has(parsed.urgency as RumorUrgency)
+    ? (parsed.urgency as RumorUrgency)
+    : category === 'crisis'
+      ? 'urgent'
+      : 'medium';
+
+  const choices = Array.isArray(parsed.choices)
+    ? parsed.choices
+        .filter((c) => c && String(c.label || '').trim())
+        .slice(0, 3)
+        .map((c) => ({
+          label: String(c.label).trim(),
+          consequenceHint: String(c.consequenceHint || 'Consequência narrativa').trim(),
+          intent: VALID_INTENTS.has(c.intent as ActionIntent)
+            ? (c.intent as ActionIntent)
+            : 'diplomatic',
+          risk: VALID_RISKS.has(c.risk as ActionRisk)
+            ? (c.risk as ActionRisk)
+            : 'low',
+          requiresRoll: Boolean(c.requiresRoll),
+          attribute: VALID_ATTRS.has(c.attribute as AttributeId)
+            ? (c.attribute as AttributeId)
+            : undefined,
+          supplyDeltas: c.supplyDeltas,
+          currencyDelta:
+            typeof c.currencyDelta === 'number'
+              ? Math.round(c.currencyDelta)
+              : undefined,
+          vigorDelta:
+            typeof c.vigorDelta === 'number'
+              ? Math.max(-25, Math.min(25, Math.round(c.vigorDelta)))
+              : undefined,
+          tensionDelta:
+            typeof c.tensionDelta === 'number'
+              ? Math.max(-25, Math.min(25, Math.round(c.tensionDelta)))
+              : undefined,
+          defenseDelta:
+            typeof c.defenseDelta === 'number'
+              ? Math.max(-10, Math.min(12, Math.round(c.defenseDelta)))
+              : undefined,
+          affinityDelta:
+            typeof c.affinityDelta === 'number'
+              ? Math.max(-20, Math.min(20, Math.round(c.affinityDelta)))
+              : undefined,
+          targetNpcName: c.targetNpcName
+            ? String(c.targetNpcName).trim()
+            : undefined,
+          narrativeHook:
+            String(c.narrativeHook || '').trim() ||
+            `Diante do evento "${String(parsed.title || 'Evento do Mundo')}", decido: ${String(c.label).trim()}.`,
+        }))
+    : [];
+
+  return {
+    title: String(parsed.title || 'Evento Inesperado no Mundo').trim(),
+    category,
+    urgency,
+    description: String(parsed.description || '').trim(),
+    companionReaction:
+      parsed.companionReaction?.speaker && parsed.companionReaction?.quote
+        ? {
+            speaker: String(parsed.companionReaction.speaker).trim(),
+            quote: stripOuterQuotes(String(parsed.companionReaction.quote)),
+          }
+        : undefined,
+    choices,
     engineUsed: 'gemini',
   };
 }

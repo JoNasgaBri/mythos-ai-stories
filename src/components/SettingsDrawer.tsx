@@ -280,6 +280,72 @@ export function SettingsDrawer({
                 </div>
               </div>
 
+              <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">
+                <div>
+                  <div className="text-sm font-medium text-[var(--text-primary)]">
+                    Diretor de Eventos (AI Storyteller)
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Gera dilemas inesperados após suas decisões com cooldown de respiro (estilo RimWorld / WebSim).
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(
+                    [
+                      { id: 'balanced', label: 'Equilibrado', hint: 'A cada 4–6 turnos' },
+                      { id: 'slow', label: 'Lento & Épico', hint: 'Longa calma + marcos' },
+                      { id: 'chaotic', label: 'Imprevisível', hint: 'Surpresas caóticas' },
+                      { id: 'manual', label: 'Manual', hint: 'Só ao clicar em ⚡' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onUpdateSettings({ storytellerProfile: opt.id })}
+                      className={`rounded-xl border px-2.5 py-2 text-left transition ${
+                        (settings.storytellerProfile ?? 'balanced') === opt.id
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                      }`}
+                    >
+                      <div className="text-xs font-semibold">{opt.label}</div>
+                      <div className="text-[10px] opacity-80">{opt.hint}</div>
+                    </button>
+                  ))}
+                </div>
+                <div className="border-t border-[var(--border-subtle)] pt-2.5">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    Como avisar um novo evento
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ eventDeliveryMode: 'island' })}
+                      className={`rounded-xl border px-2.5 py-2 text-left transition ${
+                        (settings.eventDeliveryMode ?? 'island') === 'island'
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      <div className="text-xs font-semibold">Dynamic Island</div>
+                      <div className="text-[10px] opacity-80">Pulsa no topo p/ abrir</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ eventDeliveryMode: 'immediate' })}
+                      className={`rounded-xl border px-2.5 py-2 text-left transition ${
+                        settings.eventDeliveryMode === 'immediate'
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      <div className="text-xs font-semibold">Abrir na Hora</div>
+                      <div className="text-[10px] opacity-80">Força decisão (WebSim)</div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">
                 <div className="flex items-center justify-between">
                   <div>

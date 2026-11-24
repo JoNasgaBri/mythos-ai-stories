@@ -57,6 +57,8 @@ import type {
   TalentRecord,
   WorldCodex,
   WorldConfig,
+  WorldEventCategory,
+  WorldEventResponse,
   WorldRumorsResponse,
   WorldThemeId,
 } from '../types/game';
@@ -275,6 +277,92 @@ export async function requestForgeWorld(
   }
   await briefDemoDelay(520);
   return demoForgeWorld(request);
+}
+
+export async function requestWorldEvent(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+  options?: {
+    lastActionText?: string;
+    suggestedCategory?: WorldEventCategory;
+    triggerReason?: string;
+  },
+): Promise<WorldEventResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<WorldEventResponse>(
+      '/api/story/event',
+      {
+        campaign: stripHeavyMediaForApi(campaign),
+        lastActionText: options?.lastActionText,
+        suggestedCategory: options?.suggestedCategory,
+        triggerReason: options?.triggerReason,
+      },
+      settings,
+    );
+  }
+  await briefDemoDelay(440);
+  const companion = campaign.codex.npcs.find((n) => n.inParty && n.status === 'alive');
+  const category = options?.suggestedCategory ?? 'dilemma';
+  const loc = campaign.currentLocation || 'sua região';
+  return {
+    title:
+      category === 'opportunity'
+        ? 'Carga Abandonada na Rota Lateral'
+        : category === 'base'
+          ? 'Batida Inesperada no Portão'
+          : 'Sinal de Emergência Próximo',
+    category,
+    urgency: category === 'crisis' ? 'urgent' : 'medium',
+    description: `Enquanto a rotina avança em ${loc}, um imprevisto quebra o silêncio: um veículo civil parado na estrada secundária pisca os faróis intermitentemente enquanto alguém pede ajuda por suprimentos médicos e informações sobre bloqueios na região.`,
+    companionReaction: companion
+      ? {
+          speaker: companion.name,
+          quote:
+            'Pode ser uma oportunidade de ganhar um aliado confiável... ou uma armadilha para descobrir onde ficamos. Como você quer jogar essa?',
+        }
+      : undefined,
+    choices: [
+      {
+        label: 'Ajudar oferecendo suprimentos e ouvir o que sabem',
+        consequenceHint: '-1 Remédio · +10 Afinidade · Nova informação',
+        intent: 'diplomatic',
+        risk: 'low',
+        requiresRoll: false,
+        attribute: 'cha',
+        supplyDeltas: { meds: -1 },
+        affinityDelta: companion ? 10 : undefined,
+        targetNpcName: companion?.name,
+        tensionDelta: -5,
+        narrativeHook:
+          'Decido ajudar os viajantes oferecendo um kit médico da base e conversando para descobrir o que viram nas estradas.',
+      },
+      {
+        label: 'Negociar à distância trocando informação por abrigo breve',
+        consequenceHint: 'Teste d20 (CAR) · Preserva segredo da base',
+        intent: 'diplomatic',
+        risk: 'medium',
+        requiresRoll: true,
+        attribute: 'cha',
+        supplyDeltas: { materials: 2 },
+        narrativeHook:
+          'Mantenho distância segura e negocio com firmeza, oferecendo ajuda limitada apenas em troca de peças e informações verificáveis.',
+      },
+      {
+        label: 'Manter silêncio total e reforçar a vigilância do perímetro',
+        consequenceHint: '+5 Defesa · +6 Tensão · Segurança máxima',
+        intent: 'stealth',
+        risk: 'safe',
+        requiresRoll: false,
+        attribute: 'wis',
+        defenseDelta: 5,
+        tensionDelta: 6,
+        narrativeHook:
+          'Apago qualquer sinal visível, mantenho silêncio absoluto e reforço a vigilância até o veículo seguir caminho.',
+      },
+    ],
+    engineUsed: 'demo',
+  };
 }
 
 export async function requestWorldRumors(

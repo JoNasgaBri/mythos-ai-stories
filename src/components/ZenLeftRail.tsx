@@ -15,6 +15,7 @@ import {
   Save,
   Shield,
   X,
+  Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import { UI_COPY } from '../data/presets';
@@ -41,6 +42,8 @@ interface ZenLeftRailProps {
   onOpenMap: () => void;
   onOpenRest: () => void;
   onOpenSaves: () => void;
+  onOpenOrTriggerWorldEvent?: () => void;
+  isGeneratingEvent?: boolean;
   onTogglePulsePause: () => void;
   onAdvanceWorldNow: () => void;
 }
@@ -75,6 +78,8 @@ export function ZenLeftRail({
   onOpenMap,
   onOpenRest,
   onOpenSaves,
+  onOpenOrTriggerWorldEvent,
+  isGeneratingEvent,
   onTogglePulsePause,
   onAdvanceWorldNow,
 }: ZenLeftRailProps) {
@@ -132,6 +137,26 @@ export function ZenLeftRail({
       badge: freshRumors > 0 ? freshRumors : undefined,
       onClick: onOpenRumors,
     },
+    ...(campaign.status === 'active' && onOpenOrTriggerWorldEvent
+      ? [
+          {
+            id: 'world-event',
+            label: campaign.activeWorldEvent
+              ? 'Evento Pendente!'
+              : 'Evento do Mundo',
+            subtitle: isGeneratingEvent
+              ? 'Gerando dilema...'
+              : campaign.activeWorldEvent
+                ? campaign.activeWorldEvent.title
+                : 'Disparar dilema vivo',
+            icon: Zap,
+            accent: '#fbbf24',
+            badge: campaign.activeWorldEvent ? 1 : undefined,
+            disabled: isBusy || isGeneratingEvent,
+            onClick: onOpenOrTriggerWorldEvent,
+          },
+        ]
+      : []),
     {
       id: 'workbench',
       label: 'Bancada',

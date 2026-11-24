@@ -458,6 +458,14 @@ export interface Campaign {
   worldClock?: WorldClock;
   stronghold?: StrongholdState;
   rumors?: WorldRumorItem[];
+  activeWorldEvent?: WorldEventRecord | null;
+  lastWorldEventTurn?: number;
+  eventHistory?: Array<{
+    id: string;
+    title: string;
+    turn: number;
+    chosenSummary: string;
+  }>;
   engineUsed: 'gemini' | 'demo';
 }
 
@@ -486,6 +494,8 @@ export interface AppSettings {
   customAiInstructions: string;
   livingWorldEnabled: boolean;
   livingWorldSeconds: number;
+  storytellerProfile: StorytellerProfile;
+  eventDeliveryMode: WorldEventDeliveryMode;
   diceAnimations: boolean;
   autoIllustrateScenes: boolean;
   weatherEffectsEnabled: boolean;
@@ -793,5 +803,65 @@ export interface CraftResponse {
     note: string;
   };
   xpGain: number;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export type StorytellerProfile = 'balanced' | 'slow' | 'chaotic' | 'manual';
+
+export type WorldEventDeliveryMode = 'island' | 'immediate';
+
+export type WorldEventCategory =
+  | 'dilemma'
+  | 'opportunity'
+  | 'crisis'
+  | 'encounter'
+  | 'base'
+  | 'weather';
+
+export interface WorldEventChoice {
+  id: string;
+  label: string;
+  consequenceHint: string;
+  intent: ActionIntent;
+  risk: ActionRisk;
+  requiresRoll: boolean;
+  attribute?: AttributeId;
+  supplyDeltas?: Partial<BaseSupplies>;
+  currencyDelta?: number;
+  vigorDelta?: number;
+  tensionDelta?: number;
+  defenseDelta?: number;
+  affinityDelta?: number;
+  targetNpcName?: string;
+  narrativeHook: string;
+}
+
+export interface WorldEventRecord {
+  id: string;
+  title: string;
+  category: WorldEventCategory;
+  urgency: RumorUrgency;
+  description: string;
+  companionReaction?: {
+    speaker: string;
+    quote: string;
+  };
+  choices: WorldEventChoice[];
+  triggerTurn: number;
+  dayTriggered: number;
+  timeTriggered: string;
+  triggerReason?: string;
+}
+
+export interface WorldEventResponse {
+  title: string;
+  category: WorldEventCategory;
+  urgency: RumorUrgency;
+  description: string;
+  companionReaction?: {
+    speaker: string;
+    quote: string;
+  };
+  choices: Array<Omit<WorldEventChoice, 'id'>>;
   engineUsed: 'gemini' | 'demo';
 }

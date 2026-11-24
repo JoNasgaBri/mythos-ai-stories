@@ -1438,6 +1438,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customAiInstructions: '',
   livingWorldEnabled: false,
   livingWorldSeconds: 60,
+  storytellerProfile: 'balanced',
+  eventDeliveryMode: 'island',
   diceAnimations: true,
   autoIllustrateScenes: false,
   weatherEffectsEnabled: true,

@@ -16,11 +16,16 @@ import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
 import { WeatherAtmosphere } from './components/WeatherAtmosphere';
 import { WorkbenchModal } from './components/WorkbenchModal';
+import { WorldEventModal } from './components/WorldEventModal';
 import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
 import type { ZenRailMode } from './components/ZenLeftRail';
 import { createInstantDemoCampaign } from './data/presets';
 import { ambientAudio } from './engine/ambientAudio';
+import {
+  evaluateStorytellerTrigger,
+  pickStorytellerCategory,
+} from './engine/eventDirector';
 import {
   detectOpposedNpc,
   evaluateOpposedContest,
@@ -70,6 +75,7 @@ import {
   requestSceneSpeech,
   requestStoryStart,
   requestStoryTurn,
+  requestWorldEvent,
   requestWorldRumors,
   shouldUseGemini,
   type ApiHealthStatus,
@@ -115,6 +121,9 @@ import type {
   VehicleRecord,
   WorldClock,
   WorldConfig,
+  WorldEventCategory,
+  WorldEventChoice,
+  WorldEventRecord,
   WorldRumorItem,
   WorldThemeId,
 } from './types/game';
@@ -184,6 +193,8 @@ export function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [isCrafting, setIsCrafting] = useState(false);
   const [lastCraftResult, setLastCraftResult] = useState<CraftResponse | null>(null);
+  const [worldEventModalOpen, setWorldEventModalOpen] = useState(false);
+  const [isGeneratingEvent, setIsGeneratingEvent] = useState(false);
   const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
   const [queuedSayNpc, setQueuedSayNpc] = useState<NpcRecord | null>(null);
   const [undoStack, setUndoStack] = useState<Campaign[]>([]);
@@ -920,6 +931,69 @@ export function App() {
     setView('stage');
   };
 
+  const triggerWorldEvent = async (opts?: {
+    campaignOverride?: Campaign;
+    lastActionText?: string;
+    suggestedCategory?: WorldEventCategory;
+    triggerReason?: string;
+    openImmediately?: boolean;
+  }) => {
+    const camp = opts?.campaignOverride ?? activeCampaignRef.current;
+    if (!camp || isGeneratingEvent || camp.status !== 'active') return;
+    setIsGeneratingEvent(true);
+    try {
+      const res = await requestWorldEvent(camp, settings, apiHealth, {
+        lastActionText: opts?.lastActionText,
+        suggestedCategory: opts?.suggestedCategory,
+        triggerReason: opts?.triggerReason,
+      });
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+
+      const clock = latest.worldClock;
+      const eventRecord: WorldEventRecord = {
+        id: `ev_${Date.now()}`,
+        title: res.title,
+        category: res.category,
+        urgency: res.urgency,
+        description: res.description,
+        companionReaction: res.companionReaction,
+        choices: res.choices.map((c, idx) => ({
+          ...c,
+          id: `evc_${Date.now()}_${idx}`,
+        })),
+        triggerTurn: latest.turnCount,
+        dayTriggered: clock?.day ?? 1,
+        timeTriggered: formatClockTime(clock?.hour ?? 8, clock?.minute ?? 30),
+        triggerReason: opts?.triggerReason,
+      };
+
+      persistActiveCampaign({
+        ...latest,
+        activeWorldEvent: eventRecord,
+        lastWorldEventTurn: latest.turnCount,
+      });
+
+      const shouldOpenNow =
+        opts?.openImmediately ||
+        (settings.eventDeliveryMode ?? 'island') === 'immediate';
+      if (shouldOpenNow) {
+        setWorldEventModalOpen(true);
+      } else {
+        pushToast('crisis', `⚡ Evento no Mundo: ${eventRecord.title} (veja na Dynamic Island)`);
+      }
+    } catch (err) {
+      if (opts?.openImmediately) {
+        pushToast(
+          'error',
+          err instanceof Error ? err.message : 'Falha ao gerar evento do mundo.',
+        );
+      }
+    } finally {
+      setIsGeneratingEvent(false);
+    }
+  };
+
   const executeStoryTurn = async (
     baseCamp: Campaign,
     actionText: string,
@@ -932,6 +1006,7 @@ export function App() {
       precomputedDiceRoll?: DiceRollResult;
       pushToUndoStack?: boolean;
       extraPromptNote?: string;
+      skipStoryteller?: boolean;
     },
   ) => {
     const crisisMode =
@@ -1321,6 +1396,27 @@ export function App() {
       if (nextTurn > 0 && nextTurn % 5 === 0) {
         void runJournalCompressionIfNeeded(completedCampaign, false);
       }
+
+      // AI Storyteller evaluation after non-direction turns (non-blocking background check)
+      if (!isDirection && !options?.skipStoryteller) {
+        const dayChanged =
+          (completedCampaign.worldClock?.day ?? 1) >
+          (baseCamp.worldClock?.day ?? 1);
+        const storytellerEval = evaluateStorytellerTrigger({
+          campaign: completedCampaign,
+          profile: settings.storytellerProfile ?? 'balanced',
+          lastActionText: cleanVisibleText,
+          dayChanged,
+        });
+        if (storytellerEval.shouldTrigger) {
+          void triggerWorldEvent({
+            campaignOverride: completedCampaign,
+            lastActionText: cleanVisibleText,
+            suggestedCategory: storytellerEval.suggestedCategory,
+            triggerReason: storytellerEval.triggerReason,
+          });
+        }
+      }
     } catch (err) {
       setActiveCampaign(baseCamp);
       setRestoredDraft({
@@ -1364,6 +1460,198 @@ export function App() {
       requiresRoll,
       isDirection,
       forcedAttribute,
+    );
+  };
+
+  const handleOpenOrTriggerWorldEvent = () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || camp.status !== 'active') return;
+    if (camp.activeWorldEvent) {
+      setWorldEventModalOpen(true);
+      return;
+    }
+    const suggestedCategory = pickStorytellerCategory(camp);
+    void triggerWorldEvent({
+      suggestedCategory,
+      triggerReason: 'evento invocado manualmente pelo jogador',
+      openImmediately: true,
+    });
+  };
+
+  const applyWorldEventResolution = (
+    event: WorldEventRecord,
+    summaryLabel: string,
+    narrativeHook: string,
+    meta: {
+      intent: ActionIntent;
+      risk: ActionRisk;
+      requiresRoll: boolean;
+      attribute?: AttributeId;
+      choice?: WorldEventChoice;
+    },
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+
+    const choice = meta.choice;
+    const stronghold =
+      camp.stronghold ??
+      defaultStrongholdForTheme(
+        camp.world.primaryTheme,
+        camp.currentLocation,
+        camp.language,
+      );
+    const nextSupplies = {
+      ...(stronghold.supplies ?? defaultBaseSuppliesForTheme(camp.world.primaryTheme)),
+    };
+    if (choice?.supplyDeltas) {
+      for (const k of SUPPLY_KEYS) {
+        const d = choice.supplyDeltas[k];
+        if (typeof d === 'number' && d !== 0) {
+          nextSupplies[k] = Math.max(0, nextSupplies[k] + d);
+        }
+      }
+    }
+
+    const nextDefense = Math.max(
+      0,
+      stronghold.defense + (choice?.defenseDelta ?? 0),
+    );
+    const nextCurrencyAmount = Math.max(
+      0,
+      (camp.player.currency?.amount ?? 0) + (choice?.currencyDelta ?? 0),
+    );
+    const nextVigor = Math.max(
+      1,
+      Math.min(camp.player.maxVigor, camp.player.vigor + (choice?.vigorDelta ?? 0)),
+    );
+    const nextTension = Math.max(
+      0,
+      Math.min(100, camp.player.tension + (choice?.tensionDelta ?? 0)),
+    );
+
+    const nextNpcs = camp.codex.npcs.map((n) => {
+      if (
+        !choice?.affinityDelta ||
+        (!choice.targetNpcName && !n.inParty)
+      ) {
+        return n;
+      }
+      const matchesTarget = choice.targetNpcName
+        ? n.name.toLowerCase().includes(choice.targetNpcName.toLowerCase())
+        : n.inParty && n.status === 'alive';
+      if (!matchesTarget) return n;
+      const nextAff = Math.max(-100, Math.min(100, (n.affinity ?? 0) + choice.affinityDelta));
+      const nextRel =
+        n.relationship === 'romance' || n.relationship === 'partner'
+          ? n.relationship
+          : deriveRelationshipFromAffinity(nextAff, n.relationship);
+      return {
+        ...n,
+        affinity: nextAff,
+        relationship: nextRel,
+        bondMemories: [
+          ...(n.bondMemories ?? []),
+          {
+            turn: camp.turnCount,
+            text: `Evento "${event.title}": ${summaryLabel}`,
+            approved: choice.affinityDelta > 0,
+          },
+        ].slice(-15),
+      };
+    });
+
+    const eventSystemEntry: StoryEntry = {
+      id: `entry_ev_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: `⚡ Evento do Mundo (${event.title}): ${summaryLabel}`,
+      timestamp: Date.now(),
+    };
+
+    const updatedCamp: Campaign = {
+      ...camp,
+      interactionId: undefined,
+      activeWorldEvent: null,
+      lastWorldEventTurn: camp.turnCount,
+      eventHistory: [
+        ...(camp.eventHistory ?? []),
+        {
+          id: event.id,
+          title: event.title,
+          turn: camp.turnCount,
+          chosenSummary: summaryLabel,
+        },
+      ].slice(-12),
+      player: {
+        ...camp.player,
+        vigor: nextVigor,
+        tension: nextTension,
+        currency: {
+          ...camp.player.currency,
+          amount: nextCurrencyAmount,
+        },
+      },
+      stronghold: {
+        ...stronghold,
+        defense: nextDefense,
+        supplies: nextSupplies,
+      },
+      codex: {
+        ...camp.codex,
+        npcs: nextNpcs,
+        canonFacts: [
+          ...camp.codex.canonFacts,
+          {
+            id: `fact_ev_${Date.now()}`,
+            text: `Evento "${event.title}" (Dia ${event.dayTriggered}): ${summaryLabel}.`,
+            turn: camp.turnCount,
+            pinned: false,
+          },
+        ],
+      },
+      entries: [...camp.entries, eventSystemEntry],
+    };
+
+    setWorldEventModalOpen(false);
+    persistActiveCampaign(updatedCamp);
+
+    void executeStoryTurn(
+      updatedCamp,
+      narrativeHook,
+      meta.intent,
+      meta.risk,
+      meta.requiresRoll,
+      false,
+      meta.attribute,
+      { skipStoryteller: true },
+    );
+  };
+
+  const handleResolveWorldEventChoice = (choice: WorldEventChoice) => {
+    const event = activeCampaignRef.current?.activeWorldEvent;
+    if (!event) return;
+    applyWorldEventResolution(event, choice.label, choice.narrativeHook, {
+      intent: choice.intent,
+      risk: choice.risk,
+      requiresRoll: choice.requiresRoll,
+      attribute: choice.attribute,
+      choice,
+    });
+  };
+
+  const handleResolveWorldEventCustom = (customText: string) => {
+    const event = activeCampaignRef.current?.activeWorldEvent;
+    if (!event) return;
+    applyWorldEventResolution(
+      event,
+      customText,
+      `Diante do evento "${event.title}" (${event.description}), eu decido: ${customText}`,
+      {
+        intent: 'bold',
+        risk: 'low',
+        requiresRoll: false,
+      },
     );
   };
 
@@ -2989,6 +3277,8 @@ export function App() {
         onToggleRightHud={handleToggleRightHud}
         onOpenClock={() => setClockOpen(true)}
         onOpenMap={() => setWorldMapOpen(true)}
+        onOpenWorldEvent={() => setWorldEventModalOpen(true)}
+        isGeneratingEvent={isGeneratingEvent}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
         }
@@ -3091,6 +3381,8 @@ export function App() {
           }}
           onOpenRest={() => setRestModalOpen(true)}
           onOpenEditProtagonist={() => setEditProtagonistOpen(true)}
+          onOpenOrTriggerWorldEvent={handleOpenOrTriggerWorldEvent}
+          isGeneratingEvent={isGeneratingEvent}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
           queuedSayNpc={queuedSayNpc}
@@ -3236,6 +3528,17 @@ export function App() {
             onClearResult={() => setLastCraftResult(null)}
             onClose={() => setWorkbenchOpen(false)}
             onExecuteCraft={(req) => void handleExecuteCraft(req)}
+          />
+          <WorldEventModal
+            open={worldEventModalOpen}
+            event={activeCampaign.activeWorldEvent ?? null}
+            campaign={activeCampaign}
+            language={settings.language}
+            isBusy={isBusy}
+            canDefer={(settings.eventDeliveryMode ?? 'island') !== 'immediate'}
+            onDefer={() => setWorldEventModalOpen(false)}
+            onSelectChoice={handleResolveWorldEventChoice}
+            onSubmitCustomDecision={handleResolveWorldEventCustom}
           />
         </>
       ) : null}

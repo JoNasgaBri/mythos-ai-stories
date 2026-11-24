@@ -113,6 +113,8 @@ interface StoryStageProps {
   onOpenWorkbench?: () => void;
   onOpenRest?: () => void;
   onOpenEditProtagonist?: () => void;
+  onOpenOrTriggerWorldEvent?: () => void;
+  isGeneratingEvent?: boolean;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -200,6 +202,8 @@ export function StoryStage({
   onOpenWorkbench,
   onOpenRest,
   onOpenEditProtagonist,
+  onOpenOrTriggerWorldEvent,
+  isGeneratingEvent,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -461,6 +465,8 @@ export function StoryStage({
         onOpenMap={() => onOpenWorldMap?.()}
         onOpenRest={() => onOpenRest?.()}
         onOpenSaves={onOpenSaves}
+        onOpenOrTriggerWorldEvent={onOpenOrTriggerWorldEvent}
+        isGeneratingEvent={isGeneratingEvent}
         onTogglePulsePause={onTogglePulsePause}
         onAdvanceWorldNow={onAdvanceWorldNow}
       />

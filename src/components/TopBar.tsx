@@ -11,6 +11,7 @@ import {
   Sun,
   Volume2,
   VolumeX,
+  Zap,
 } from 'lucide-react';
 import { UI_COPY } from '../data/presets';
 import { formatClockTime, WEATHER_META } from '../engine/rpgSystem';
@@ -30,6 +31,8 @@ interface TopBarProps {
   onToggleRightHud: () => void;
   onOpenClock?: () => void;
   onOpenMap?: () => void;
+  onOpenWorldEvent?: () => void;
+  isGeneratingEvent?: boolean;
   onToggleAmbientSound?: () => void;
   onToggleColorMode: () => void;
   onOpenSettings: (initialTab?: 'ai' | 'game' | 'reading') => void;
@@ -47,6 +50,8 @@ export function TopBar({
   onToggleRightHud,
   onOpenClock,
   onOpenMap,
+  onOpenWorldEvent,
+  isGeneratingEvent,
   onToggleAmbientSound,
   onToggleColorMode,
   onOpenSettings,
@@ -187,6 +192,31 @@ export function TopBar({
                       {clock.countdown.daysLeft}d · {clock.countdown.label}
                     </span>
                   </button>
+                </>
+              ) : null}
+
+              {campaign.activeWorldEvent && onOpenWorldEvent ? (
+                <>
+                  <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
+                  <button
+                    type="button"
+                    onClick={onOpenWorldEvent}
+                    title={`Evento ativo: ${campaign.activeWorldEvent.title} — Clique para decidir!`}
+                    className="inline-flex h-6 max-w-[165px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-[#fbbf24]/55 bg-[#fbbf24]/20 px-2.5 text-[10px] font-bold text-[#fbbf24] shadow-sm transition hover:scale-[1.03] hover:bg-[#fbbf24]/30"
+                  >
+                    <Zap className="h-3 w-3 shrink-0 animate-pulse" />
+                    <span className="truncate">
+                      {campaign.activeWorldEvent.title}
+                    </span>
+                  </button>
+                </>
+              ) : isGeneratingEvent ? (
+                <>
+                  <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
+                  <span className="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[var(--bg-elevated)] px-2 text-[10px] font-medium text-[#fbbf24]">
+                    <Zap className="h-3 w-3 animate-pulse" />
+                    <span className="hidden sm:inline">Mundo...</span>
+                  </span>
                 </>
               ) : null}
             </div>
