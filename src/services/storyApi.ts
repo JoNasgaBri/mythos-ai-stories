@@ -46,6 +46,7 @@ import type {
   JournalSummaryResponse,
   LanguageId,
   LocationRecord,
+  MapGeocodeResponse,
   NpcRecord,
   PlayerState,
   Quest,
@@ -126,6 +127,9 @@ function stripHeavyMediaForApi(campaign: Campaign): Campaign {
   return {
     ...campaign,
     coverImageUrl: undefined,
+    mapMeta: campaign.mapMeta
+      ? { ...campaign.mapMeta, customArtMapUrl: undefined }
+      : undefined,
     player: {
       ...campaign.player,
       portraitUrl: undefined,
@@ -550,6 +554,252 @@ export async function requestSceneIllustration(
       entry.mood || campaign.currentMood,
     ),
     caption: `${location} · ${title}`,
+    engineUsed: 'demo',
+  };
+}
+
+interface RealWorldPreset {
+  keywords: string[];
+  label: string;
+  centerLat: number;
+  centerLng: number;
+  zoom: number;
+  districts: Array<{ keywords: string[]; region: string; lat: number; lng: number }>;
+}
+
+const REAL_WORLD_PRESETS: RealWorldPreset[] = [
+  {
+    keywords: ['miami', 'redland', 'brickell', 'homestead', 'krome', 'everglades', 'flórida', 'florida'],
+    label: 'Miami & Redland, Flórida, EUA',
+    centerLat: 25.645,
+    centerLng: -80.345,
+    zoom: 11,
+    districts: [
+      { keywords: ['redland', 'chácara', 'chacara', 'galpão', 'galpao', 'pomar', 'granja', 'horta', 'tatame', 'vigia', 'estufa', 'bancada', 'suíte', 'suite', 'quarto', 'cozinha', 'pátio', 'patio', 'alojamento'], region: 'Redland', lat: 25.5681, lng: -80.4912 },
+      { keywords: ['krome', 'vicinal', 'rural', 'canais'], region: 'Corredor Krome Ave', lat: 25.5585, lng: -80.4785 },
+      { keywords: ['homestead', 'supercenter', 'home depot', 'armaria'], region: 'Homestead', lat: 25.4687, lng: -80.4776 },
+      { keywords: ['brickell', 'apartamento', 'bistrô', 'bistro', 'café', 'cafe', 'avenida'], region: 'Brickell', lat: 25.7617, lng: -80.1918 },
+      { keywords: ['downtown', 'porto', 'bayside', 'centro'], region: 'Downtown Miami', lat: 25.7743, lng: -80.1937 },
+      { keywords: ['coral gables', 'coconut grove'], region: 'Coral Gables', lat: 25.7215, lng: -80.2684 },
+      { keywords: ['wynwood', 'little havana'], region: 'Wynwood', lat: 25.8042, lng: -80.1989 },
+      { keywords: ['miami beach', 'south beach', 'praia'], region: 'Miami Beach', lat: 25.7907, lng: -80.1300 },
+      { keywords: ['everglades', 'pântano', 'pantano'], region: 'Everglades', lat: 25.7459, lng: -80.5550 },
+    ],
+  },
+  {
+    keywords: ['são paulo', 'sao paulo', 'paulista', 'pinheiros', 'vila madalena', 'interlagos'],
+    label: 'São Paulo, Brasil',
+    centerLat: -23.5505,
+    centerLng: -46.6333,
+    zoom: 12,
+    districts: [
+      { keywords: ['paulista', 'bela vista'], region: 'Av. Paulista', lat: -23.5614, lng: -46.6559 },
+      { keywords: ['pinheiros', 'vila madalena'], region: 'Pinheiros', lat: -23.5615, lng: -46.6908 },
+      { keywords: ['centro', 'sé', 'república'], region: 'Centro Histórico', lat: -23.5505, lng: -46.6333 },
+    ],
+  },
+  {
+    keywords: ['rio de janeiro', 'copacabana', 'ipanema', 'botafogo', 'lapa'],
+    label: 'Rio de Janeiro, Brasil',
+    centerLat: -22.9068,
+    centerLng: -43.1729,
+    zoom: 12,
+    districts: [
+      { keywords: ['copacabana', 'ipanema'], region: 'Zona Sul', lat: -22.9711, lng: -43.1822 },
+      { keywords: ['lapa', 'centro'], region: 'Centro / Lapa', lat: -22.9129, lng: -43.1803 },
+    ],
+  },
+  {
+    keywords: ['new york', 'nova york', 'manhattan', 'brooklyn', 'queens', 'bronx'],
+    label: 'Nova York, EUA',
+    centerLat: 40.7128,
+    centerLng: -74.006,
+    zoom: 12,
+    districts: [
+      { keywords: ['manhattan', 'times square', 'soho', 'central park'], region: 'Manhattan', lat: 40.758, lng: -73.9855 },
+      { keywords: ['brooklyn', 'williamsburg'], region: 'Brooklyn', lat: 40.6782, lng: -73.9442 },
+    ],
+  },
+  {
+    keywords: ['tokyo', 'tóquio', 'toquio', 'shibuya', 'shinjuku', 'akihabara'],
+    label: 'Tóquio, Japão',
+    centerLat: 35.6762,
+    centerLng: 139.6503,
+    zoom: 12,
+    districts: [
+      { keywords: ['shibuya'], region: 'Shibuya', lat: 35.6595, lng: 139.7004 },
+      { keywords: ['shinjuku'], region: 'Shinjuku', lat: 35.6938, lng: 139.7034 },
+      { keywords: ['akihabara'], region: 'Akihabara', lat: 35.7023, lng: 139.7745 },
+    ],
+  },
+  {
+    keywords: ['london', 'londres', 'soho', 'westminster', 'camden', 'thames'],
+    label: 'Londres, Reino Unido',
+    centerLat: 51.5072,
+    centerLng: -0.1276,
+    zoom: 12,
+    districts: [
+      { keywords: ['westminster', 'soho'], region: 'Westminster', lat: 51.4975, lng: -0.1357 },
+      { keywords: ['camden'], region: 'Camden', lat: 51.539, lng: -0.1426 },
+    ],
+  },
+  {
+    keywords: ['paris', 'montmartre', 'seine', 'sena', 'louvre'],
+    label: 'Paris, França',
+    centerLat: 48.8566,
+    centerLng: 2.3522,
+    zoom: 12,
+    districts: [
+      { keywords: ['montmartre'], region: 'Montmartre', lat: 48.8867, lng: 2.3431 },
+    ],
+  },
+  {
+    keywords: ['lisboa', 'lisbon', 'alfama', 'chiado'],
+    label: 'Lisboa, Portugal',
+    centerLat: 38.7223,
+    centerLng: -9.1393,
+    zoom: 12,
+    districts: [],
+  },
+];
+
+export async function requestMapGeocode(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<MapGeocodeResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<MapGeocodeResponse>(
+      '/api/story/map-geo',
+      { campaign: stripHeavyMediaForApi(campaign) },
+      settings,
+    );
+  }
+
+  await briefDemoDelay(450);
+  const haystack = [
+    campaign.world.title,
+    campaign.world.era,
+    campaign.world.premise,
+    campaign.world.history,
+    campaign.currentLocation,
+    ...campaign.codex.locations.slice(0, 20).map((l) => l.name),
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const preset = REAL_WORLD_PRESETS.find((p) =>
+    p.keywords.some((kw) => haystack.includes(kw)),
+  );
+
+  if (!preset) {
+    return {
+      isRealWorld: false,
+      realWorldRegion: campaign.world.title,
+      locations: campaign.codex.locations.map((loc) => {
+        const commaPart = loc.name.split(',')[1]?.trim();
+        return {
+          id: loc.id,
+          region: loc.region || commaPart || 'Região Central',
+        };
+      }),
+      engineUsed: 'demo',
+    };
+  }
+
+  const placed: Array<{ lat: number; lng: number }> = [];
+  const locations = campaign.codex.locations.map((loc, idx) => {
+    const low = `${loc.name} ${loc.description}`.toLowerCase();
+    const matchedDistrict = preset.districts.find((d) =>
+      d.keywords.some((kw) => low.includes(kw)),
+    );
+    const baseLat = matchedDistrict?.lat ?? preset.centerLat;
+    const baseLng = matchedDistrict?.lng ?? preset.centerLng;
+    const region =
+      matchedDistrict?.region ||
+      loc.region ||
+      loc.name.split(',')[1]?.trim() ||
+      preset.label.split(',')[0];
+
+    let lat = baseLat;
+    let lng = baseLng;
+    let step = 0;
+    while (
+      placed.some(
+        (p) => Math.abs(p.lat - lat) < 0.0012 && Math.abs(p.lng - lng) < 0.0012,
+      ) &&
+      step < 60
+    ) {
+      step += 1;
+      const r = 0.0016 * Math.sqrt(step + idx * 0.05);
+      const a = step * 2.399963229728653;
+      lat = baseLat + Math.sin(a) * r;
+      lng = baseLng + Math.cos(a) * r;
+    }
+    placed.push({ lat, lng });
+
+    return {
+      id: loc.id,
+      region,
+      lat: Number(lat.toFixed(6)),
+      lng: Number(lng.toFixed(6)),
+    };
+  });
+
+  return {
+    isRealWorld: true,
+    realWorldRegion: preset.label,
+    centerLat: preset.centerLat,
+    centerLng: preset.centerLng,
+    defaultZoom: preset.zoom,
+    locations,
+    engineUsed: 'demo',
+  };
+}
+
+export async function requestFictionalMapArt(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<IllustrationResponse> {
+  const regionSummary = Array.from(
+    new Set(
+      campaign.codex.locations
+        .map((l) => l.region || l.name)
+        .filter(Boolean),
+    ),
+  )
+    .slice(0, 14)
+    .join(', ');
+
+  const mapBrief = `${campaign.world.premise.slice(0, 200)} Regions and landmarks: ${regionSummary || campaign.currentLocation}.`;
+
+  if (shouldUseGemini(settings, health)) {
+    return postJson<IllustrationResponse>(
+      '/api/story/illustrate',
+      {
+        kind: 'map',
+        theme: campaign.world.primaryTheme,
+        worldTitle: campaign.world.title,
+        era: campaign.world.era,
+        creativePrompt: campaign.world.creativePrompt,
+        location: campaign.currentLocation,
+        sceneTitle: `Atlas de ${campaign.world.title}`,
+        sceneText: mapBrief,
+      },
+      settings,
+    );
+  }
+
+  await briefDemoDelay(450);
+  return {
+    dataUrl: generateDemoSceneArt(
+      campaign.world.primaryTheme,
+      `Atlas de ${campaign.world.title}`,
+      campaign.currentLocation,
+      campaign.currentMood,
+    ),
+    caption: `Atlas Ilustrado · ${campaign.world.title}`,
     engineUsed: 'demo',
   };
 }
@@ -1315,8 +1565,33 @@ export function applyCodexChanges(
       if (typeof changes?.discoverLocation?.recommendedLevel === 'number') {
         existingLoc.recommendedLevel = changes.discoverLocation.recommendedLevel;
       }
+      if (changes?.discoverLocation?.region?.trim()) {
+        existingLoc.region = changes.discoverLocation.region.trim();
+      }
+      if (
+        typeof changes?.discoverLocation?.lat === 'number' &&
+        Number.isFinite(changes.discoverLocation.lat) &&
+        changes.discoverLocation.lat >= -90 &&
+        changes.discoverLocation.lat <= 90 &&
+        typeof changes?.discoverLocation?.lng === 'number' &&
+        Number.isFinite(changes.discoverLocation.lng) &&
+        changes.discoverLocation.lng >= -180 &&
+        changes.discoverLocation.lng <= 180
+      ) {
+        existingLoc.lat = changes.discoverLocation.lat;
+        existingLoc.lng = changes.discoverLocation.lng;
+      }
     } else {
       const kind = changes?.discoverLocation?.kind || 'city';
+      const hasValidCoords =
+        typeof changes?.discoverLocation?.lat === 'number' &&
+        Number.isFinite(changes.discoverLocation.lat) &&
+        changes.discoverLocation.lat >= -90 &&
+        changes.discoverLocation.lat <= 90 &&
+        typeof changes?.discoverLocation?.lng === 'number' &&
+        Number.isFinite(changes.discoverLocation.lng) &&
+        changes.discoverLocation.lng >= -180 &&
+        changes.discoverLocation.lng <= 180;
       locations.unshift({
         id: `loc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         name: locName,
@@ -1325,6 +1600,9 @@ export function applyCodexChanges(
         kind,
         status: changes?.discoverLocation?.status || 'explored',
         recommendedLevel: changes?.discoverLocation?.recommendedLevel,
+        region: changes?.discoverLocation?.region?.trim() || undefined,
+        lat: hasValidCoords ? changes?.discoverLocation?.lat : undefined,
+        lng: hasValidCoords ? changes?.discoverLocation?.lng : undefined,
         visitCount: 1,
         firstVisitedTurn: turn,
       });

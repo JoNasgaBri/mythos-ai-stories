@@ -254,6 +254,21 @@ export interface LocationRecord {
   recommendedLevel?: number;
   visitCount: number;
   firstVisitedTurn: number;
+  lat?: number;
+  lng?: number;
+  region?: string;
+}
+
+export interface WorldMapMeta {
+  isRealWorld: boolean;
+  realWorldAnchor?: string;
+  realWorldRegion?: string;
+  centerLat?: number;
+  centerLng?: number;
+  defaultZoom?: number;
+  customArtMapUrl?: string;
+  syncedLocationCount?: number;
+  lastSyncedCount?: number;
 }
 
 export type FactionStanding = 'allied' | 'neutral' | 'wary' | 'hostile';
@@ -457,6 +472,7 @@ export interface Campaign {
   freeformMode?: boolean;
   worldClock?: WorldClock;
   stronghold?: StrongholdState;
+  mapMeta?: WorldMapMeta;
   rumors?: WorldRumorItem[];
   activeWorldEvent?: WorldEventRecord | null;
   lastWorldEventTurn?: number;
@@ -609,6 +625,9 @@ export interface AiStateChanges {
     kind?: LocationKind;
     status?: LocationStatus;
     recommendedLevel?: number;
+    lat?: number;
+    lng?: number;
+    region?: string;
   };
   upsertFactions?: Array<{
     name: string;
@@ -655,7 +674,7 @@ export interface EpilogueResponse {
   engineUsed: 'gemini' | 'demo';
 }
 
-export type IllustrationKind = 'scene' | 'portrait';
+export type IllustrationKind = 'scene' | 'portrait' | 'map';
 
 export interface IllustrationResponse {
   dataUrl: string;
@@ -863,5 +882,22 @@ export interface WorldEventResponse {
     quote: string;
   };
   choices: Array<Omit<WorldEventChoice, 'id'>>;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface MapGeocodeResponse {
+  isRealWorld: boolean;
+  realWorldAnchor?: string;
+  realWorldRegion: string;
+  centerLat?: number;
+  centerLng?: number;
+  defaultZoom?: number;
+  locations: Array<{
+    id: string;
+    name?: string;
+    region?: string;
+    lat?: number;
+    lng?: number;
+  }>;
   engineUsed: 'gemini' | 'demo';
 }

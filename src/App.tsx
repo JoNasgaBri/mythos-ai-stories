@@ -66,8 +66,10 @@ import {
   fetchApiHealth,
   requestCampaignEpilogue,
   requestCraftUpgrade,
+  requestFictionalMapArt,
   requestJournalSummary,
   requestLivingWorldPulse,
+  requestMapGeocode,
   requestNpcPortrait,
   requestPortraitIllustration,
   requestSceneIllustration,
@@ -180,6 +182,8 @@ export function App() {
   const [speakingEntryId, setSpeakingEntryId] = useState<string | null>(null);
   const [loadingSpeechEntryId, setLoadingSpeechEntryId] = useState<string | null>(null);
   const [worldMapOpen, setWorldMapOpen] = useState(false);
+  const [isSyncingMapGeo, setIsSyncingMapGeo] = useState(false);
+  const [isGeneratingMapArt, setIsGeneratingMapArt] = useState(false);
   const [clockOpen, setClockOpen] = useState(false);
   const [restModalOpen, setRestModalOpen] = useState(false);
   const [charInventoryOpen, setCharInventoryOpen] = useState(false);
@@ -2734,6 +2738,114 @@ export function App() {
     }
   };
 
+  const handleSyncMapGeocode = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isSyncingMapGeo) return;
+    setIsSyncingMapGeo(true);
+    try {
+      const geo = await requestMapGeocode(camp, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+
+      const geoById = new Map(geo.locations.map((item) => [item.id, item]));
+      const nextLocations = latest.codex.locations.map((loc) => {
+        const match = geoById.get(loc.id);
+        if (!match) return loc;
+        return {
+          ...loc,
+          region: match.region || loc.region,
+          lat: typeof match.lat === 'number' ? match.lat : loc.lat,
+          lng: typeof match.lng === 'number' ? match.lng : loc.lng,
+        };
+      });
+
+      const updated: Campaign = {
+        ...latest,
+        mapMeta: {
+          ...latest.mapMeta,
+          isRealWorld: geo.isRealWorld,
+          realWorldRegion: geo.realWorldRegion,
+          centerLat: geo.centerLat ?? latest.mapMeta?.centerLat,
+          centerLng: geo.centerLng ?? latest.mapMeta?.centerLng,
+          defaultZoom: geo.defaultZoom ?? latest.mapMeta?.defaultZoom ?? 11,
+          lastSyncedCount: nextLocations.length,
+        },
+        codex: {
+          ...latest.codex,
+          locations: nextLocations,
+        },
+      };
+
+      persistActiveCampaign(updated);
+      const mappedCount = geo.locations.filter(
+        (l) => typeof l.lat === 'number' && typeof l.lng === 'number',
+      ).length;
+      pushToast(
+        'info',
+        geo.isRealWorld
+          ? `Mapa Real sincronizado: ${mappedCount} locais posicionados em ${geo.realWorldRegion}.`
+          : `Atlas organizado: ${geo.locations.length} locais agrupados por região em ${geo.realWorldRegion}.`,
+      );
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível sincronizar o GPS do Atlas.',
+      );
+    } finally {
+      setIsSyncingMapGeo(false);
+    }
+  };
+
+  const handleGenerateFictionalMapArt = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isGeneratingMapArt) return;
+    setIsGeneratingMapArt(true);
+    try {
+      const art = await requestFictionalMapArt(camp, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+
+      persistActiveCampaign({
+        ...latest,
+        mapMeta: {
+          ...latest.mapMeta,
+          isRealWorld: latest.mapMeta?.isRealWorld ?? false,
+          customArtMapUrl: art.dataUrl,
+        },
+      });
+      pushToast('info', 'Arte cartográfica do mundo gerada com sucesso!');
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error
+          ? err.message
+          : 'Falha ao gerar arte cartográfica do mapa.',
+      );
+    } finally {
+      setIsGeneratingMapArt(false);
+    }
+  };
+
+  const handleDeleteLocation = (locId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const target = camp.codex.locations.find((l) => l.id === locId);
+    if (!target) return;
+    const nextLocations = camp.codex.locations.filter((l) => l.id !== locId);
+    if (nextLocations.length === 0) return;
+
+    persistActiveCampaign({
+      ...camp,
+      codex: {
+        ...camp.codex,
+        locations: nextLocations,
+      },
+    });
+    pushToast('info', `Marcador "${target.name}" removido do Atlas.`);
+  };
+
   const handleConsumeItemNow = (itemId: string) => {
     const camp = activeCampaignRef.current;
     if (!camp) return;
@@ -3409,8 +3521,13 @@ export function App() {
           <WorldMapModal
             open={worldMapOpen}
             campaign={activeCampaign}
+            isSyncingGeo={isSyncingMapGeo}
+            isGeneratingMapArt={isGeneratingMapArt}
             onClose={() => setWorldMapOpen(false)}
             onTravelLocation={handleTravelFromMap}
+            onSyncMapGeocode={() => void handleSyncMapGeocode()}
+            onGenerateFictionalMapArt={() => void handleGenerateFictionalMapArt()}
+            onDeleteLocation={handleDeleteLocation}
           />
           <ClockWeatherPopover
             open={clockOpen}

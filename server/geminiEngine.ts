@@ -25,6 +25,7 @@ import type {
   ItemRarity,
   JournalSummaryResponse,
   LanguageId,
+  MapGeocodeResponse,
   NarrativePerspective,
   NarrativeStyle,
   ResponseLength,
@@ -456,7 +457,8 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
         },
         discoverLocation: {
           type: 'object',
-          description: 'Register or update the current location, dungeon, safehouse, market, or secret place.',
+          description:
+            'Register or update ONLY meaningful macro-locations (neighborhoods, landmarks, safehouses, markets, dungeons, highway corridors — NOT individual rooms of the same building). Include accurate real-world GPS lat/lng and district/region when the story takes place on real Earth.',
           properties: {
             name: { type: 'string' },
             description: { type: 'string' },
@@ -473,6 +475,21 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
               enum: ['unexplored', 'explored', 'cleared'],
             },
             recommendedLevel: { type: 'integer' },
+            region: {
+              type: 'string',
+              description:
+                'District, neighborhood, or parent region (e.g. "Redland", "Brickell", "Downtown Miami", "Norte de Eldoria").',
+            },
+            lat: {
+              type: 'number',
+              description:
+                'Real-world latitude (WGS84, e.g. 25.5681 for Redland, Miami) ONLY when the campaign is set on real Earth.',
+            },
+            lng: {
+              type: 'number',
+              description:
+                'Real-world longitude (WGS84, e.g. -80.4912 for Redland, Miami) ONLY when the campaign is set on real Earth.',
+            },
           },
           required: ['name'],
         },
@@ -886,6 +903,7 @@ function buildSystemInstruction(
     'PHYSICAL & STAT REALISM (STRICT BG3 / D&D 5e SCALE 1–20): Honor the authentic BG3 ability scale (8-9 = below average civilian, 10-11 = ordinary, 12-13 = trained, 14-15 = professional, 16-17 = elite athlete/master, 18-19 = human peak, 20 = superhuman natural cap; >20 only via legendary gear/relics). Always respect real physical differences (height, physique, body build, base STR/CON/DEX, and combat/athletic background) between the protagonist and NPCs. If a taller, heavier, stronger, or athletically trained NPC (e.g. 1,90m elite athlete) faces a smaller or non-athletic protagonist (e.g. 1,70m civilian strategist) in direct grappling, wrestling, or raw strength, portray that physical gap honestly — the stronger/bigger character naturally dominates direct physical contests unless the dice roll explicitly succeeded against a tough opposed DC or the protagonist uses a genuinely clever non-strength tactic. Never hand out easy unrealistic physical victories.',
     'DICE & ACTION DISCIPLINE: Reserve requiresRoll=true (risk: "medium" or "high") strictly for actions with real danger, combat, sneaking past active threats, hacking/lockpicking, risky physical/magic feats, or high-stakes deception/intimidation. Keep ordinary dialogue, walking, planning, resting, and routine observation at risk: "safe" with requiresRoll=false, and include at least 1-2 narrative (requiresRoll=false) choices in non-combat scenes.',
     'MEMORY DISCIPLINE: Honor recent story developments and player-directed changes first; if an older starting-seed fact conflicts with where the player took the story, follow the player’s evolved story. Only emit stateChanges.addCanonFacts (0-2 concise sentences) when a lasting development, new relationship, promise, or revelation occurs.',
+    'ATLAS DISCIPLINE (CRITICAL): Keep the World Map clean and readable. Only emit stateChanges.discoverLocation when the player reaches or discovers a distinct macro-location (neighborhood, store, highway corridor, landmark, safehouse, market, dungeon, or secret site) — NEVER create separate discoverLocation entries for individual rooms, benches, porches, or vehicles inside an already-registered base or building (keep location consistent with the parent base/district). Always set "region" (district/area name), and whenever the campaign takes place on real Earth (e.g. Miami, São Paulo, Tokyo), provide accurate real-world WGS84 GPS coordinates (lat, lng) for the place.',
     'Keep stateChanges grounded: track NPCs via upsertNpcs, places/dungeons via discoverLocation, and faction shifts via upsertFactions.',
     'Offer 4 engaging, meaningfully distinct story choices rooted in the current scene, people, attributes, and goals — set attribute, effectTag (e.g. Vínculo, Romance, Treino, Dungeon, Recursos, Pista, Combate), and optional unlockHint when a player stat/skill/talent shines.',
   ]
@@ -1432,6 +1450,7 @@ export async function generateVisualAsset(
     : '';
 
   const isPortrait = params.kind === 'portrait';
+  const isMap = params.kind === 'map';
   const prompt = isPortrait
     ? [
         `Create an evocative atmospheric character portrait for an interactive RPG chronicle.`,
@@ -1449,19 +1468,38 @@ export async function generateVisualAsset(
       ]
         .filter(Boolean)
         .join(' ')
-    : [
-        `Create a widescreen atmospheric concept-art illustration for an interactive RPG scene.`,
-        `World: ${params.worldTitle}${params.era ? ` — ${params.era}` : ''}.`,
-        `Scene: ${params.sceneTitle || 'Opening'} at ${params.location || 'Unknown location'}.`,
-        params.sceneText
-          ? `Visual moment: ${params.sceneText.slice(0, 380)}`
-          : '',
-        creativeCue,
-        `Art Direction: ${styleGuide} Cinematic environmental storytelling, deep depth of field.`,
-        `STRICT CONSTRAINT: No text, no words, no speech bubbles, no UI overlays, no watermarks.`,
-      ]
-        .filter(Boolean)
-        .join(' ');
+    : isMap
+      ? [
+          `Create a stunning top-down illustrated RPG cartographic world/region map (bird's-eye orthographic atlas view).`,
+          `World: ${params.worldTitle}${params.era ? ` (${params.era})` : ''}.`,
+          params.sceneText
+            ? `Key terrain, biomes, coastlines, settlements, and landmarks to depict geographically: ${params.sceneText.slice(0, 460)}.`
+            : '',
+          creativeCue,
+          params.theme === 'cyberpunk'
+            ? `Art Direction: Sleek dark tactical satellite-holo megacity grid map, deep obsidian ocean, subtle cyan and magenta district topography, arterial highways, glowing sector contours.`
+            : params.theme === 'zombies' || params.theme === 'apocalyptic'
+              ? `Art Direction: Gritty tactical military topographic contour map on dark weathered slate, coastal bays, rural farmlands, highway networks, river channels, subtle olive and amber elevation lines.`
+              : params.theme === 'mystery'
+                ? `Art Direction: Vintage dark architectural noir city & harbor cartographic blueprint, river canals, foggy boroughs, warm sepia ink contours on deep charcoal parchment.`
+                : `Art Direction: Masterwork dark fantasy cartographic parchment atlas, intricate coastlines, mountain ridges, ancient forests, winding rivers, subtle compass rose, warm gilded dark-slate palette.`,
+          `STRICT CONSTRAINT: Pure cartographic geography ONLY. Absolutely NO text, NO place names, NO letters, NO numbers, NO legend boxes, NO watermarks, NO UI frames.`,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : [
+          `Create a widescreen atmospheric concept-art illustration for an interactive RPG scene.`,
+          `World: ${params.worldTitle}${params.era ? ` — ${params.era}` : ''}.`,
+          `Scene: ${params.sceneTitle || 'Opening'} at ${params.location || 'Unknown location'}.`,
+          params.sceneText
+            ? `Visual moment: ${params.sceneText.slice(0, 380)}`
+            : '',
+          creativeCue,
+          `Art Direction: ${styleGuide} Cinematic environmental storytelling, deep depth of field.`,
+          `STRICT CONSTRAINT: No text, no words, no speech bubbles, no UI overlays, no watermarks.`,
+        ]
+          .filter(Boolean)
+          .join(' ');
 
   const interaction = await client.interactions.create({
     model: 'gemini-nano-banana-2.1',
@@ -2436,6 +2474,229 @@ export async function generateWorldEvent(
           }
         : undefined,
     choices,
+    engineUsed: 'gemini',
+  };
+}
+
+const MAP_GEOCODE_SCHEMA = {
+  type: 'object',
+  properties: {
+    isRealWorld: {
+      type: 'boolean',
+      description:
+        'True if the campaign takes place in a real Earth city/country/region (e.g. Miami, São Paulo, New York, London, Tokyo); false if purely fictional fantasy/sci-fi world.',
+    },
+    realWorldRegion: {
+      type: 'string',
+      description:
+        'Short geographic label for the region (e.g. "Miami & Redland, Flórida, EUA" or "Reino de Eldoria").',
+    },
+    centerLat: {
+      type: 'number',
+      description: 'Center WGS84 latitude if isRealWorld is true (otherwise 0).',
+    },
+    centerLng: {
+      type: 'number',
+      description: 'Center WGS84 longitude if isRealWorld is true (otherwise 0).',
+    },
+    defaultZoom: {
+      type: 'integer',
+      description: 'Recommended Leaflet zoom level (9 to 15) if isRealWorld is true (e.g. 11 for a metro area).',
+    },
+    locations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          region: {
+            type: 'string',
+            description: 'Parent district, neighborhood, or area name (e.g. "Redland", "Brickell", "Krome Avenue").',
+          },
+          lat: {
+            type: 'number',
+            description: 'Accurate WGS84 latitude if isRealWorld is true.',
+          },
+          lng: {
+            type: 'number',
+            description: 'Accurate WGS84 longitude if isRealWorld is true.',
+          },
+        },
+        required: ['id', 'region'],
+      },
+    },
+  },
+  required: ['isRealWorld', 'realWorldRegion', 'locations'],
+};
+
+interface RawMapGeocodePayload {
+  isRealWorld?: boolean;
+  realWorldRegion?: string;
+  centerLat?: number;
+  centerLng?: number;
+  defaultZoom?: number;
+  locations?: Array<{
+    id?: string;
+    region?: string;
+    lat?: number;
+    lng?: number;
+  }>;
+}
+
+export async function generateMapGeocode(
+  apiKey: string,
+  campaign: Campaign,
+): Promise<MapGeocodeResponse> {
+  const client = new GoogleGenAI({ apiKey });
+
+  const targetLocations = campaign.codex.locations.slice(0, 80).map((loc) => ({
+    id: loc.id,
+    name: loc.name,
+    kind: loc.kind ?? 'city',
+    description: (loc.description || '').slice(0, 140),
+    existingRegion: loc.region ?? null,
+    existingLat: typeof loc.lat === 'number' ? loc.lat : null,
+    existingLng: typeof loc.lng === 'number' ? loc.lng : null,
+  }));
+
+  const systemInstruction = [
+    'You are the MYTHOS Cartography & Geolocation Engine.',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Analyze the RPG campaign setting and every discovered location:',
+    '1. Determine whether this campaign takes place on REAL EARTH (isRealWorld: true) or in a FICTIONAL world (isRealWorld: false).',
+    '2. For EVERY location in the input array, assign a clean, consistent parent district/neighborhood/area in "region" (group rooms/areas of the same ranch, house, or neighborhood under the SAME region name — e.g. "Redland", "Brickell", "Krome Avenue", "Homestead", "Downtown Miami").',
+    '3. If isRealWorld is true, provide accurate real-world WGS84 GPS coordinates (lat, lng) for every location AND centerLat/centerLng/defaultZoom for the whole campaign region. Place known neighborhoods, highways, stores, and landmarks at their real geographic coordinates, and place fictional safehouses/ranches plausibly inside their named district (e.g., Redland ranches near 25.568, -80.491; Brickell apartments near 25.761, -80.192; Krome Ave near 25.560, -80.479).',
+    '4. Preserve every exact location "id" from the input list. Return ONLY valid JSON matching the schema.',
+  ].join('\n');
+
+  const inputPayload = JSON.stringify(
+    {
+      world: {
+        title: campaign.world.title,
+        era: campaign.world.era,
+        premise: campaign.world.premise.slice(0, 400),
+        history: campaign.world.history.slice(0, 350),
+        genres: campaign.world.genres,
+      },
+      currentLocation: campaign.currentLocation,
+      stronghold: campaign.stronghold
+        ? {
+            name: campaign.stronghold.name,
+            location: campaign.stronghold.location,
+          }
+        : null,
+      locations: targetLocations,
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    input: `Geocode and cluster these campaign locations:\n${inputPayload}`,
+    system_instruction: systemInstruction,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: MAP_GEOCODE_SCHEMA,
+    },
+    generation_config: {
+      temperature: 0.25,
+      max_output_tokens: 8192,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<RawMapGeocodePayload>(
+    interaction.output_text,
+  );
+
+  const isRealWorld = Boolean(parsed.isRealWorld);
+  const validCenterLat =
+    typeof parsed.centerLat === 'number' &&
+    Number.isFinite(parsed.centerLat) &&
+    parsed.centerLat >= -90 &&
+    parsed.centerLat <= 90 &&
+    !(parsed.centerLat === 0 && parsed.centerLng === 0);
+  const validCenterLng =
+    typeof parsed.centerLng === 'number' &&
+    Number.isFinite(parsed.centerLng) &&
+    parsed.centerLng >= -180 &&
+    parsed.centerLng <= 180;
+
+  const placedCoords: Array<{ lat: number; lng: number }> = [];
+  const resolvedLocations: MapGeocodeResponse['locations'] = [];
+
+  for (const item of parsed.locations ?? []) {
+    if (!item?.id) continue;
+    const region = String(item.region || '').trim() || 'Região Central';
+
+    if (
+      isRealWorld &&
+      typeof item.lat === 'number' &&
+      Number.isFinite(item.lat) &&
+      item.lat >= -90 &&
+      item.lat <= 90 &&
+      typeof item.lng === 'number' &&
+      Number.isFinite(item.lng) &&
+      item.lng >= -180 &&
+      item.lng <= 180 &&
+      !(item.lat === 0 && item.lng === 0)
+    ) {
+      let lat = item.lat;
+      let lng = item.lng;
+
+      // Deterministic golden-angle micro-spiral jitter (~110m steps) so pins inside
+      // the same ranch/district fan out visibly instead of stacking on 1 pixel
+      let collisions = 0;
+      while (
+        placedCoords.some(
+          (p) => Math.abs(p.lat - lat) < 0.0008 && Math.abs(p.lng - lng) < 0.0008,
+        ) &&
+        collisions < 40
+      ) {
+        collisions += 1;
+        const radius = 0.0011 * Math.sqrt(collisions);
+        const angle = collisions * 2.399963229728653;
+        lat = item.lat + Math.sin(angle) * radius;
+        lng = item.lng + Math.cos(angle) * radius;
+      }
+
+      placedCoords.push({ lat, lng });
+      resolvedLocations.push({
+        id: item.id,
+        region,
+        lat: Number(lat.toFixed(6)),
+        lng: Number(lng.toFixed(6)),
+      });
+    } else {
+      resolvedLocations.push({
+        id: item.id,
+        region,
+      });
+    }
+  }
+
+  let centerLat = validCenterLat ? parsed.centerLat : undefined;
+  let centerLng = validCenterLng ? parsed.centerLng : undefined;
+  if (isRealWorld && (centerLat === undefined || centerLng === undefined) && placedCoords.length > 0) {
+    centerLat =
+      placedCoords.reduce((acc, p) => acc + p.lat, 0) / placedCoords.length;
+    centerLng =
+      placedCoords.reduce((acc, p) => acc + p.lng, 0) / placedCoords.length;
+  }
+
+  return {
+    isRealWorld,
+    realWorldRegion:
+      String(parsed.realWorldRegion || campaign.world.title).trim(),
+    centerLat,
+    centerLng,
+    defaultZoom:
+      typeof parsed.defaultZoom === 'number'
+        ? Math.max(4, Math.min(16, Math.round(parsed.defaultZoom)))
+        : 11,
+    locations: resolvedLocations,
     engineUsed: 'gemini',
   };
 }

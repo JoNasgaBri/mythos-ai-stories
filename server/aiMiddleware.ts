@@ -16,6 +16,7 @@ import {
   generateForgedWorld,
   generateJournalSummary,
   generateLivingWorldPulse,
+  generateMapGeocode,
   generateSceneSpeech,
   generateStoryStart,
   generateStoryTurn,
@@ -272,6 +273,13 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           suggestedCategory: body.suggestedCategory,
           triggerReason: body.triggerReason,
         });
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/map-geo') {
+        const body = await readJsonBody<{ campaign: Campaign }>(req);
+        const result = await generateMapGeocode(apiKey, body.campaign);
         sendJson(res, 200, result);
         return;
       }
