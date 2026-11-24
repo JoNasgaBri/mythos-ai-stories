@@ -237,6 +237,14 @@ export interface NpcRecord {
   likes?: string[];
   dislikes?: string[];
   bondMemories?: NpcBondMemory[];
+  orgMember?: boolean;
+  orgRank?: OrgRank;
+  orgDivision?: OrgDivisionId;
+  orgDuty?: OrgMemberDuty;
+  dailyWage?: number;
+  injuryNote?: string;
+  recoveryHoursLeft?: number;
+  hiddenFlaw?: string;
   lastSeenLocation: string;
   notes: string;
   firstMetTurn: number;
@@ -273,12 +281,21 @@ export interface WorldMapMeta {
 
 export type FactionStanding = 'allied' | 'neutral' | 'wary' | 'hostile';
 
+export type FactionTreaty =
+  | 'none'
+  | 'non_aggression'
+  | 'trade_pact'
+  | 'alliance'
+  | 'war';
+
 export interface FactionRecord {
   id: string;
   name: string;
   description: string;
   standing: FactionStanding;
   influence: string;
+  treaty?: FactionTreaty;
+  reputationScore?: number; // -100 to 100
 }
 
 export interface CanonFact {
@@ -472,6 +489,7 @@ export interface Campaign {
   freeformMode?: boolean;
   worldClock?: WorldClock;
   stronghold?: StrongholdState;
+  organization?: OrganizationState;
   mapMeta?: WorldMapMeta;
   rumors?: WorldRumorItem[];
   activeWorldEvent?: WorldEventRecord | null;
@@ -635,6 +653,15 @@ export interface AiStateChanges {
     standing?: FactionStanding;
     influence?: string;
   }>;
+  orgMoraleDelta?: number;
+  orgHeatDelta?: number;
+  orgRenownGain?: number;
+  recruitNpcToOrg?: {
+    name: string;
+    rank?: OrgRank;
+    division?: OrgDivisionId;
+    dailyWage?: number;
+  };
   addCanonFacts?: string[];
 }
 
@@ -899,5 +926,185 @@ export interface MapGeocodeResponse {
     lat?: number;
     lng?: number;
   }>;
+  engineUsed: 'gemini' | 'demo';
+}
+
+/* ============================================================================
+ * MYTHOS 9.0 — Organization, Guild, Mercenary Company & Squad Operations
+ * ============================================================================ */
+
+export type OrganizationArchetype =
+  | 'mercenary'
+  | 'community'
+  | 'guild'
+  | 'syndicate'
+  | 'militia'
+  | 'caravan';
+
+export type OrgDivisionId =
+  | 'security'
+  | 'intel'
+  | 'logistics'
+  | 'medical'
+  | 'diplomacy'
+  | 'reserve';
+
+export type OrgRank =
+  | 'leader'
+  | 'lieutenant'
+  | 'specialist'
+  | 'member'
+  | 'hired_merc';
+
+export type OrgMemberDuty =
+  | 'available'
+  | 'in_party'
+  | 'on_mission'
+  | 'injured'
+  | 'captured';
+
+export interface OrgPolicies {
+  rations: 'generous' | 'standard' | 'strict';
+  conduct: 'merciful' | 'pragmatic' | 'ruthless';
+  recruitment: 'open' | 'selective' | 'contract';
+}
+
+export interface OrgRecruitCandidate {
+  id: string;
+  name: string;
+  role: string;
+  age?: number;
+  height?: string;
+  personality: string;
+  pitch: string;
+  recommendedDivision: OrgDivisionId;
+  attributes: CharacterAttributes;
+  skills: string[];
+  traits: string[];
+  visibleFlaw: string;
+  hireCost: number;
+  dailyWage: number;
+}
+
+export type OrgOperationKind =
+  | 'scavenge'
+  | 'recon'
+  | 'contract'
+  | 'escort'
+  | 'raid'
+  | 'diplomacy'
+  | 'rescue';
+
+export type OrgOperationDifficulty = 'low' | 'medium' | 'high' | 'extreme';
+
+export type OrgOperationOutcomeGrade =
+  | 'critical'
+  | 'success'
+  | 'partial'
+  | 'disaster';
+
+export interface OrgOperation {
+  id: string;
+  title: string;
+  kind: OrgOperationKind;
+  briefing: string;
+  targetLocationName: string;
+  targetFactionName?: string;
+  difficulty: OrgOperationDifficulty;
+  recommendedAttributes: AttributeId[];
+  durationHours: number;
+  durationTurns: number;
+  rewardSummary: string;
+  rewardCurrency?: number;
+  rewardSupplies?: Partial<BaseSupplies>;
+  rewardRenown?: number;
+  heatGain: number;
+  status: 'available' | 'active' | 'ready_to_claim' | 'completed' | 'failed';
+  assignedNpcIds?: string[];
+  assignedVehicleId?: string;
+  hoursRemaining?: number;
+  turnsRemaining?: number;
+  startedTurn?: number;
+  captiveNpcId?: string;
+  outcomeGrade?: OrgOperationOutcomeGrade;
+  outcomeRollSummary?: string;
+  outcomeLog?: string;
+}
+
+export type OrgOutpostSpecialty =
+  | 'food'
+  | 'fuel'
+  | 'materials'
+  | 'meds'
+  | 'intel'
+  | 'income';
+
+export interface OrgOutpost {
+  id: string;
+  locationId: string;
+  locationName: string;
+  specialty: OrgOutpostSpecialty;
+  dailyYield: number;
+  defenseBonus: number;
+  garrisonNpcIds: string[];
+  establishedTurn: number;
+}
+
+export interface OrgHistoryEntry {
+  id: string;
+  day: number;
+  turn: number;
+  kind: 'founded' | 'operation' | 'upkeep' | 'recruit' | 'outpost' | 'diplomacy';
+  text: string;
+}
+
+export interface OrganizationState {
+  name: string;
+  motto: string;
+  archetype: OrganizationArchetype;
+  foundedTurn: number;
+  renown: number;
+  tier: number; // 1 to 10
+  morale: number; // 0 to 100
+  heat: number; // 0 to 100
+  policies: OrgPolicies;
+  outposts: OrgOutpost[];
+  operations: OrgOperation[];
+  recruitPool: OrgRecruitCandidate[];
+  lastUpkeepDay: number;
+  historyLog: OrgHistoryEntry[];
+}
+
+export interface OrgRecruitsResponse {
+  candidates: Array<Omit<OrgRecruitCandidate, 'id'>>;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface OrgOperationsResponse {
+  operations: Array<
+    Omit<
+      OrgOperation,
+      | 'id'
+      | 'status'
+      | 'assignedNpcIds'
+      | 'assignedVehicleId'
+      | 'hoursRemaining'
+      | 'turnsRemaining'
+      | 'startedTurn'
+      | 'outcomeGrade'
+      | 'outcomeRollSummary'
+      | 'outcomeLog'
+    >
+  >;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface OrgOperationReportResponse {
+  narrativeReport: string;
+  squadQuote?: {
+    speaker: string;
+    text: string;
+  };
+  canonFact?: string;
   engineUsed: 'gemini' | 'demo';
 }

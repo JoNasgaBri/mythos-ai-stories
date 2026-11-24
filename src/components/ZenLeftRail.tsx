@@ -1,5 +1,6 @@
 import {
   ChevronRight,
+  Crown,
   FastForward,
   Flame,
   Hammer,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { UI_COPY } from '../data/presets';
+import { getOrgMembers, getOrgRailLabelForTheme } from '../engine/orgSystem';
 import type { AppSettings, Campaign } from '../types/game';
 
 export type ZenRailMode = 'compact' | 'pinned' | 'hidden';
@@ -36,6 +38,7 @@ interface ZenLeftRailProps {
   onCloseMobile: () => void;
   onOpenInventory: () => void;
   onOpenRelationships: () => void;
+  onOpenOrganization?: () => void;
   onOpenRumors: () => void;
   onOpenWorkbench: () => void;
   onOpenBaseBlueprint: () => void;
@@ -72,6 +75,7 @@ export function ZenLeftRail({
   onCloseMobile,
   onOpenInventory,
   onOpenRelationships,
+  onOpenOrganization,
   onOpenRumors,
   onOpenWorkbench,
   onOpenBaseBlueprint,
@@ -89,6 +93,13 @@ export function ZenLeftRail({
   const partyCount = campaign.codex.npcs.filter(
     (n) => n.inParty && n.status === 'alive',
   ).length;
+  const orgMembersCount = getOrgMembers(campaign.codex.npcs).length;
+  const orgReadyOps =
+    campaign.organization?.operations.filter((o) => o.status === 'ready_to_claim')
+      .length ?? 0;
+  const orgActiveOps =
+    campaign.organization?.operations.filter((o) => o.status === 'active').length ??
+    0;
   const freshRumors = (campaign.rumors ?? []).filter((r) => !r.investigated).length;
   const materials = campaign.stronghold?.supplies?.materials ?? 0;
   const vehicleCount = campaign.stronghold?.vehicles?.length ?? 0;
@@ -128,6 +139,32 @@ export function ZenLeftRail({
       badge: partyCount > 0 ? partyCount : undefined,
       onClick: onOpenRelationships,
     },
+    ...(onOpenOrganization
+      ? [
+          {
+            id: 'organization',
+            label:
+              campaign.organization?.name ||
+              getOrgRailLabelForTheme(campaign.world.primaryTheme),
+            subtitle: campaign.organization
+              ? orgReadyOps > 0
+                ? `${orgReadyOps} relatório pronto!`
+                : orgActiveOps > 0
+                  ? `${orgActiveOps} op em campo · ${orgMembersCount} memb.`
+                  : `Tier ${campaign.organization.tier} · ${orgMembersCount} memb.`
+              : 'Fundar guilda / facção',
+            icon: Crown,
+            accent: '#fbbf24',
+            badge:
+              orgReadyOps > 0
+                ? orgReadyOps
+                : orgMembersCount > 0
+                  ? orgMembersCount
+                  : undefined,
+            onClick: onOpenOrganization,
+          },
+        ]
+      : []),
     {
       id: 'rumors',
       label: 'Rádio & Rumores',

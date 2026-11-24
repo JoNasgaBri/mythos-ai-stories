@@ -11,6 +11,10 @@ import {
   generateDemoSceneArt,
 } from '../engine/demoArtwork';
 import {
+  createStarterOperationsForCampaign,
+  createStarterRecruitsForCampaign,
+} from '../engine/orgSystem';
+import {
   computeMaxVigor,
   defaultAffinityFromStance,
   defaultNpcAttributes,
@@ -48,6 +52,11 @@ import type {
   LocationRecord,
   MapGeocodeResponse,
   NpcRecord,
+  OrgOperation,
+  OrgOperationOutcomeGrade,
+  OrgOperationReportResponse,
+  OrgOperationsResponse,
+  OrgRecruitsResponse,
   PlayerState,
   Quest,
   SkillProgress,
@@ -806,6 +815,119 @@ export async function requestFictionalMapArt(
       campaign.currentMood,
     ),
     caption: `Atlas Ilustrado · ${campaign.world.title}`,
+    engineUsed: 'demo',
+  };
+}
+
+export async function requestOrgRecruits(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<OrgRecruitsResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<OrgRecruitsResponse>(
+      '/api/story/org-recruits',
+      { campaign: stripHeavyMediaForApi(campaign) },
+      settings,
+    );
+  }
+  await briefDemoDelay(420);
+  return {
+    candidates: createStarterRecruitsForCampaign(campaign).map(
+      ({ id: _id, ...rest }) => rest,
+    ),
+    engineUsed: 'demo',
+  };
+}
+
+export async function requestOrgOperations(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<OrgOperationsResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<OrgOperationsResponse>(
+      '/api/story/org-ops',
+      { campaign: stripHeavyMediaForApi(campaign) },
+      settings,
+    );
+  }
+  await briefDemoDelay(420);
+  return {
+    operations: createStarterOperationsForCampaign(campaign).map(
+      ({
+        id: _id,
+        status: _status,
+        assignedNpcIds: _a,
+        assignedVehicleId: _v,
+        hoursRemaining: _hr,
+        turnsRemaining: _tr,
+        startedTurn: _st,
+        outcomeGrade: _og,
+        outcomeRollSummary: _or,
+        outcomeLog: _ol,
+        ...rest
+      }) => rest,
+    ),
+    engineUsed: 'demo',
+  };
+}
+
+export async function requestOrgOperationReport(
+  campaign: Campaign,
+  params: {
+    operation: OrgOperation;
+    outcomeGrade: OrgOperationOutcomeGrade;
+    rollSummary: string;
+    squadNames: string[];
+    vehicleName?: string;
+    injuredName?: string;
+    capturedName?: string;
+  },
+  settings: AppSettings,
+  health: ApiHealthStatus,
+): Promise<OrgOperationReportResponse> {
+  if (shouldUseGemini(settings, health)) {
+    return postJson<OrgOperationReportResponse>(
+      '/api/story/org-report',
+      {
+        campaign: stripHeavyMediaForApi(campaign),
+        ...params,
+      },
+      settings,
+    );
+  }
+  await briefDemoDelay(420);
+  const squadStr = params.squadNames.join(', ') || 'A equipe';
+  const vehiclePart = params.vehicleName
+    ? ` utilizando ${params.vehicleName}`
+    : '';
+  const outcomeDesc =
+    params.outcomeGrade === 'critical'
+      ? `executou a operação com precisão cirúrgica, superando as expectativas e trazendo bônus extras`
+      : params.outcomeGrade === 'success'
+        ? `cumpriu todos os objetivos em ${params.operation.targetLocationName} sem comprometer a base`
+        : params.outcomeGrade === 'partial'
+          ? `concluiu parte da missão sob pressão, precisando recuar antes de limpar todo o perímetro`
+          : `encontrou forte resistência inesperada em ${params.operation.targetLocationName} e precisou abortar a extração`;
+  const casualtyLine = params.capturedName
+    ? ` No caos da retirada, ${params.capturedName} foi separado(a) do grupo e capturado(a) — uma operação de resgate imediata já foi aberta no Quadro de Operações.`
+    : params.injuredName
+      ? ` ${params.injuredName} retornou com ferimentos e foi encaminhado(a) à Enfermaria.`
+      : '';
+
+  return {
+    narrativeReport: `${squadStr} seguiu para ${params.operation.targetLocationName}${vehiclePart} para cumprir "${params.operation.title}". O esquadrão ${outcomeDesc}.${casualtyLine}`,
+    squadQuote: params.squadNames[0]
+      ? {
+          speaker: params.squadNames[0],
+          text:
+            params.outcomeGrade === 'disaster'
+              ? 'Deu tudo errado lá dentro. Precisamos reagrupar agora.'
+              : 'Missão cumprida. O material já está sendo descarregado na base.',
+        }
+      : undefined,
+    canonFact: `Operação "${params.operation.title}" (${params.operation.targetLocationName}): ${params.outcomeGrade} com ${squadStr}.`,
     engineUsed: 'demo',
   };
 }

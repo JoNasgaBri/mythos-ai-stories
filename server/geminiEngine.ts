@@ -28,6 +28,14 @@ import type {
   MapGeocodeResponse,
   NarrativePerspective,
   NarrativeStyle,
+  OrgDivisionId,
+  OrgOperation,
+  OrgOperationDifficulty,
+  OrgOperationKind,
+  OrgOperationOutcomeGrade,
+  OrgOperationReportResponse,
+  OrgOperationsResponse,
+  OrgRecruitsResponse,
   ResponseLength,
   RumorUrgency,
   SpeechResponse,
@@ -897,6 +905,7 @@ function buildSystemInstruction(
     'BG3 PROGRESSION & INFINITE SANDBOX: Read the protagonist’s BG3 attributes (STR/DEX/CON/INT/WIS/CHA), level, leveled skills, talents, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain (15-80), training/practice with skillTraining (growing or creating skills!), breakthroughs with addTalents, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
     'SCENE BEATS & DIALOGUE BUBBLES (IMPORTANT): Always compose the scene inside the ordered "beats" array (and leave "narration" as "" to avoid duplicating text). Alternate atmospheric "narration" blocks (prose/descriptions/body language) with "dialogue" blocks whenever any character speaks aloud — put the exact character name in "speaker", an evocative 1-2 word "emotion" (e.g. "Sorrindo", "Sussurrando", "Séria"), and ONLY their spoken words in "text" (no outer quotes, no "ela diz:"). Whenever a character sends or receives a phone message, WhatsApp, SMS, radio call, email, or note, use kind="message" with "speaker" and "channel" (e.g. "WhatsApp", "SMS", "Rádio"). Never repeat a dialogue line inside a narration beat.',
     'ACTIVE PARTY COMPANIONS & RELATIONSHIPS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about. Whenever introducing or interacting closely with a party companion, romance partner, or recurring NPC whose sheet lacks details, populate their age, height, appearance, personality, currentMood, attributes (6 BG3 stats), skills, traits, likes, dislikes, and a concise bondMemory via stateChanges.upsertNpcs. Always honor any player-edited biometrics, height, age, appearance, or skills present in activeParty/knownNpcs without contradicting them.',
+    'PLAYER ORGANIZATION / GUILD / FACTION: If playerOrganization is present in state, treat it as a real living force in the world — weave its name, motto, members on duty/mission, outposts, morale, Heat (notoriety), treaties, and policies organically into dialogue, rumors, and consequences.',
     campaign.freeformMode && campaign.turnCount <= 3
       ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
       : '',
@@ -1024,9 +1033,37 @@ function buildCompactStateContext(campaign: Campaign): string {
           dislikes: (n.dislikes ?? []).slice(0, 4),
         })),
       permanentCanonFacts: canonFacts,
+      playerOrganization: campaign.organization
+        ? {
+            name: campaign.organization.name,
+            motto: campaign.organization.motto,
+            archetype: campaign.organization.archetype,
+            tier: campaign.organization.tier,
+            morale: campaign.organization.morale,
+            heat: campaign.organization.heat,
+            policies: campaign.organization.policies,
+            members: campaign.codex.npcs
+              .filter((n) => n.orgMember && n.status !== 'dead')
+              .slice(0, 14)
+              .map((n) => ({
+                name: n.name,
+                role: n.role,
+                rank: n.orgRank ?? 'member',
+                division: n.orgDivision ?? 'reserve',
+                duty: n.orgDuty ?? (n.inParty ? 'in_party' : 'available'),
+              })),
+            activeOperations: campaign.organization.operations
+              .filter((o) => o.status === 'active' || o.status === 'ready_to_claim')
+              .map((o) => `${o.title} (${o.targetLocationName}, ${o.status})`),
+            outposts: campaign.organization.outposts.map(
+              (o) => `${o.locationName} (${o.specialty})`,
+            ),
+          }
+        : null,
       factions: campaign.codex.factions.map((f) => ({
         name: f.name,
         standing: f.standing,
+        treaty: f.treaty ?? 'none',
         influence: f.influence,
         description: f.description,
       })),
@@ -2697,6 +2734,504 @@ export async function generateMapGeocode(
         ? Math.max(4, Math.min(16, Math.round(parsed.defaultZoom)))
         : 11,
     locations: resolvedLocations,
+    engineUsed: 'gemini',
+  };
+}
+
+/* ============================================================================
+ * MYTHOS 9.0 — Organization Recruits, Operations Board & Tactical Reports
+ * ============================================================================ */
+
+const VALID_ORG_DIVISIONS = new Set<OrgDivisionId>([
+  'security',
+  'intel',
+  'logistics',
+  'medical',
+  'diplomacy',
+  'reserve',
+]);
+
+const VALID_OP_KINDS = new Set<OrgOperationKind>([
+  'scavenge',
+  'recon',
+  'contract',
+  'escort',
+  'raid',
+  'diplomacy',
+  'rescue',
+]);
+
+const VALID_OP_DIFF = new Set<OrgOperationDifficulty>([
+  'low',
+  'medium',
+  'high',
+  'extreme',
+]);
+
+const ORG_RECRUITS_SCHEMA = {
+  type: 'object',
+  properties: {
+    candidates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string' },
+          age: { type: 'integer' },
+          height: { type: 'string' },
+          personality: { type: 'string' },
+          pitch: {
+            type: 'string',
+            description: 'First-person 1-2 sentence pitch from this candidate explaining why you should recruit/hire them.',
+          },
+          recommendedDivision: {
+            type: 'string',
+            enum: ['security', 'intel', 'logistics', 'medical', 'diplomacy'],
+          },
+          attributes: {
+            type: 'object',
+            properties: {
+              str: { type: 'integer' },
+              dex: { type: 'integer' },
+              con: { type: 'integer' },
+              int: { type: 'integer' },
+              wis: { type: 'integer' },
+              cha: { type: 'integer' },
+            },
+            required: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+          },
+          skills: { type: 'array', items: { type: 'string' } },
+          traits: { type: 'array', items: { type: 'string' } },
+          visibleFlaw: {
+            type: 'string',
+            description: 'Battle Brothers style flaw or quirk (e.g. demands punctual pay, distrusts authority, hates ruthless tactics).',
+          },
+          hireCost: { type: 'integer' },
+          dailyWage: { type: 'integer' },
+        },
+        required: [
+          'name',
+          'role',
+          'personality',
+          'pitch',
+          'recommendedDivision',
+          'attributes',
+          'skills',
+          'traits',
+          'visibleFlaw',
+          'hireCost',
+          'dailyWage',
+        ],
+      },
+    },
+  },
+  required: ['candidates'],
+};
+
+export async function generateOrgRecruits(
+  apiKey: string,
+  campaign: Campaign,
+): Promise<OrgRecruitsResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const currency = campaign.player.currency?.label ?? 'Ouro';
+  const existingNames = campaign.codex.npcs.map((n) => n.name).slice(0, 20);
+
+  const systemInstruction = [
+    'You are the MYTHOS Guild & Mercenary Recruitment Director (inspired by Battle Brothers, State of Decay 2, and MGSV Mother Base).',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Generate 3 memorable, grounded recruit/mercenary candidates who fit the EXACT world, era, timeline, and location of this campaign.',
+    'STRICT TIMELINE FIDELITY: If the story takes place BEFORE an outbreak/catastrophe (e.g. modern Miami pre-apocalypse), generate realistic civilians, ex-military contractors, paramedics, mechanics, brokers, or scouts — NEVER post-apocalyptic cliches.',
+    'BG3 STAT SCALE: Keep attributes realistic (8 to 16 max; main specialty 14-16, weak stat 8-10).',
+    `PRICING: Set hireCost (150-650 ${currency}) and dailyWage (0-80 ${currency}) proportional to their specialty and the organization recruitment policy (${campaign.organization?.policies.recruitment ?? 'selective'}).`,
+    'Make each candidate cover a DIFFERENT division so the player gets meaningful strategic choice.',
+  ].join('\n');
+
+  const prompt = JSON.stringify(
+    {
+      world: {
+        title: campaign.world.title,
+        theme: campaign.world.primaryTheme,
+        era: campaign.world.era,
+        premise: campaign.world.premise.slice(0, 320),
+      },
+      currentLocation: campaign.currentLocation,
+      organization: campaign.organization
+        ? {
+            name: campaign.organization.name,
+            archetype: campaign.organization.archetype,
+            tier: campaign.organization.tier,
+            policies: campaign.organization.policies,
+          }
+        : null,
+      currency,
+      existingNpcNamesToAvoid: existingNames,
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: `Generate 3 distinct recruitment candidates for:\n${prompt}`,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: ORG_RECRUITS_SCHEMA,
+    },
+    generation_config: {
+      temperature: 0.75,
+      max_output_tokens: 4096,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<{
+    candidates?: Array<Partial<OrgRecruitsResponse['candidates'][number]>>;
+  }>(interaction.output_text);
+
+  const clampStat = (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.max(8, Math.min(16, Math.round(v)))
+      : 10;
+
+  const candidates: OrgRecruitsResponse['candidates'] = (parsed.candidates ?? [])
+    .filter((c) => c && String(c.name || '').trim())
+    .slice(0, 3)
+    .map((c) => ({
+      name: String(c.name).trim(),
+      role: String(c.role || 'Especialista').trim(),
+      age:
+        typeof c.age === 'number' && c.age >= 18 && c.age <= 75
+          ? Math.round(c.age)
+          : undefined,
+      height: c.height ? String(c.height).trim() : undefined,
+      personality: String(c.personality || 'Focado e prático.').trim(),
+      pitch: stripOuterQuotes(String(c.pitch || 'Pronto para somar forças.')),
+      recommendedDivision: VALID_ORG_DIVISIONS.has(
+        c.recommendedDivision as OrgDivisionId,
+      )
+        ? (c.recommendedDivision as OrgDivisionId)
+        : 'security',
+      attributes: {
+        str: clampStat(c.attributes?.str),
+        dex: clampStat(c.attributes?.dex),
+        con: clampStat(c.attributes?.con),
+        int: clampStat(c.attributes?.int),
+        wis: clampStat(c.attributes?.wis),
+        cha: clampStat(c.attributes?.cha),
+      },
+      skills: Array.isArray(c.skills)
+        ? c.skills.map((s) => String(s).trim()).filter(Boolean).slice(0, 4)
+        : ['Sobrevivência'],
+      traits: Array.isArray(c.traits)
+        ? c.traits.map((t) => String(t).trim()).filter(Boolean).slice(0, 3)
+        : ['Determinado'],
+      visibleFlaw: String(c.visibleFlaw || 'Cauteloso com estranhos').trim(),
+      hireCost:
+        typeof c.hireCost === 'number'
+          ? Math.max(0, Math.min(2500, Math.round(c.hireCost)))
+          : 260,
+      dailyWage:
+        typeof c.dailyWage === 'number'
+          ? Math.max(0, Math.min(250, Math.round(c.dailyWage)))
+          : 30,
+    }));
+
+  return { candidates, engineUsed: 'gemini' };
+}
+
+const ORG_OPERATIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    operations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          kind: {
+            type: 'string',
+            enum: ['scavenge', 'recon', 'contract', 'escort', 'raid', 'diplomacy'],
+          },
+          briefing: { type: 'string' },
+          targetLocationName: { type: 'string' },
+          targetFactionName: { type: 'string' },
+          difficulty: {
+            type: 'string',
+            enum: ['low', 'medium', 'high', 'extreme'],
+          },
+          recommendedAttributes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+            },
+          },
+          durationHours: { type: 'integer' },
+          durationTurns: { type: 'integer' },
+          rewardSummary: { type: 'string' },
+          rewardCurrency: { type: 'integer' },
+          rewardSupplies: {
+            type: 'object',
+            properties: {
+              food: { type: 'integer' },
+              fuel: { type: 'integer' },
+              materials: { type: 'integer' },
+              meds: { type: 'integer' },
+              ammo: { type: 'integer' },
+            },
+          },
+          rewardRenown: { type: 'integer' },
+          heatGain: { type: 'integer' },
+        },
+        required: [
+          'title',
+          'kind',
+          'briefing',
+          'targetLocationName',
+          'difficulty',
+          'recommendedAttributes',
+          'durationHours',
+          'durationTurns',
+          'rewardSummary',
+          'rewardRenown',
+          'heatGain',
+        ],
+      },
+    },
+  },
+  required: ['operations'],
+};
+
+export async function generateOrgOperations(
+  apiKey: string,
+  campaign: Campaign,
+): Promise<OrgOperationsResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const currency = campaign.player.currency?.label ?? 'Ouro';
+
+  const systemInstruction = [
+    'You are the MYTHOS War Table & Contracts Coordinator (inspired by XCOM 2 Covert Ops, Mount & Blade Bannerlord, and Blades in the Dark).',
+    LANGUAGE_DIRECTIVE[campaign.language],
+    'Generate 4 distinct, playable squad operations/contracts anchored to the REAL discovered locations and factions of this campaign.',
+    'STRICT TIMELINE FIDELITY: Respect the exact era and current timeline (if pre-apocalypse, make realistic logistics runs, private security escorts, discreet intel/surveillance, broker negotiations — never premature zombies).',
+    'Include a healthy mix of difficulties (1 low, 2 medium, 1 high) and kinds (scavenge, contract/escort, recon, diplomacy/raid).',
+    `Keep durationHours between 2 and 8, durationTurns between 2 and 4, rewardCurrency between 0 and 1200 ${currency}, supply rewards between 1 and 5, rewardRenown 20-70, heatGain 2-20.`,
+  ].join('\n');
+
+  const prompt = JSON.stringify(
+    {
+      world: {
+        title: campaign.world.title,
+        theme: campaign.world.primaryTheme,
+        era: campaign.world.era,
+        premise: campaign.world.premise.slice(0, 300),
+      },
+      currentLocation: campaign.currentLocation,
+      organization: campaign.organization
+        ? {
+            name: campaign.organization.name,
+            archetype: campaign.organization.archetype,
+            tier: campaign.organization.tier,
+            heat: campaign.organization.heat,
+            morale: campaign.organization.morale,
+          }
+        : null,
+      knownLocations: campaign.codex.locations.slice(0, 14).map((l) => ({
+        name: l.name,
+        region: l.region ?? null,
+        kind: l.kind ?? 'city',
+        danger: l.danger,
+      })),
+      factions: campaign.codex.factions.slice(0, 8).map((f) => ({
+        name: f.name,
+        standing: f.standing,
+        treaty: f.treaty ?? 'none',
+      })),
+      currency,
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: `Generate 4 fresh squad operations for:\n${prompt}`,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: ORG_OPERATIONS_SCHEMA,
+    },
+    generation_config: {
+      temperature: 0.72,
+      max_output_tokens: 4096,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<{
+    operations?: Array<Partial<OrgOperationsResponse['operations'][number]>>;
+  }>(interaction.output_text);
+
+  const operations: OrgOperationsResponse['operations'] = (
+    parsed.operations ?? []
+  )
+    .filter((o) => o && String(o.title || '').trim())
+    .slice(0, 4)
+    .map((o) => ({
+      title: String(o.title).trim(),
+      kind: VALID_OP_KINDS.has(o.kind as OrgOperationKind)
+        ? (o.kind as OrgOperationKind)
+        : 'contract',
+      briefing: String(o.briefing || 'Operação tática regional.').trim(),
+      targetLocationName: String(
+        o.targetLocationName || campaign.currentLocation,
+      ).trim(),
+      targetFactionName: o.targetFactionName
+        ? String(o.targetFactionName).trim()
+        : undefined,
+      difficulty: VALID_OP_DIFF.has(o.difficulty as OrgOperationDifficulty)
+        ? (o.difficulty as OrgOperationDifficulty)
+        : 'medium',
+      recommendedAttributes: Array.isArray(o.recommendedAttributes)
+        ? (o.recommendedAttributes.filter((a) =>
+            VALID_ATTRS.has(a as AttributeId),
+          ) as AttributeId[]).slice(0, 3)
+        : ['wis', 'dex'],
+      durationHours:
+        typeof o.durationHours === 'number'
+          ? Math.max(2, Math.min(12, Math.round(o.durationHours)))
+          : 4,
+      durationTurns:
+        typeof o.durationTurns === 'number'
+          ? Math.max(1, Math.min(5, Math.round(o.durationTurns)))
+          : 2,
+      rewardSummary: String(o.rewardSummary || '+30 Renome').trim(),
+      rewardCurrency:
+        typeof o.rewardCurrency === 'number' && o.rewardCurrency > 0
+          ? Math.min(2500, Math.round(o.rewardCurrency))
+          : undefined,
+      rewardSupplies: o.rewardSupplies,
+      rewardRenown:
+        typeof o.rewardRenown === 'number'
+          ? Math.max(10, Math.min(100, Math.round(o.rewardRenown)))
+          : 30,
+      heatGain:
+        typeof o.heatGain === 'number'
+          ? Math.max(0, Math.min(28, Math.round(o.heatGain)))
+          : 8,
+    }));
+
+  return { operations, engineUsed: 'gemini' };
+}
+
+const ORG_REPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    narrativeReport: {
+      type: 'string',
+      description: '2 vivid tactical paragraphs recounting how the dispatched squad executed the operation, honoring the exact roll outcome, location, vehicle, and any injury/capture.',
+    },
+    squadQuote: {
+      type: 'object',
+      properties: {
+        speaker: { type: 'string' },
+        text: { type: 'string' },
+      },
+      required: ['speaker', 'text'],
+    },
+    canonFact: {
+      type: 'string',
+      description: 'One concise sentence summarizing the lasting consequence for campaign memory.',
+    },
+  },
+  required: ['narrativeReport', 'canonFact'],
+};
+
+export async function generateOrgOperationReport(
+  apiKey: string,
+  params: {
+    campaign: Campaign;
+    operation: OrgOperation;
+    outcomeGrade: OrgOperationOutcomeGrade;
+    rollSummary: string;
+    squadNames: string[];
+    vehicleName?: string;
+    injuredName?: string;
+    capturedName?: string;
+  },
+): Promise<OrgOperationReportResponse> {
+  const client = new GoogleGenAI({ apiKey });
+
+  const systemInstruction = [
+    'You are the MYTHOS After-Action Field Chronicler (inspired by XCOM 2 & RimWorld mission debriefings).',
+    LANGUAGE_DIRECTIVE[params.campaign.language],
+    'Write a crisp, atmospheric 2-paragraph after-action report strictly matching the deterministic roll outcome, squad members, vehicle, location, and casualties/captures.',
+    'Include one authentic spoken quote from a squad member in squadQuote.',
+  ].join('\n');
+
+  const prompt = JSON.stringify(
+    {
+      world: {
+        title: params.campaign.world.title,
+        era: params.campaign.world.era,
+        theme: params.campaign.world.primaryTheme,
+      },
+      organization: params.campaign.organization?.name ?? 'Organização',
+      operation: {
+        title: params.operation.title,
+        kind: params.operation.kind,
+        briefing: params.operation.briefing,
+        targetLocationName: params.operation.targetLocationName,
+        targetFactionName: params.operation.targetFactionName ?? null,
+      },
+      squadNames: params.squadNames,
+      vehicleName: params.vehicleName ?? null,
+      outcomeGrade: params.outcomeGrade,
+      rollSummary: params.rollSummary,
+      injuredName: params.injuredName ?? null,
+      capturedName: params.capturedName ?? null,
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: `Write the tactical debriefing report for:\n${prompt}`,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: ORG_REPORT_SCHEMA,
+    },
+    generation_config: {
+      temperature: 0.65,
+      max_output_tokens: 2048,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<Partial<OrgOperationReportResponse>>(
+    interaction.output_text,
+  );
+
+  return {
+    narrativeReport: String(
+      parsed.narrativeReport ||
+        `O esquadrão concluiu "${params.operation.title}" em ${params.operation.targetLocationName}.`,
+    ).trim(),
+    squadQuote:
+      parsed.squadQuote?.speaker && parsed.squadQuote?.text
+        ? {
+            speaker: String(parsed.squadQuote.speaker).trim(),
+            text: stripOuterQuotes(String(parsed.squadQuote.text)),
+          }
+        : undefined,
+    canonFact: parsed.canonFact ? String(parsed.canonFact).trim() : undefined,
     engineUsed: 'gemini',
   };
 }

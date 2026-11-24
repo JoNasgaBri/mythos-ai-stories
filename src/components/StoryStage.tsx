@@ -114,6 +114,7 @@ interface StoryStageProps {
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
+  onOpenOrganization?: () => void;
   onOpenRumors?: () => void;
   onOpenWorkbench?: () => void;
   onOpenRest?: () => void;
@@ -205,6 +206,7 @@ export function StoryStage({
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
   onOpenRelationships,
+  onOpenOrganization,
   onOpenRumors,
   onOpenWorkbench,
   onOpenRest,
@@ -488,6 +490,7 @@ export function StoryStage({
         onCloseMobile={onCloseMobileLeftRail}
         onOpenInventory={() => onOpenCharacterInventory?.()}
         onOpenRelationships={() => onOpenRelationships?.()}
+        onOpenOrganization={() => onOpenOrganization?.()}
         onOpenRumors={() => onOpenRumors?.()}
         onOpenWorkbench={() => onOpenWorkbench?.()}
         onOpenBaseBlueprint={() => onOpenBaseBlueprint?.()}

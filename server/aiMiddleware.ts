@@ -6,6 +6,8 @@ import type {
   DiceRollResult,
   ForgeWorldRequest,
   LanguageId,
+  OrgOperation,
+  OrgOperationOutcomeGrade,
   ResponseLength,
   WorldEventCategory,
   WorldThemeId,
@@ -17,6 +19,9 @@ import {
   generateJournalSummary,
   generateLivingWorldPulse,
   generateMapGeocode,
+  generateOrgOperationReport,
+  generateOrgOperations,
+  generateOrgRecruits,
   generateSceneSpeech,
   generateStoryStart,
   generateStoryTurn,
@@ -280,6 +285,36 @@ export function createAiMiddleware(env: MiddlewareEnv) {
       if (url === '/api/story/map-geo') {
         const body = await readJsonBody<{ campaign: Campaign }>(req);
         const result = await generateMapGeocode(apiKey, body.campaign);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/org-recruits') {
+        const body = await readJsonBody<{ campaign: Campaign }>(req);
+        const result = await generateOrgRecruits(apiKey, body.campaign);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/org-ops') {
+        const body = await readJsonBody<{ campaign: Campaign }>(req);
+        const result = await generateOrgOperations(apiKey, body.campaign);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/org-report') {
+        const body = await readJsonBody<{
+          campaign: Campaign;
+          operation: OrgOperation;
+          outcomeGrade: OrgOperationOutcomeGrade;
+          rollSummary: string;
+          squadNames: string[];
+          vehicleName?: string;
+          injuredName?: string;
+          capturedName?: string;
+        }>(req);
+        const result = await generateOrgOperationReport(apiKey, body);
         sendJson(res, 200, result);
         return;
       }

@@ -445,6 +445,16 @@ export function WorldMapModal({
                     Você está aqui
                   </span>
                 ) : null}
+                {campaign.organization?.outposts.some(
+                  (o) =>
+                    o.locationId === selectedLocation.id ||
+                    o.locationName.toLowerCase() ===
+                      selectedLocation.name.toLowerCase(),
+                ) ? (
+                  <span className="rounded-full border border-[#fbbf24]/45 bg-[#fbbf24]/15 px-2 py-0.5 text-[10px] font-semibold text-[#fbbf24]">
+                    ⚑ Posto · {campaign.organization.name}
+                  </span>
+                ) : null}
                 {selectedLocation.region ? (
                   <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]">
                     {selectedLocation.region}

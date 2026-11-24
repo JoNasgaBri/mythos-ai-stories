@@ -5,6 +5,7 @@ import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
+import { OrganizationModal } from './components/OrganizationModal';
 import { ProtagonistEditModal } from './components/ProtagonistEditModal';
 import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
@@ -25,6 +26,18 @@ import {
   evaluateStorytellerTrigger,
   pickStorytellerCategory,
 } from './engine/eventDirector';
+import {
+  advanceOrgOperations,
+  computeOrgTierFromRenown,
+  createStarterOperationsForCampaign,
+  createStarterRecruitsForCampaign,
+  estimateOperationSuccess,
+  FACTION_TREATY_META,
+  ORG_DIVISION_META,
+  ORG_OUTPOST_SPECIALTY_META,
+  processDailyOrgUpkeep,
+  resolveOperationDeterministically,
+} from './engine/orgSystem';
 import {
   detectOpposedNpc,
   evaluateOpposedContest,
@@ -71,6 +84,9 @@ import {
   requestLivingWorldPulse,
   requestMapGeocode,
   requestNpcPortrait,
+  requestOrgOperationReport,
+  requestOrgOperations,
+  requestOrgRecruits,
   requestPortraitIllustration,
   requestSceneIllustration,
   requestSceneSpeech,
@@ -107,11 +123,20 @@ import type {
   CraftResponse,
   DiceRollResult,
   DifficultyId,
+  FactionRecord,
+  FactionTreaty,
   InventoryItem,
   ItemStorageLocation,
   JournalEntry,
   LocationRecord,
   NpcRecord,
+  OrganizationArchetype,
+  OrganizationState,
+  OrgDivisionId,
+  OrgOperation,
+  OrgOutpostSpecialty,
+  OrgPolicies,
+  OrgRecruitCandidate,
   PlayerState,
   SaveSlot,
   StateDelta,
@@ -191,6 +216,17 @@ export function App() {
   const [baseBlueprintOpen, setBaseBlueprintOpen] = useState(false);
   const [relationshipsOpen, setRelationshipsOpen] = useState(false);
   const [relationshipsFocusNpcId, setRelationshipsFocusNpcId] = useState<string | null>(null);
+  const [organizationOpen, setOrganizationOpen] = useState(false);
+  const [isLoadingOrgRecruits, setIsLoadingOrgRecruits] = useState(false);
+  const [isLoadingOrgOps, setIsLoadingOrgOps] = useState(false);
+  const [resolvingOrgOpId, setResolvingOrgOpId] = useState<string | null>(null);
+  const [lastOrgReportBanner, setLastOrgReportBanner] = useState<{
+    opTitle: string;
+    grade: string;
+    rollSummary: string;
+    narrativeReport: string;
+    squadQuote?: { speaker: string; text: string };
+  } | null>(null);
   const [rumorsOpen, setRumorsOpen] = useState(false);
   const [isFetchingRumors, setIsFetchingRumors] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
@@ -1355,7 +1391,122 @@ export function App() {
         nextStronghold = { ...nextStronghold, vehicles: currentVehicles };
       }
 
-      const nextStatus = evaluateStatus(nextPlayer.vigor, nextPlayer.tension);
+      // MYTHOS 9.0 — Organization progression, squad operation timers & daily upkeep
+      let nextOrganization = optimisticCampaign.organization;
+      let finalPlayer = nextPlayer;
+      let finalCodex = nextCodex;
+      const readyOrgOpTitles: string[] = [];
+
+      if (nextOrganization) {
+        const adv = advanceOrgOperations(
+          nextOrganization,
+          Math.max(0.25, minutesElapsed / 60),
+          1,
+        );
+        nextOrganization = adv.nextOrg;
+        readyOrgOpTitles.push(...adv.newlyReadyTitles);
+
+        // Apply optional narrative org stateChanges from Gemini
+        const sc = response.stateChanges;
+        if (
+          typeof sc?.orgMoraleDelta === 'number' ||
+          typeof sc?.orgHeatDelta === 'number' ||
+          typeof sc?.orgRenownGain === 'number'
+        ) {
+          const nextRenown = Math.max(
+            0,
+            nextOrganization.renown + Math.round(sc.orgRenownGain ?? 0),
+          );
+          const { tier } = computeOrgTierFromRenown(nextRenown);
+          nextOrganization = {
+            ...nextOrganization,
+            renown: nextRenown,
+            tier,
+            morale: Math.max(
+              0,
+              Math.min(
+                100,
+                nextOrganization.morale + Math.round(sc.orgMoraleDelta ?? 0),
+              ),
+            ),
+            heat: Math.max(
+              0,
+              Math.min(
+                100,
+                nextOrganization.heat + Math.round(sc.orgHeatDelta ?? 0),
+              ),
+            ),
+          };
+        }
+
+        if (sc?.recruitNpcToOrg?.name?.trim()) {
+          const targetLower = sc.recruitNpcToOrg.name.trim().toLowerCase();
+          finalCodex = {
+            ...finalCodex,
+            npcs: finalCodex.npcs.map((n) =>
+              n.name.toLowerCase() === targetLower
+                ? {
+                    ...n,
+                    orgMember: true,
+                    orgRank: sc.recruitNpcToOrg?.rank ?? n.orgRank ?? 'member',
+                    orgDivision:
+                      sc.recruitNpcToOrg?.division ?? n.orgDivision ?? 'reserve',
+                    orgDuty: n.inParty ? ('in_party' as const) : ('available' as const),
+                    dailyWage: sc.recruitNpcToOrg?.dailyWage ?? n.dailyWage ?? 0,
+                  }
+                : n,
+            ),
+          };
+          extraDeltas.push({
+            kind: 'faction',
+            label: `${sc.recruitNpcToOrg.name.trim()} entrou na organização`,
+            positive: true,
+          });
+        }
+
+        // Daily Organization Upkeep when the world clock turns to a new day
+        if (nextClock.day > (nextOrganization.lastUpkeepDay ?? 1)) {
+          const baseSupplies =
+            nextStronghold.supplies ??
+            defaultBaseSuppliesForTheme(optimisticCampaign.world.primaryTheme);
+          const upkeep = processDailyOrgUpkeep(
+            nextOrganization,
+            finalCodex.npcs,
+            baseSupplies,
+            finalPlayer.currency?.amount ?? 0,
+            finalCodex.factions,
+            nextClock.day,
+            nextTurn,
+          );
+          nextOrganization = upkeep.nextOrg;
+          finalCodex = { ...finalCodex, npcs: upkeep.nextNpcs };
+          nextStronghold = { ...nextStronghold, supplies: upkeep.nextSupplies };
+          finalPlayer = {
+            ...finalPlayer,
+            currency: {
+              ...finalPlayer.currency,
+              amount: upkeep.nextCurrencyAmount,
+            },
+          };
+          extraDeltas.push({
+            kind: upkeep.shortageWarning ? 'crisis' : 'base',
+            label: upkeep.shortageWarning
+              ? `Organização: ${upkeep.shortageWarning}`
+              : `Balanço Dia ${nextClock.day} (${nextOrganization.name})`,
+            positive: !upkeep.shortageWarning,
+          });
+        }
+
+        for (const opTitle of readyOrgOpTitles) {
+          extraDeltas.push({
+            kind: 'quest',
+            label: `Esquadrão retornou: ${opTitle}`,
+            positive: true,
+          });
+        }
+      }
+
+      const nextStatus = evaluateStatus(finalPlayer.vigor, finalPlayer.tension);
       const nextActions = toTacticalActions(response.actions);
       const allDeltas: StateDelta[] = [
         ...playerDeltas,
@@ -1400,8 +1551,9 @@ export function App() {
         currentMood: response.mood || optimisticCampaign.currentMood,
         worldClock: nextClock,
         stronghold: nextStronghold,
-        player: nextPlayer,
-        codex: nextCodex,
+        organization: nextOrganization,
+        player: finalPlayer,
+        codex: finalCodex,
         status: nextStatus,
         actions: nextActions,
         entries: [...optimisticCampaign.entries, narratorEntry],
@@ -2825,6 +2977,807 @@ export function App() {
     pushToast('base', `Construído no Refúgio: ${builtUpgrade.name}`);
   };
 
+  /* ============================================================================
+   * MYTHOS 9.0 — Organization / Guild / Mercenaries / Squads Handlers
+   * ============================================================================ */
+
+  const handleFoundOrganization = (payload: {
+    name: string;
+    motto: string;
+    archetype: OrganizationArchetype;
+    founderNpcIds: string[];
+  }) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+
+    const currentDay = camp.worldClock?.day ?? 1;
+    const starterOps = createStarterOperationsForCampaign(camp);
+    const starterRecruits = createStarterRecruitsForCampaign(camp);
+    const initialMorale = payload.archetype === 'community' ? 80 : 70;
+
+    const newOrg: OrganizationState = {
+      name: payload.name,
+      motto: payload.motto,
+      archetype: payload.archetype,
+      foundedTurn: camp.turnCount,
+      renown: 20,
+      tier: 1,
+      morale: initialMorale,
+      heat: 8,
+      policies: {
+        rations: 'standard',
+        conduct: 'pragmatic',
+        recruitment: payload.archetype === 'mercenary' ? 'contract' : 'selective',
+      },
+      outposts: [],
+      operations: starterOps,
+      recruitPool: starterRecruits,
+      lastUpkeepDay: currentDay,
+      historyLog: [
+        {
+          id: `org_found_${Date.now()}`,
+          day: currentDay,
+          turn: camp.turnCount,
+          kind: 'founded',
+          text: `${payload.name} foi fundada (${payload.founderNpcIds.length} fundadores).`,
+        },
+      ],
+    };
+
+    const founderSet = new Set(payload.founderNpcIds);
+    const nextNpcs = camp.codex.npcs.map((n) => {
+      if (!founderSet.has(n.id)) return n;
+      const autoDiv: OrgDivisionId =
+        n.assistAttribute === 'str' || n.assistAttribute === 'con'
+          ? 'security'
+          : n.assistAttribute === 'int'
+            ? 'logistics'
+            : n.assistAttribute === 'cha'
+              ? 'diplomacy'
+              : 'intel';
+      return {
+        ...n,
+        orgMember: true,
+        orgRank: (n.inParty ? 'lieutenant' : 'member') as NpcRecord['orgRank'],
+        orgDivision: autoDiv,
+        orgDuty: (n.inParty ? 'in_party' : 'available') as NpcRecord['orgDuty'],
+        dailyWage: n.dailyWage ?? 0,
+      };
+    });
+
+    const sysEntry: StoryEntry = {
+      id: `entry_org_found_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: `👑 Organização fundada: ${payload.name} — “${payload.motto}”.`,
+      timestamp: Date.now(),
+    };
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      organization: newOrg,
+      codex: {
+        ...camp.codex,
+        npcs: nextNpcs,
+        canonFacts: [
+          ...camp.codex.canonFacts,
+          {
+            id: `fact_org_${Date.now()}`,
+            text: `${camp.player.name} fundou a organização "${payload.name}" (${payload.motto}).`,
+            turn: camp.turnCount,
+            pinned: true,
+          },
+        ],
+      },
+      entries: [...camp.entries, sysEntry],
+    });
+    pushToast('faction', `Organização fundada: ${payload.name}!`);
+  };
+
+  const handleUpdateOrgPolicies = (patch: Partial<OrgPolicies>) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      organization: {
+        ...camp.organization,
+        policies: { ...camp.organization.policies, ...patch },
+      },
+    });
+    pushToast('info', 'Leis internas da organização atualizadas.');
+  };
+
+  const handleAssignOrgDivision = (npcId: string, division: OrgDivisionId) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const target = camp.codex.npcs.find((n) => n.id === npcId);
+    if (!target) return;
+
+    persistActiveCampaign({
+      ...camp,
+      codex: {
+        ...camp.codex,
+        npcs: camp.codex.npcs.map((n) =>
+          n.id === npcId ? { ...n, orgDivision: division } : n,
+        ),
+      },
+    });
+    pushToast('info', `${target.name} alocado(a) em ${ORG_DIVISION_META[division].short}.`);
+  };
+
+  const handleInviteNpcToOrg = (npcId: string, division: OrgDivisionId) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const target = camp.codex.npcs.find((n) => n.id === npcId);
+    if (!target) return;
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      codex: {
+        ...camp.codex,
+        npcs: camp.codex.npcs.map((n) =>
+          n.id === npcId
+            ? {
+                ...n,
+                orgMember: true,
+                orgRank: n.inParty ? ('lieutenant' as const) : ('member' as const),
+                orgDivision: division,
+                orgDuty: n.inParty ? ('in_party' as const) : ('available' as const),
+                dailyWage: n.dailyWage ?? 0,
+              }
+            : n,
+        ),
+      },
+      organization: {
+        ...camp.organization,
+        historyLog: [
+          {
+            id: `org_inv_${Date.now()}`,
+            day: camp.worldClock?.day ?? 1,
+            turn: camp.turnCount,
+            kind: 'recruit' as const,
+            text: `${target.name} juntou-se à organização (${ORG_DIVISION_META[division].short}).`,
+          },
+          ...camp.organization.historyLog,
+        ].slice(0, 24),
+      },
+    });
+    pushToast('npc', `${target.name} entrou para ${camp.organization.name}!`);
+  };
+
+  const handleDismissOrgMember = (npcId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const target = camp.codex.npcs.find((n) => n.id === npcId);
+    if (!target) return;
+
+    persistActiveCampaign({
+      ...camp,
+      codex: {
+        ...camp.codex,
+        npcs: camp.codex.npcs.map((n) =>
+          n.id === npcId
+            ? { ...n, orgMember: false, orgDuty: undefined, orgDivision: undefined }
+            : n,
+        ),
+      },
+    });
+    pushToast('info', `${target.name} foi dispensado(a) da organização.`);
+  };
+
+  const handleRefreshOrgRecruits = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization || isLoadingOrgRecruits) return;
+    setIsLoadingOrgRecruits(true);
+    try {
+      const res = await requestOrgRecruits(camp, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest?.organization || latest.id !== camp.id) return;
+      const now = Date.now();
+      const pool: OrgRecruitCandidate[] = res.candidates.map((c, idx) => ({
+        ...c,
+        id: `rec_${now}_${idx}`,
+      }));
+      persistActiveCampaign({
+        ...latest,
+        organization: {
+          ...latest.organization,
+          recruitPool: pool,
+        },
+      });
+      pushToast('npc', `${pool.length} novos candidatos disponíveis para recrutamento!`);
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao buscar candidatos.',
+      );
+    } finally {
+      setIsLoadingOrgRecruits(false);
+    }
+  };
+
+  const handleHireOrgCandidate = (candidate: OrgRecruitCandidate) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const cost =
+      camp.organization.policies.recruitment === 'open'
+        ? Math.round(candidate.hireCost * 0.75)
+        : candidate.hireCost;
+    const currentAmount = camp.player.currency?.amount ?? 0;
+    if (currentAmount < cost) {
+      pushToast('error', `Recursos insuficientes (${cost} ${camp.player.currency?.label ?? 'Ouro'}).`);
+      return;
+    }
+
+    const maxHp = computeMaxVigor(1, candidate.attributes.con, 0);
+    const newNpc: NpcRecord = {
+      id: `npc_merc_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      name: candidate.name,
+      role: candidate.role,
+      stance: 'ally',
+      status: 'alive',
+      affinity: 25,
+      relationship: 'friend',
+      inParty: false,
+      assistAttribute: ORG_DIVISION_META[candidate.recommendedDivision].primaryAttr,
+      assistSpecialty: candidate.role,
+      age: candidate.age,
+      height: candidate.height,
+      personality: candidate.personality,
+      currentMood: 'Pronto para o serviço',
+      level: Math.max(1, Math.min(camp.player.level, 5)),
+      vigor: maxHp,
+      maxVigor: maxHp,
+      attributes: candidate.attributes,
+      skills: candidate.skills,
+      traits: candidate.traits,
+      likes: [],
+      dislikes: [],
+      bondMemories: [
+        {
+          turn: camp.turnCount,
+          text: `Recrutado(a) para ${camp.organization.name}.`,
+          approved: true,
+        },
+      ],
+      orgMember: true,
+      orgRank: candidate.dailyWage > 0 ? 'hired_merc' : 'specialist',
+      orgDivision: candidate.recommendedDivision,
+      orgDuty: 'available',
+      dailyWage: candidate.dailyWage,
+      hiddenFlaw: candidate.visibleFlaw,
+      lastSeenLocation: camp.currentLocation,
+      notes: candidate.pitch,
+      firstMetTurn: camp.turnCount,
+    };
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        currency: {
+          ...camp.player.currency,
+          amount: Math.max(0, currentAmount - cost),
+        },
+      },
+      codex: {
+        ...camp.codex,
+        npcs: [newNpc, ...camp.codex.npcs],
+      },
+      organization: {
+        ...camp.organization,
+        recruitPool: camp.organization.recruitPool.filter(
+          (c) => c.id !== candidate.id,
+        ),
+        historyLog: [
+          {
+            id: `org_hire_${Date.now()}`,
+            day: camp.worldClock?.day ?? 1,
+            turn: camp.turnCount,
+            kind: 'recruit' as const,
+            text: `Recrutado(a): ${candidate.name} (${candidate.role}) por ${cost} ${camp.player.currency?.label ?? 'Ouro'}.`,
+          },
+          ...camp.organization.historyLog,
+        ].slice(0, 24),
+      },
+    });
+    pushToast('npc', `${candidate.name} recrutado(a) para ${camp.organization.name}!`);
+  };
+
+  const handleRefreshOrgOperations = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization || isLoadingOrgOps) return;
+    setIsLoadingOrgOps(true);
+    try {
+      const res = await requestOrgOperations(camp, settings, apiHealth);
+      const latest = activeCampaignRef.current;
+      if (!latest?.organization || latest.id !== camp.id) return;
+      const now = Date.now();
+      const preserved = latest.organization.operations.filter(
+        (o) =>
+          o.status === 'active' ||
+          o.status === 'ready_to_claim' ||
+          o.kind === 'rescue',
+      );
+      const fresh: OrgOperation[] = res.operations.map((o, idx) => ({
+        ...o,
+        id: `op_${now}_${idx}`,
+        status: 'available',
+      }));
+      persistActiveCampaign({
+        ...latest,
+        organization: {
+          ...latest.organization,
+          operations: [...preserved, ...fresh],
+        },
+      });
+      pushToast('quest', `${fresh.length} novas operações disponíveis no Quadro!`);
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao gerar contratos.',
+      );
+    } finally {
+      setIsLoadingOrgOps(false);
+    }
+  };
+
+  const handleDispatchOrgSquad = (
+    opId: string,
+    npcIds: string[],
+    vehicleId?: string,
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization || npcIds.length === 0) return;
+    const op = camp.organization.operations.find((o) => o.id === opId);
+    if (!op) return;
+
+    const squadNpcs = camp.codex.npcs.filter((n) => npcIds.includes(n.id));
+    const vehicle = (camp.stronghold?.vehicles ?? []).find(
+      (v) => v.id === vehicleId,
+    );
+    const est = estimateOperationSuccess(
+      op,
+      camp.organization,
+      squadNpcs,
+      vehicle,
+      camp.codex.factions,
+    );
+
+    const npcSet = new Set(npcIds);
+    const nextNpcs = camp.codex.npcs.map((n) =>
+      npcSet.has(n.id)
+        ? { ...n, orgDuty: 'on_mission' as const, inParty: false }
+        : n,
+    );
+
+    const nextVehicles = (camp.stronghold?.vehicles ?? []).map((v) =>
+      v.id === vehicleId
+        ? { ...v, fuel: Math.max(0, v.fuel - 15) }
+        : v,
+    );
+
+    const nextOps = camp.organization.operations.map((o) =>
+      o.id === opId
+        ? {
+            ...o,
+            status: 'active' as const,
+            assignedNpcIds: npcIds,
+            assignedVehicleId: vehicleId,
+            hoursRemaining: est.effectiveHours,
+            turnsRemaining: est.effectiveTurns,
+            startedTurn: camp.turnCount,
+          }
+        : o,
+    );
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      codex: { ...camp.codex, npcs: nextNpcs },
+      stronghold: camp.stronghold
+        ? { ...camp.stronghold, vehicles: nextVehicles }
+        : camp.stronghold,
+      organization: {
+        ...camp.organization,
+        operations: nextOps,
+        historyLog: [
+          {
+            id: `org_disp_${Date.now()}`,
+            day: camp.worldClock?.day ?? 1,
+            turn: camp.turnCount,
+            kind: 'operation' as const,
+            text: `Esquadrão (${squadNpcs.map((n) => n.name).join(', ')}) despachado para "${op.title}".`,
+          },
+          ...camp.organization.historyLog,
+        ].slice(0, 24),
+      },
+    });
+    pushToast(
+      'quest',
+      `Esquadrão despachado para ${op.targetLocationName} (${est.effectiveHours}h / ${est.effectiveTurns}t)!`,
+    );
+  };
+
+  const handleResolveOrgOperation = async (opId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization || resolvingOrgOpId) return;
+    const op = camp.organization.operations.find((o) => o.id === opId);
+    if (!op) return;
+
+    setResolvingOrgOpId(opId);
+    try {
+      const squadIds = op.assignedNpcIds ?? [];
+      const squadNpcs = camp.codex.npcs.filter((n) => squadIds.includes(n.id));
+      const vehicle = (camp.stronghold?.vehicles ?? []).find(
+        (v) => v.id === op.assignedVehicleId,
+      );
+
+      const det = resolveOperationDeterministically(
+        op,
+        camp.organization,
+        squadNpcs,
+        vehicle,
+        camp.codex.factions,
+      );
+
+      const injuredNpc = squadNpcs.find((n) => n.id === det.injuredNpcId);
+      const capturedNpc = squadNpcs.find((n) => n.id === det.capturedNpcId);
+
+      const report = await requestOrgOperationReport(
+        camp,
+        {
+          operation: op,
+          outcomeGrade: det.grade,
+          rollSummary: det.rollSummary,
+          squadNames: squadNpcs.map((n) => n.name),
+          vehicleName: vehicle?.name,
+          injuredName: injuredNpc?.name,
+          capturedName: capturedNpc?.name,
+        },
+        settings,
+        apiHealth,
+      );
+
+      const latest = activeCampaignRef.current;
+      if (!latest?.organization || latest.id !== camp.id) return;
+
+      const squadSet = new Set(squadIds);
+      const nextNpcs = latest.codex.npcs.map((n) => {
+        if (det.rescuedNpcId && n.id === det.rescuedNpcId) {
+          return {
+            ...n,
+            orgDuty: 'available' as const,
+            injuryNote: undefined,
+            recoveryHoursLeft: 0,
+            affinity: Math.min(100, (n.affinity ?? 0) + 18),
+          };
+        }
+        if (!squadSet.has(n.id)) return n;
+        if (det.capturedNpcId === n.id) {
+          return { ...n, orgDuty: 'captured' as const };
+        }
+        if (det.injuredNpcId === n.id) {
+          return {
+            ...n,
+            orgDuty: 'injured' as const,
+            injuryNote: det.injuryNote,
+            recoveryHoursLeft: 24,
+            vigor: Math.max(25, Math.round((n.maxVigor ?? 100) * 0.45)),
+          };
+        }
+        const levelUp = det.grade === 'critical' && (n.level ?? 1) < MAX_LEVEL;
+        return {
+          ...n,
+          orgDuty: 'available' as const,
+          level: levelUp ? (n.level ?? 1) + 1 : n.level,
+        };
+      });
+
+      const stronghold =
+        latest.stronghold ??
+        defaultStrongholdForTheme(
+          latest.world.primaryTheme,
+          latest.currentLocation,
+          latest.language,
+        );
+      const nextSupplies = {
+        ...(stronghold.supplies ??
+          defaultBaseSuppliesForTheme(latest.world.primaryTheme)),
+      };
+      for (const k of SUPPLY_KEYS) {
+        const d = det.supplyDeltas[k];
+        if (typeof d === 'number' && d > 0) {
+          nextSupplies[k] = (nextSupplies[k] ?? 0) + d;
+        }
+      }
+
+      const nextRenown = latest.organization.renown + det.renownGain;
+      const { tier: nextTier } = computeOrgTierFromRenown(nextRenown);
+      const nextMorale = Math.max(
+        0,
+        Math.min(100, latest.organization.morale + det.moraleDelta),
+      );
+      const nextHeat = Math.max(
+        0,
+        Math.min(100, latest.organization.heat + det.heatDelta),
+      );
+
+      let nextOps = latest.organization.operations.map((o) =>
+        o.id === opId
+          ? {
+              ...o,
+              status:
+                det.grade === 'disaster'
+                  ? ('failed' as const)
+                  : ('completed' as const),
+              outcomeGrade: det.grade,
+              outcomeRollSummary: det.rollSummary,
+              outcomeLog: report.narrativeReport,
+            }
+          : o,
+      );
+      if (det.spawnRescueOp) {
+        nextOps = [det.spawnRescueOp, ...nextOps];
+      }
+
+      const nextFacts = report.canonFact
+        ? [
+            ...latest.codex.canonFacts,
+            {
+              id: `fact_op_${Date.now()}`,
+              text: report.canonFact,
+              turn: latest.turnCount,
+            },
+          ]
+        : latest.codex.canonFacts;
+
+      const sysEntry: StoryEntry = {
+        id: `entry_op_res_${Date.now()}`,
+        role: 'system',
+        turn: latest.turnCount,
+        text: `📋 Relatório de Esquadrão (${op.title}): ${det.rollSummary}${det.currencyDelta > 0 ? ` · +${det.currencyDelta} ${latest.player.currency?.label ?? 'Ouro'}` : ''} · +${det.renownGain} Renome.`,
+        timestamp: Date.now(),
+      };
+
+      persistActiveCampaign({
+        ...latest,
+        interactionId: undefined,
+        player: {
+          ...latest.player,
+          currency: {
+            ...latest.player.currency,
+            amount: (latest.player.currency?.amount ?? 0) + det.currencyDelta,
+          },
+        },
+        stronghold: {
+          ...stronghold,
+          supplies: nextSupplies,
+        },
+        codex: {
+          ...latest.codex,
+          npcs: nextNpcs,
+          canonFacts: nextFacts,
+        },
+        organization: {
+          ...latest.organization,
+          renown: nextRenown,
+          tier: nextTier,
+          morale: nextMorale,
+          heat: nextHeat,
+          operations: nextOps,
+          historyLog: [
+            {
+              id: `org_rep_${Date.now()}`,
+              day: latest.worldClock?.day ?? 1,
+              turn: latest.turnCount,
+              kind: 'operation' as const,
+              text: `${op.title}: ${det.rollSummary}.`,
+            },
+            ...latest.organization.historyLog,
+          ].slice(0, 24),
+        },
+        entries: [...latest.entries, sysEntry],
+      });
+
+      setLastOrgReportBanner({
+        opTitle: op.title,
+        grade: det.grade,
+        rollSummary: det.rollSummary,
+        narrativeReport: report.narrativeReport,
+        squadQuote: report.squadQuote,
+      });
+
+      if (det.spawnRescueOp) {
+        pushToast('crisis', `⚠ ${capturedNpc?.name} foi capturado(a)! Missão de Resgate aberta!`);
+      } else {
+        pushToast('quest', `Operação resolvida: ${op.title} (+${det.renownGain} Renome)`);
+      }
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao gerar relatório da operação.',
+      );
+    } finally {
+      setResolvingOrgOpId(null);
+    }
+  };
+
+  const handlePlayOrgOperationInChat = (op: OrgOperation) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    persistActiveCampaign({
+      ...camp,
+      organization: {
+        ...camp.organization,
+        operations: camp.organization.operations.filter((o) => o.id !== op.id),
+      },
+    });
+    void handleSendAction(
+      `Assumo pessoalmente a liderança da operação "${op.title}" em ${op.targetLocationName} pela nossa organização (${camp.organization.name}): ${op.briefing}`,
+      op.kind === 'diplomacy'
+        ? 'diplomatic'
+        : op.kind === 'recon'
+          ? 'stealth'
+          : 'bold',
+      op.difficulty === 'low' ? 'low' : 'medium',
+      false,
+      false,
+      op.recommendedAttributes[0] ?? 'wis',
+    );
+  };
+
+  const handleClaimOrgOutpost = (
+    loc: LocationRecord,
+    specialty: OrgOutpostSpecialty,
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const specMeta = ORG_OUTPOST_SPECIALTY_META[specialty];
+    const stronghold =
+      camp.stronghold ??
+      defaultStrongholdForTheme(
+        camp.world.primaryTheme,
+        camp.currentLocation,
+        camp.language,
+      );
+    const curSupplies =
+      stronghold.supplies ?? defaultBaseSuppliesForTheme(camp.world.primaryTheme);
+    const curCurrency = camp.player.currency?.amount ?? 0;
+
+    if (
+      curSupplies.materials < specMeta.claimCostMaterials ||
+      curCurrency < specMeta.claimCostCurrency
+    ) {
+      pushToast('error', 'Materiais ou recursos insuficientes para reivindicar este posto.');
+      return;
+    }
+
+    const newOutpost = {
+      id: `outpost_${Date.now()}`,
+      locationId: loc.id,
+      locationName: loc.name,
+      specialty,
+      dailyYield: specMeta.baseYield,
+      defenseBonus: 6,
+      garrisonNpcIds: [],
+      establishedTurn: camp.turnCount,
+    };
+
+    const nextRenown = camp.organization.renown + 25;
+    const { tier } = computeOrgTierFromRenown(nextRenown);
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        currency: {
+          ...camp.player.currency,
+          amount: Math.max(0, curCurrency - specMeta.claimCostCurrency),
+        },
+      },
+      stronghold: {
+        ...stronghold,
+        supplies: {
+          ...curSupplies,
+          materials: Math.max(0, curSupplies.materials - specMeta.claimCostMaterials),
+        },
+      },
+      organization: {
+        ...camp.organization,
+        renown: nextRenown,
+        tier,
+        outposts: [...camp.organization.outposts, newOutpost],
+        historyLog: [
+          {
+            id: `org_out_${Date.now()}`,
+            day: camp.worldClock?.day ?? 1,
+            turn: camp.turnCount,
+            kind: 'outpost' as const,
+            text: `Posto Avançado estabelecido em ${loc.name} (${specMeta.label}).`,
+          },
+          ...camp.organization.historyLog,
+        ].slice(0, 24),
+      },
+    });
+    pushToast('location', `Posto Avançado reivindicado: ${loc.name}!`);
+  };
+
+  const handleReleaseOrgOutpost = (outpostId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    persistActiveCampaign({
+      ...camp,
+      organization: {
+        ...camp.organization,
+        outposts: camp.organization.outposts.filter((o) => o.id !== outpostId),
+      },
+    });
+    pushToast('info', 'Posto avançado desmobilizado.');
+  };
+
+  const handleSetFactionTreaty = (factionId: string, treaty: FactionTreaty) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.organization) return;
+    const fac = camp.codex.factions.find((f) => f.id === factionId);
+    if (!fac) return;
+
+    const nextStanding =
+      treaty === 'alliance'
+        ? ('allied' as const)
+        : treaty === 'war'
+          ? ('hostile' as const)
+          : fac.standing;
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      codex: {
+        ...camp.codex,
+        factions: camp.codex.factions.map((f) =>
+          f.id === factionId ? { ...f, treaty, standing: nextStanding } : f,
+        ),
+      },
+      organization: {
+        ...camp.organization,
+        heat:
+          treaty === 'war'
+            ? Math.min(100, camp.organization.heat + 12)
+            : camp.organization.heat,
+        historyLog: [
+          {
+            id: `org_dip_${Date.now()}`,
+            day: camp.worldClock?.day ?? 1,
+            turn: camp.turnCount,
+            kind: 'diplomacy' as const,
+            text: `${fac.name}: status diplomático alterado para ${FACTION_TREATY_META[treaty].label}.`,
+          },
+          ...camp.organization.historyLog,
+        ].slice(0, 24),
+      },
+    });
+    pushToast('faction', `${fac.name}: ${FACTION_TREATY_META[treaty].label}`);
+  };
+
+  const handleNegotiateFactionInChat = (faction: FactionRecord) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const orgPart = camp.organization ? ` em nome de ${camp.organization.name}` : '';
+    void handleSendAction(
+      `Busco contato diplomático com representantes de ${faction.name}${orgPart} para negociar um acordo ou aliviar tensões na região.`,
+      'diplomatic',
+      'low',
+      false,
+      false,
+      'cha',
+    );
+  };
+
   const handleUpdateClock = (nextClock: WorldClock, toastMessage?: string) => {
     const camp = activeCampaignRef.current;
     if (!camp) return;
@@ -3565,6 +4518,7 @@ export function App() {
           onGenerateNpcPortrait={(npcId) => void handleGenerateNpcPortrait(npcId)}
           onBuildStrongholdUpgrade={handleBuildStrongholdUpgrade}
           onOpenWorldMap={() => setWorldMapOpen(true)}
+          onOpenOrganization={() => setOrganizationOpen(true)}
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
           onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
           onOpenRelationships={(npcId) => openRelationships(npcId)}
@@ -3708,6 +4662,33 @@ export function App() {
             onGiftItemToNpc={handleGiftItemToNpc}
             onTalkToNpc={(npc) => setQueuedSayNpc(npc)}
             onSpendQualityTime={handleSpendQualityTime}
+          />
+          <OrganizationModal
+            open={organizationOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            isBusy={isBusy}
+            isLoadingRecruits={isLoadingOrgRecruits}
+            isLoadingOps={isLoadingOrgOps}
+            resolvingOpId={resolvingOrgOpId}
+            lastReportBanner={lastOrgReportBanner}
+            onClearReportBanner={() => setLastOrgReportBanner(null)}
+            onClose={() => setOrganizationOpen(false)}
+            onFoundOrganization={handleFoundOrganization}
+            onUpdatePolicies={handleUpdateOrgPolicies}
+            onAssignDivision={handleAssignOrgDivision}
+            onInviteNpc={handleInviteNpcToOrg}
+            onDismissMember={handleDismissOrgMember}
+            onRefreshRecruits={() => void handleRefreshOrgRecruits()}
+            onHireCandidate={handleHireOrgCandidate}
+            onRefreshOperations={() => void handleRefreshOrgOperations()}
+            onDispatchSquad={handleDispatchOrgSquad}
+            onResolveOperation={(opId) => void handleResolveOrgOperation(opId)}
+            onPlayOperationInChat={handlePlayOrgOperationInChat}
+            onClaimOutpost={handleClaimOrgOutpost}
+            onReleaseOutpost={handleReleaseOrgOutpost}
+            onSetFactionTreaty={handleSetFactionTreaty}
+            onNegotiateFactionInChat={handleNegotiateFactionInChat}
           />
           <NewsRumorsModal
             open={rumorsOpen}
