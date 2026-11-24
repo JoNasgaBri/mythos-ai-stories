@@ -464,6 +464,55 @@ export interface WorldConfig {
   matureMode: boolean;
 }
 
+export type TimelineNodeKind =
+  | 'origin'
+  | 'turn'
+  | 'chapter'
+  | 'world_event'
+  | 'crisis'
+  | 'branch_root'
+  | 'manual_mark'
+  | 'ending';
+
+export interface TimelineBranchPoint {
+  id: string;
+  sagaId: string;
+  campaignId: string;
+  parentNodeId: string | null;
+  turn: number;
+  chapter: number;
+  arcNumber: number;
+  kind: TimelineNodeKind;
+  title: string;
+  choiceSummary?: string;
+  location: string;
+  vigor: number;
+  tension: number;
+  mood: string;
+  highlights: string[];
+  hasSnapshot: boolean;
+  createdAt: number;
+}
+
+export interface CampaignTimelineMeta {
+  sagaId: string;
+  branchName: string;
+  branchColor: string;
+  parentCampaignId?: string;
+  branchedFromNodeId?: string;
+  branchedFromTurn?: number;
+  nodes: TimelineBranchPoint[];
+}
+
+export interface TimelineSnapshotRecord {
+  nodeId: string;
+  sagaId: string;
+  campaignId: string;
+  turn: number;
+  createdAt: number;
+  snapshot: Campaign;
+}
+
 export interface Campaign {
   id: string;
   createdAt: number;
@@ -500,6 +549,7 @@ export interface Campaign {
     turn: number;
     chosenSummary: string;
   }>;
+  timeline?: CampaignTimelineMeta;
   engineUsed: 'gemini' | 'demo';
 }
 

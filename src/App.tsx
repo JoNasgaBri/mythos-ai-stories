@@ -5,9 +5,11 @@ import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
 import { DocsPortal } from './components/docs/DocsPortal';
+import { InteractiveTourOverlay } from './components/InteractiveTourOverlay';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
 import { OrganizationModal } from './components/OrganizationModal';
 import { ProtagonistEditModal } from './components/ProtagonistEditModal';
+import { PwaInstallBanner } from './components/PwaInstallBanner';
 import { QrSyncModal } from './components/QrSyncModal';
 import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
@@ -15,6 +17,7 @@ import { SanctuaryHome } from './components/SanctuaryHome';
 import { SaveSlotsDrawer } from './components/SaveSlotsDrawer';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { StoryStage } from './components/StoryStage';
+import { TimelineTreeModal } from './components/TimelineTreeModal';
 import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
 import { WeatherAtmosphere } from './components/WeatherAtmosphere';
@@ -23,7 +26,15 @@ import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
 import type { ZenRailMode } from './components/ZenLeftRail';
 import { createInstantDemoCampaign } from './data/presets';
+import type { TourStep } from './data/tourSteps';
+import { usePwaInstall } from './hooks/usePwaInstall';
 import { ambientAudio } from './engine/ambientAudio';
+import {
+  appendTimelineNode,
+  buildCleanTimelineSnapshot,
+  createBranchedCampaign,
+  ensureCampaignTimeline,
+} from './engine/timelineSystem';
 import {
   evaluateStorytellerTrigger,
   pickStorytellerCategory,
@@ -107,9 +118,12 @@ import {
   loadCampaignsAsync,
   loadSaveSlotsAsync,
   loadSettings,
+  loadTimelineSnapshotAsync,
   parseImportedCampaign,
+  pruneTimelineSnapshotsAsync,
   saveCampaignAsync,
   saveSettings,
+  saveTimelineSnapshotAsync,
 } from './storage/campaignStore';
 import type {
   ActionIntent,
@@ -145,6 +159,8 @@ import type {
   StoryEntry,
   SupplyType,
   TacticalAction,
+  TimelineBranchPoint,
+  TimelineNodeKind,
   ToastMessage,
   VehicleRecord,
   WorldClock,
@@ -259,6 +275,10 @@ export function App() {
   const [mobileRightHudOpen, setMobileRightHudOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savesOpen, setSavesOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
+  const pwa = usePwaInstall();
   const [qrSyncState, setQrSyncState] = useState<{
     open: boolean;
     mode: 'send' | 'receive';
@@ -336,22 +356,42 @@ export function App() {
     void fetchApiHealth().then(setApiHealth);
     void loadCampaignsAsync().then(setCampaigns);
 
-    // Auto-detect scanned QR sync link (?sync=CODIGO) on mobile or PC
+    // Auto-detect scanned QR sync link (?sync=CODIGO) or PWA shortcuts (?view=docs / ?action=receive-qr)
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const syncCode = params.get('sync')?.trim();
+      const viewParam = params.get('view')?.trim();
+      const actionParam = params.get('action')?.trim();
+      let cleaned = false;
+
       if (syncCode && syncCode.length >= 4) {
         params.delete('sync');
-        const nextUrl = `${window.location.pathname}${
-          params.toString() ? `?${params.toString()}` : ''
-        }${window.location.hash}`;
-        window.history.replaceState({}, '', nextUrl);
+        cleaned = true;
         setQrSyncState({
           open: true,
           mode: 'receive',
           campaign: null,
           receiveCode: syncCode.toUpperCase(),
         });
+      } else if (viewParam === 'docs') {
+        params.delete('view');
+        cleaned = true;
+        setView('docs');
+      } else if (actionParam === 'receive-qr') {
+        params.delete('action');
+        cleaned = true;
+        setQrSyncState({
+          open: true,
+          mode: 'receive',
+          campaign: null,
+        });
+      }
+
+      if (cleaned) {
+        const nextUrl = `${window.location.pathname}${
+          params.toString() ? `?${params.toString()}` : ''
+        }${window.location.hash}`;
+        window.history.replaceState({}, '', nextUrl);
       }
     }
   }, []);
@@ -800,7 +840,16 @@ export function App() {
     stopSpeechPlayback();
     setUndoStack([]);
     setLastTurnMeta(null);
-    const demo = createInstantDemoCampaign(settings.language);
+    const demo = ensureCampaignTimeline(
+      createInstantDemoCampaign(settings.language),
+    );
+    const originNode = demo.timeline?.nodes[0];
+    if (originNode) {
+      originNode.hasSnapshot = true;
+      void saveTimelineSnapshotAsync(
+        buildCleanTimelineSnapshot(demo, originNode.id),
+      );
+    }
     persistActiveCampaign(demo);
     setPreviewTheme(demo.world.primaryTheme);
     setPulseSecondsLeft(settings.livingWorldSeconds);
@@ -992,10 +1041,19 @@ export function App() {
       engineUsed: shouldUseGemini(settings, apiHealth) ? 'gemini' : 'demo',
     };
 
+    const seededFreeform = ensureCampaignTimeline(freeformCampaign);
+    const originNode = seededFreeform.timeline?.nodes[0];
+    if (originNode) {
+      originNode.hasSnapshot = true;
+      void saveTimelineSnapshotAsync(
+        buildCleanTimelineSnapshot(seededFreeform, originNode.id),
+      );
+    }
+
     stopSpeechPlayback();
     setUndoStack([]);
     setLastTurnMeta(null);
-    persistActiveCampaign(freeformCampaign);
+    persistActiveCampaign(seededFreeform);
     setPreviewTheme(theme);
     setPulseSecondsLeft(settings.livingWorldSeconds);
     setPulsePaused(false);
@@ -1032,6 +1090,168 @@ export function App() {
       }
     });
   };
+
+  const recordTimelineCheckpoint = useCallback(
+    (
+      camp: Campaign,
+      opts: {
+        kind?: TimelineNodeKind;
+        title: string;
+        choiceSummary?: string;
+        deltas?: StateDelta[];
+      },
+    ): Campaign => {
+      const { nextCampaign, node, keepSnapshotIds } = appendTimelineNode(camp, {
+        ...opts,
+        hasSnapshot: true,
+      });
+      const snapshotRecord = buildCleanTimelineSnapshot(nextCampaign, node.id);
+      void saveTimelineSnapshotAsync(snapshotRecord).then(() =>
+        pruneTimelineSnapshotsAsync(nextCampaign.id, keepSnapshotIds),
+      );
+      return nextCampaign;
+    },
+    [],
+  );
+
+  const handleBranchFromTimelineNode = async (params: {
+    sourceCampaignId: string;
+    node: TimelineBranchPoint;
+    branchName: string;
+    branchColor: string;
+  }) => {
+    const source =
+      (activeCampaignRef.current?.id === params.sourceCampaignId
+        ? activeCampaignRef.current
+        : campaigns.find((c) => c.id === params.sourceCampaignId)) ??
+      activeCampaignRef.current;
+    if (!source) return;
+
+    const snapRecord = params.node.hasSnapshot
+      ? await loadTimelineSnapshotAsync(params.node.id)
+      : null;
+
+    const { branchedCampaign, rootNode, usedExactSnapshot } =
+      createBranchedCampaign({
+        sourceCampaign: source,
+        targetNode: params.node,
+        exactSnapshot: snapRecord?.snapshot ?? null,
+        branchName: params.branchName,
+        branchColor: params.branchColor,
+      });
+
+    await saveTimelineSnapshotAsync(
+      buildCleanTimelineSnapshot(branchedCampaign, rootNode.id),
+    );
+    const updatedList = await saveCampaignAsync(branchedCampaign);
+    setCampaigns(updatedList);
+    handleOpenCampaign(branchedCampaign);
+    triggerChapterBanner(
+      'Nova Linha Temporal · E Se?',
+      branchedCampaign.timeline?.branchName || params.branchName,
+      usedExactSnapshot
+        ? `Ramificação exata a partir do Turno ${params.node.turn}`
+        : `Ramificação retroativa a partir do Turno ${params.node.turn}`,
+    );
+    pushToast(
+      'save',
+      `Linha temporal "${params.branchName}" criada! Original preservada.`,
+    );
+  };
+
+  const handleCreateManualTimelineMark = (label: string) => {
+    const current = activeCampaignRef.current;
+    if (!current) return;
+    const withMark = recordTimelineCheckpoint(current, {
+      kind: 'manual_mark',
+      title: label,
+      choiceSummary: `Marco manual salvo em ${current.currentLocation} (Turno ${current.turnCount})`,
+    });
+    persistActiveCampaign(withMark);
+    pushToast('save', `Marco salvo na Árvore: ${label}`);
+  };
+
+  const handleSwitchTimelineCampaign = (campaignId: string) => {
+    const target = campaigns.find((c) => c.id === campaignId);
+    if (!target) return;
+    handleOpenCampaign(target);
+    pushToast(
+      'info',
+      `Alternado para: ${target.timeline?.branchName || target.world.title}`,
+    );
+  };
+
+  const handleStartInteractiveTour = useCallback(() => {
+    setSettingsOpen(false);
+    setSavesOpen(false);
+    setTimelineOpen(false);
+    setMobileLeftRailOpen(false);
+    setMobileRightHudOpen(false);
+
+    if (activeCampaignRef.current) {
+      setFocusMode(false);
+      setLeftRailMode('compact');
+      setView('stage');
+      window.setTimeout(() => setTourOpen(true), 180);
+      return;
+    }
+
+    if (campaigns.length > 0) {
+      handleOpenCampaign(campaigns[0]);
+      setFocusMode(false);
+      setLeftRailMode('compact');
+      window.setTimeout(() => setTourOpen(true), 220);
+      return;
+    }
+
+    // Create a clean demo campaign so first-time visitors can learn on the real live stage
+    const demo = ensureCampaignTimeline(
+      createInstantDemoCampaign(settings.language),
+    );
+    const originNode = demo.timeline?.nodes[0];
+    if (originNode) {
+      originNode.hasSnapshot = true;
+      void saveTimelineSnapshotAsync(
+        buildCleanTimelineSnapshot(demo, originNode.id),
+      );
+    }
+    stopSpeechPlayback();
+    setUndoStack([]);
+    setLastTurnMeta(null);
+    persistActiveCampaign(demo);
+    setPreviewTheme(demo.world.primaryTheme);
+    setPulseSecondsLeft(settings.livingWorldSeconds);
+    setPulsePaused(false);
+    setFocusMode(false);
+    setLeftRailMode('compact');
+    setView('stage');
+    window.setTimeout(() => setTourOpen(true), 240);
+  }, [campaigns, settings.language, settings.difficulty, settings.livingWorldSeconds]);
+
+  const handlePrepareTourStep = useCallback((step: TourStep) => {
+    if (step.ensureMobileDrawer === 'close_all') {
+      setMobileLeftRailOpen(false);
+      setMobileRightHudOpen(false);
+    } else if (step.ensureMobileDrawer === 'open_left') {
+      setMobileRightHudOpen(false);
+      setMobileLeftRailOpen(true);
+    }
+  }, []);
+
+  const handleCloseTour = useCallback(
+    (completed: boolean) => {
+      setTourOpen(false);
+      try {
+        localStorage.setItem('mythos_tour_completed_v1', '1');
+      } catch {
+        // ignore
+      }
+      if (completed) {
+        pushToast('save', 'Tour concluído! Agora o mundo é todo seu.');
+      }
+    },
+    [pushToast],
+  );
 
   const triggerWorldEvent = async (opts?: {
     campaignOverride?: Campaign;
@@ -1587,24 +1807,31 @@ export function App() {
         timestamp: Date.now(),
       };
 
-      const completedCampaign: Campaign = {
-        ...optimisticCampaign,
-        world: worldIdentityPatch
-          ? { ...optimisticCampaign.world, ...worldIdentityPatch }
-          : optimisticCampaign.world,
-        currentLocation: resolvedLocation,
-        currentMood: response.mood || optimisticCampaign.currentMood,
-        worldClock: nextClock,
-        stronghold: nextStronghold,
-        organization: nextOrganization,
-        player: finalPlayer,
-        codex: finalCodex,
-        status: nextStatus,
-        actions: nextActions,
-        entries: [...optimisticCampaign.entries, narratorEntry],
-        interactionId: response.interactionId ?? optimisticCampaign.interactionId,
-        engineUsed: response.engineUsed,
-      };
+      const completedCampaign: Campaign = recordTimelineCheckpoint(
+        {
+          ...optimisticCampaign,
+          world: worldIdentityPatch
+            ? { ...optimisticCampaign.world, ...worldIdentityPatch }
+            : optimisticCampaign.world,
+          currentLocation: resolvedLocation,
+          currentMood: response.mood || optimisticCampaign.currentMood,
+          worldClock: nextClock,
+          stronghold: nextStronghold,
+          organization: nextOrganization,
+          player: finalPlayer,
+          codex: finalCodex,
+          status: nextStatus,
+          actions: nextActions,
+          entries: [...optimisticCampaign.entries, narratorEntry],
+          interactionId: response.interactionId ?? optimisticCampaign.interactionId,
+          engineUsed: response.engineUsed,
+        },
+        {
+          title: response.sceneTitle || `Turno ${nextTurn}`,
+          choiceSummary: cleanVisibleText,
+          deltas: allDeltas,
+        },
+      );
 
       persistActiveCampaign(completedCampaign);
 
@@ -4456,6 +4683,16 @@ export function App() {
     }
   };
 
+  const activeSagaId = activeCampaign?.timeline?.sagaId ?? (activeCampaign ? `saga_${activeCampaign.id}` : null);
+  const activeSagaBranchCount = activeSagaId
+    ? Math.max(
+        1,
+        campaigns.filter(
+          (c) => (c.timeline?.sagaId ?? `saga_${c.id}`) === activeSagaId,
+        ).length,
+      )
+    : 1;
+
   return (
     <div
       className={
@@ -4479,6 +4716,7 @@ export function App() {
         campaign={activeCampaign}
         settings={settings}
         usingGemini={usingGemini}
+        isOnline={pwa.isOnline}
         leftRailMode={leftRailMode}
         rightHudOpen={!focusMode}
         onBackHome={() => {
@@ -4514,6 +4752,7 @@ export function App() {
           hasActiveCampaign={Boolean(activeCampaign)}
           activeCampaignTitle={activeCampaign?.world.title}
           onReturn={handleReturnFromDocs}
+          onStartInteractiveTour={handleStartInteractiveTour}
         />
       ) : null}
 
@@ -4523,11 +4762,21 @@ export function App() {
           language={settings.language}
           previewTheme={previewTheme}
           defaultDifficulty={settings.difficulty}
+          pwa={pwa}
+          onOpenIosInstallGuide={() => setIosInstallGuideOpen(true)}
+          onInstalledApp={() =>
+            pushToast('save', 'MYTHOS instalado como aplicativo! Leitura offline ativa.')
+          }
           onSelectPreviewTheme={setPreviewTheme}
           onStartForge={() => setView('forge')}
           onStartFreeform={handleStartFreeformStory}
           onPlayInstantDemo={handlePlayInstantDemo}
           onOpenDocs={() => handleOpenDocs('overview')}
+          onStartInteractiveTour={handleStartInteractiveTour}
+          onOpenCampaignTimeline={(camp) => {
+            handleOpenCampaign(camp);
+            setTimelineOpen(true);
+          }}
           onOpenCampaign={handleOpenCampaign}
           onExportCampaign={exportCampaignJson}
           onDeleteCampaign={(id) => {
@@ -4602,6 +4851,8 @@ export function App() {
           onGenerateNpcPortrait={(npcId) => void handleGenerateNpcPortrait(npcId)}
           onBuildStrongholdUpgrade={handleBuildStrongholdUpgrade}
           onOpenWorldMap={() => setWorldMapOpen(true)}
+          onOpenTimeline={() => setTimelineOpen(true)}
+          timelineBranchCount={activeSagaBranchCount}
           onOpenOrganization={() => setOrganizationOpen(true)}
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
           onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
@@ -4795,6 +5046,15 @@ export function App() {
             onClose={() => setWorkbenchOpen(false)}
             onExecuteCraft={(req) => void handleExecuteCraft(req)}
           />
+          <TimelineTreeModal
+            open={timelineOpen}
+            activeCampaign={activeCampaign}
+            allCampaigns={campaigns}
+            onClose={() => setTimelineOpen(false)}
+            onBranchFromNode={handleBranchFromTimelineNode}
+            onSwitchCampaign={handleSwitchTimelineCampaign}
+            onCreateManualMark={handleCreateManualTimelineMark}
+          />
         </>
       ) : null}
 
@@ -4834,11 +5094,26 @@ export function App() {
         initialTab={settingsInitialTab}
         settings={settings}
         apiHealth={apiHealth}
+        pwa={pwa}
+        onOpenIosInstallGuide={() => setIosInstallGuideOpen(true)}
+        onStartInteractiveTour={handleStartInteractiveTour}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={updateSettings}
         onChangeCampaignDifficulty={
           view === 'stage' ? handleChangeCampaignDifficulty : undefined
         }
+      />
+
+      <PwaInstallBanner
+        pwa={pwa}
+        iosGuideOpen={iosInstallGuideOpen}
+        onCloseIosGuide={() => setIosInstallGuideOpen(false)}
+      />
+
+      <InteractiveTourOverlay
+        open={tourOpen}
+        onClose={handleCloseTour}
+        onPrepareStep={handlePrepareTourStep}
       />
 
       <ToastStack

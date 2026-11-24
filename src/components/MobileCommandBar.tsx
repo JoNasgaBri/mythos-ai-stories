@@ -123,6 +123,7 @@ export function MobileCommandBar({
 
   return (
     <div
+      data-tour="mobile-command-bar"
       className="md:hidden rounded-t-2xl border-t border-[var(--border-strong)]/90 bg-[var(--bg-surface)]/95 px-2.5 pt-2 shadow-[0_-8px_28px_rgba(0,0,0,0.35)] backdrop-blur-xl"
       style={{
         paddingBottom: 'max(0.55rem, env(safe-area-inset-bottom))',
@@ -133,6 +134,7 @@ export function MobileCommandBar({
         {actionsCount > 0 ? (
           <button
             type="button"
+            data-tour="mobile-choices-btn"
             disabled={isBusy}
             onClick={onOpenChoicesSheet}
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent)]/55 bg-[var(--accent-soft)] px-2.5 text-[11px] font-semibold text-[var(--accent)] shadow-sm transition active:scale-95 disabled:opacity-45"

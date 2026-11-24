@@ -111,6 +111,8 @@ interface StoryStageProps {
   onGenerateNpcPortrait?: (npcId: string) => void;
   onBuildStrongholdUpgrade?: (upgradeId: string) => void;
   onOpenWorldMap?: () => void;
+  onOpenTimeline?: () => void;
+  timelineBranchCount?: number;
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
@@ -203,6 +205,8 @@ export function StoryStage({
   onGenerateNpcPortrait,
   onBuildStrongholdUpgrade,
   onOpenWorldMap,
+  onOpenTimeline,
+  timelineBranchCount,
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
   onOpenRelationships,
@@ -495,6 +499,8 @@ export function StoryStage({
         onOpenWorkbench={() => onOpenWorkbench?.()}
         onOpenBaseBlueprint={() => onOpenBaseBlueprint?.()}
         onOpenMap={() => onOpenWorldMap?.()}
+        onOpenTimeline={onOpenTimeline}
+        timelineBranchCount={timelineBranchCount}
         onOpenRest={() => onOpenRest?.()}
         onOpenSaves={onOpenSaves}
         onOpenOrTriggerWorldEvent={onOpenOrTriggerWorldEvent}
@@ -506,7 +512,10 @@ export function StoryStage({
       {/* Main Narrative Theater */}
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Scrollable Editorial Chronicle */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-2.5 pb-5 sm:px-0 sm:pr-1 sm:pb-6">
+        <div
+          data-tour="stage-feed"
+          className="flex-1 overflow-y-auto overscroll-contain px-2.5 pb-5 sm:px-0 sm:pr-1 sm:pb-6"
+        >
           <div className="mx-auto max-w-[960px] space-y-4 pt-1.5 sm:space-y-6 sm:pt-2 2xl:max-w-[1060px]">
             {campaign.entries.map((entry, idx) => {
               if (entry.role === 'prologue') {
@@ -1185,7 +1194,7 @@ export function StoryStage({
                 {/* Desktop Full 2x2 Choices + Spotlight Command Bar */}
                 <div className="hidden md:block">
                 {campaign.actions.length > 0 ? (
-                  <div className="mb-3 space-y-1.5">
+                  <div data-tour="choices-area" className="mb-3 space-y-1.5">
                     <div className="flex items-center justify-between px-1 text-[11px]">
                       <span className="font-semibold uppercase tracking-wider text-[var(--accent)]">
                         Suas Escolhas
@@ -1298,7 +1307,10 @@ export function StoryStage({
                 ) : null}
 
                 {/* Spotlight Command Bar */}
-                <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-2.5 shadow-[var(--shadow-elevated)]">
+                <div
+                  data-tour="command-bar"
+                  className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-2.5 shadow-[var(--shadow-elevated)]"
+                >
                   <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
                     {/* Clear 3-mode pill toggle: Agir vs Falar vs Dirigir */}
                     <div className="inline-flex rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-0.5">
@@ -1491,7 +1503,10 @@ export function StoryStage({
 
       {/* Desktop Right Zen Browser Split / Auto-Peek HUD */}
       {!focusMode ? (
-        <aside className="relative hidden w-[350px] shrink-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block xl:w-[395px] 2xl:w-[415px]">
+        <aside
+          data-tour="right-hud"
+          className="relative hidden w-[350px] shrink-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block xl:w-[395px] 2xl:w-[415px]"
+        >
           <button
             type="button"
             onClick={onToggleRightHud}

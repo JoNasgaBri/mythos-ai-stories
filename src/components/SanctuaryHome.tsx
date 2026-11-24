@@ -1,7 +1,9 @@
 import {
   BookOpen,
+  Compass,
   Download,
   Flame,
+  GitBranch,
   Heart,
   MessageSquare,
   Play,
@@ -13,25 +15,32 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { DIFFICULTIES, UI_COPY, WORLD_THEMES } from '../data/presets';
+import type { PwaState } from '../hooks/usePwaInstall';
 import type {
   Campaign,
   DifficultyId,
   LanguageId,
   WorldThemeId,
 } from '../types/game';
+import { HomePwaCard } from './PwaInstallBanner';
 
 interface SanctuaryHomeProps {
   campaigns: Campaign[];
   language: LanguageId;
   previewTheme: WorldThemeId;
   defaultDifficulty: DifficultyId;
+  pwa?: PwaState;
+  onOpenIosInstallGuide?: () => void;
+  onInstalledApp?: () => void;
   onSelectPreviewTheme: (theme: WorldThemeId) => void;
   onStartForge: () => void;
   onStartFreeform: (difficulty: DifficultyId, theme: WorldThemeId) => void;
   onPlayInstantDemo: () => void;
   onOpenDocs: () => void;
+  onStartInteractiveTour?: () => void;
   onShareCampaignQr: (campaign: Campaign) => void;
   onReceiveCampaignQr: () => void;
+  onOpenCampaignTimeline?: (campaign: Campaign) => void;
   onOpenCampaign: (campaign: Campaign) => void;
   onExportCampaign: (campaign: Campaign) => void;
   onDeleteCampaign: (id: string) => void;
@@ -43,13 +52,18 @@ export function SanctuaryHome({
   language,
   previewTheme,
   defaultDifficulty,
+  pwa,
+  onOpenIosInstallGuide,
+  onInstalledApp,
   onSelectPreviewTheme,
   onStartForge,
   onStartFreeform,
   onPlayInstantDemo,
   onOpenDocs,
+  onStartInteractiveTour,
   onShareCampaignQr,
   onReceiveCampaignQr,
+  onOpenCampaignTimeline,
   onOpenCampaign,
   onExportCampaign,
   onDeleteCampaign,
@@ -124,7 +138,26 @@ export function SanctuaryHome({
               <BookOpen className="h-4 w-4 text-[var(--accent)]" />
               <span>Documentação & Guias</span>
             </button>
+
+            {onStartInteractiveTour ? (
+              <button
+                type="button"
+                onClick={onStartInteractiveTour}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#a78bfa]/45 bg-[#a78bfa]/12 px-4 py-3.5 text-sm font-semibold text-[#c4b5fd] transition hover:border-[#a78bfa] hover:brightness-110"
+              >
+                <Compass className="h-4 w-4" />
+                <span>Tour Interativo (2 min)</span>
+              </button>
+            ) : null}
           </div>
+
+          {pwa && onOpenIosInstallGuide ? (
+            <HomePwaCard
+              pwa={pwa}
+              onOpenIosGuide={onOpenIosInstallGuide}
+              onInstalled={onInstalledApp}
+            />
+          ) : null}
 
           {freeformOpen ? (
             <div className="animate-beat-enter mt-5 rounded-2xl border border-[var(--accent)]/50 bg-[var(--bg-elevated)]/95 p-4 shadow-lg">
@@ -311,6 +344,21 @@ export function SanctuaryHome({
                               {g}
                             </span>
                           ))}
+                          {camp.timeline?.parentCampaignId ? (
+                            <span
+                              style={{
+                                borderColor: `${camp.timeline.branchColor}55`,
+                                backgroundColor: `${camp.timeline.branchColor}18`,
+                                color: camp.timeline.branchColor,
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold"
+                            >
+                              <GitBranch className="h-2.5 w-2.5" />
+                              <span className="max-w-[130px] truncate">
+                                {camp.timeline.branchName}
+                              </span>
+                            </span>
+                          ) : null}
                           {camp.status === 'ended_fallen' ? (
                             <span className="rounded-md bg-[var(--danger)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--danger)]">
                               Caído
@@ -368,6 +416,21 @@ export function SanctuaryHome({
                       </span>
 
                       <div className="flex items-center gap-1.5">
+                        {onOpenCampaignTimeline ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenCampaignTimeline(camp)}
+                            title={
+                              language === 'en'
+                                ? 'Timeline Tree ("What If?")'
+                                : 'Árvore de Linhas Temporais ("E Se?")'
+                            }
+                            className="rounded-lg border border-[#a78bfa]/40 bg-[#a78bfa]/12 p-1.5 text-[#c4b5fd] transition hover:border-[#a78bfa] hover:brightness-110"
+                          >
+                            <GitBranch className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+
                         {onShareCampaignQr ? (
                           <button
                             type="button"

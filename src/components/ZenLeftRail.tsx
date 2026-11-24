@@ -3,6 +3,7 @@ import {
   Crown,
   FastForward,
   Flame,
+  GitBranch,
   Hammer,
   Heart,
   Layers,
@@ -43,6 +44,8 @@ interface ZenLeftRailProps {
   onOpenWorkbench: () => void;
   onOpenBaseBlueprint: () => void;
   onOpenMap: () => void;
+  onOpenTimeline?: () => void;
+  timelineBranchCount?: number;
   onOpenRest: () => void;
   onOpenSaves: () => void;
   onOpenOrTriggerWorldEvent?: () => void;
@@ -59,6 +62,7 @@ interface RailActionItem {
   accent: string;
   badge?: number;
   disabled?: boolean;
+  dataTour?: string;
   onClick: () => void;
 }
 
@@ -80,6 +84,8 @@ export function ZenLeftRail({
   onOpenWorkbench,
   onOpenBaseBlueprint,
   onOpenMap,
+  onOpenTimeline,
+  timelineBranchCount = 1,
   onOpenRest,
   onOpenSaves,
   onOpenOrTriggerWorldEvent,
@@ -221,6 +227,23 @@ export function ZenLeftRail({
       accent: '#4ade80',
       onClick: onOpenMap,
     },
+    ...(onOpenTimeline
+      ? [
+          {
+            id: 'timeline',
+            label: 'Linhas Temporais',
+            subtitle:
+              timelineBranchCount > 1
+                ? `${timelineBranchCount} linhas · E Se?`
+                : 'Árvore & E Se?',
+            icon: GitBranch,
+            accent: '#a78bfa',
+            badge: timelineBranchCount > 1 ? timelineBranchCount : undefined,
+            dataTour: 'timeline-btn',
+            onClick: onOpenTimeline,
+          },
+        ]
+      : []),
     ...(campaign.status === 'active'
       ? [
           {
@@ -248,6 +271,7 @@ export function ZenLeftRail({
           <button
             key={item.id}
             type="button"
+            data-tour={item.dataTour}
             disabled={item.disabled}
             onClick={() => {
               item.onClick();
@@ -304,6 +328,7 @@ export function ZenLeftRail({
 
       <button
         type="button"
+        data-tour="saves-btn"
         onClick={() => {
           onOpenSaves();
           if (closeOnTap) onCloseMobile();
@@ -407,6 +432,7 @@ export function ZenLeftRail({
     <>
       {/* Desktop Zen Left Split / Compact / Auto-Peek Rail */}
       <aside
+        data-tour="left-rail"
         className={`relative hidden shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block ${
           isPinned ? 'w-[220px]' : isHidden ? 'w-0' : 'w-[54px]'
         }`}

@@ -12,6 +12,7 @@ import {
   Sun,
   Volume2,
   VolumeX,
+  WifiOff,
   Zap,
 } from 'lucide-react';
 import { UI_COPY } from '../data/presets';
@@ -25,6 +26,7 @@ interface TopBarProps {
   campaign: Campaign | null;
   settings: AppSettings;
   usingGemini: boolean;
+  isOnline?: boolean;
   leftRailMode: ZenRailMode;
   rightHudOpen: boolean;
   onBackHome: () => void;
@@ -45,6 +47,7 @@ export function TopBar({
   campaign,
   settings,
   usingGemini,
+  isOnline = true,
   leftRailMode,
   rightHudOpen,
   onBackHome,
@@ -83,6 +86,7 @@ export function TopBar({
             {isStage ? (
               <button
                 type="button"
+                data-tour="left-rail-toggle"
                 onClick={onToggleLeftRail}
                 title={
                   leftRailMode === 'pinned'
@@ -141,6 +145,7 @@ export function TopBar({
         <div className="flex min-w-0 items-center justify-center">
           {isStage && campaign ? (
             <div
+              data-tour="topbar-island"
               style={{ animationDelay: '45ms' }}
               className={`animate-island-drop pointer-events-auto inline-flex h-9 items-center gap-1 rounded-full border bg-[var(--bg-surface)]/92 px-2 shadow-[0_8px_30px_rgba(0,0,0,0.42)] backdrop-blur-2xl transition-all duration-300 hover:scale-[1.02] ${
                 urgentCountdown
@@ -239,6 +244,16 @@ export function TopBar({
             style={{ animationDelay: '90ms' }}
             className="animate-island-drop pointer-events-auto inline-flex h-9 shrink-0 items-center gap-0.5 rounded-full border border-[var(--border-subtle)]/90 bg-[var(--bg-glass)] px-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl transition-all duration-200 hover:border-[var(--border-strong)]"
           >
+            {!isOnline ? (
+              <span
+                title="Sem internet — Modo Leitura ativo (suas crônicas, Codex, Docs e Árvore funcionam offline)"
+                className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full border border-[var(--warning)]/45 bg-[var(--warning)]/15 px-2 text-[10px] font-semibold text-[var(--warning)]"
+              >
+                <WifiOff className="h-3 w-3 shrink-0" />
+                <span className="hidden sm:inline">Offline · Leitura</span>
+              </span>
+            ) : null}
+
             <button
               type="button"
               onClick={() => onOpenSettings('ai')}
@@ -298,6 +313,7 @@ export function TopBar({
             {onOpenDocs ? (
               <button
                 type="button"
+                data-tour="topbar-docs"
                 onClick={onOpenDocs}
                 title={
                   view === 'docs'
@@ -329,6 +345,7 @@ export function TopBar({
                 <span className="mx-0.5 h-3.5 w-px bg-[var(--border-subtle)]" />
                 <button
                   type="button"
+                  data-tour="right-hud-toggle"
                   onClick={onToggleRightHud}
                   title={
                     rightHudOpen

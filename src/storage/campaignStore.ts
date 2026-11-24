@@ -19,16 +19,22 @@ import {
   syncSkillLevels,
   xpRequiredForLevel,
 } from '../engine/rpgSystem';
-import type { AppSettings, Campaign, SaveSlot } from '../types/game';
+import type {
+  AppSettings,
+  Campaign,
+  SaveSlot,
+  TimelineSnapshotRecord,
+} from '../types/game';
 
 const LEGACY_CAMPAIGNS_KEY = 'mythos_campaigns_v1';
 const FALLBACK_SAVES_KEY = 'mythos_saves_fallback_v1';
 const SETTINGS_KEY = 'mythos_settings_v1';
 
 const DB_NAME = 'mythos_chronicles_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_CAMPAIGNS = 'campaigns';
 const STORE_SAVES = 'saves';
+const STORE_TIMELINE_SNAPSHOTS = 'timeline_snapshots';
 
 export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
   const id = raw.id || `camp_${Date.now()}`;
@@ -302,10 +308,30 @@ function openMythosDb(): Promise<IDBDatabase> {
         const savesStore = db.createObjectStore(STORE_SAVES, { keyPath: 'id' });
         savesStore.createIndex('by_campaignId', 'campaignId', { unique: false });
       }
+      if (!db.objectStoreNames.contains(STORE_TIMELINE_SNAPSHOTS)) {
+        const snapStore = db.createObjectStore(STORE_TIMELINE_SNAPSHOTS, {
+          keyPath: 'nodeId',
+        });
+        snapStore.createIndex('by_sagaId', 'sagaId', { unique: false });
+        snapStore.createIndex('by_campaignId', 'campaignId', { unique: false });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('IndexedDB error'));
   });
+}
+
+function idbGet<T>(storeName: string, key: string): Promise<T | null> {
+  return openMythosDb().then(
+    (db) =>
+      new Promise<T | null>((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const req = store.get(key);
+        req.onsuccess = () => resolve((req.result as T | undefined) ?? null);
+        req.onerror = () => reject(req.error ?? new Error('IDB get failed'));
+      }),
+  );
 }
 
 function idbGetAll<T>(storeName: string): Promise<T[]> {
@@ -402,11 +428,71 @@ export async function deleteCampaignAsync(id: string): Promise<Campaign[]> {
     for (const s of slots) {
       await idbDelete(STORE_SAVES, s.id);
     }
+    await deleteTimelineSnapshotsForCampaignAsync(id);
     return await loadCampaignsAsync();
   } catch {
     const list = readLegacyLocalCampaigns().filter((c) => c.id !== id);
     localStorage.setItem(LEGACY_CAMPAIGNS_KEY, JSON.stringify(list));
     return list;
+  }
+}
+
+export async function saveTimelineSnapshotAsync(
+  record: TimelineSnapshotRecord,
+): Promise<void> {
+  try {
+    await idbPut(STORE_TIMELINE_SNAPSHOTS, record);
+  } catch {
+    // Non-fatal: timeline node metadata still persists inside the campaign
+  }
+}
+
+export async function loadTimelineSnapshotAsync(
+  nodeId: string,
+): Promise<TimelineSnapshotRecord | null> {
+  try {
+    const record = await idbGet<TimelineSnapshotRecord>(
+      STORE_TIMELINE_SNAPSHOTS,
+      nodeId,
+    );
+    if (!record) return null;
+    return {
+      ...record,
+      snapshot: normalizeCampaign(record.snapshot),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function pruneTimelineSnapshotsAsync(
+  campaignId: string,
+  keepNodeIds: Set<string>,
+): Promise<void> {
+  try {
+    const all = await idbGetAll<TimelineSnapshotRecord>(STORE_TIMELINE_SNAPSHOTS);
+    for (const rec of all) {
+      if (rec.campaignId === campaignId && !keepNodeIds.has(rec.nodeId)) {
+        await idbDelete(STORE_TIMELINE_SNAPSHOTS, rec.nodeId);
+      }
+    }
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+async function deleteTimelineSnapshotsForCampaignAsync(
+  campaignId: string,
+): Promise<void> {
+  try {
+    const all = await idbGetAll<TimelineSnapshotRecord>(STORE_TIMELINE_SNAPSHOTS);
+    for (const rec of all) {
+      if (rec.campaignId === campaignId) {
+        await idbDelete(STORE_TIMELINE_SNAPSHOTS, rec.nodeId);
+      }
+    }
+  } catch {
+    // ignore cleanup failures
   }
 }
 

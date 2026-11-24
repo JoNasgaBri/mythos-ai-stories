@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Compass,
   Crown,
   Dices,
   Globe2,
@@ -53,6 +54,7 @@ interface DocsPortalProps {
   hasActiveCampaign: boolean;
   activeCampaignTitle?: string;
   onReturn: () => void;
+  onStartInteractiveTour?: () => void;
 }
 
 function loadReadIds(): string[] {
@@ -73,6 +75,7 @@ export function DocsPortal({
   hasActiveCampaign,
   activeCampaignTitle,
   onReturn,
+  onStartInteractiveTour,
 }: DocsPortalProps) {
   const [activeArticleId, setActiveArticleId] = useState<string>(
     initialArticleId && DOC_ARTICLES.some((a) => a.id === initialArticleId)
@@ -413,6 +416,33 @@ export function DocsPortal({
                 </div>
               ) : null}
             </header>
+
+            {/* Interactive Tour CTA Banner on Overview */}
+            {onStartInteractiveTour && activeArticle.id === 'overview' ? (
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#a78bfa]/40 bg-[#a78bfa]/10 p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#a78bfa]/20 text-[#c4b5fd]">
+                    <Compass className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[var(--text-primary)]">
+                      Prefere aprender clicando diretamente na interface?
+                    </p>
+                    <p className="text-[11px] text-[var(--text-secondary)]">
+                      Faça o Tour Interativo guiado de 9 passos com destaques ao vivo no palco.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onStartInteractiveTour}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#a78bfa] px-3.5 py-2 text-xs font-semibold text-[#110b22] transition hover:brightness-110"
+                >
+                  <span>Iniciar Tour Interativo</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
 
             {/* Editorial Content Blocks */}
             <div className="mt-6">
