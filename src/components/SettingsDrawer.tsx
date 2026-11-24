@@ -313,37 +313,9 @@ export function SettingsDrawer({
                     </button>
                   ))}
                 </div>
-                <div className="border-t border-[var(--border-subtle)] pt-2.5">
-                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Como avisar um novo evento
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onUpdateSettings({ eventDeliveryMode: 'island' })}
-                      className={`rounded-xl border px-2.5 py-2 text-left transition ${
-                        (settings.eventDeliveryMode ?? 'island') === 'island'
-                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold">Dynamic Island</div>
-                      <div className="text-[10px] opacity-80">Pulsa no topo p/ abrir</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onUpdateSettings({ eventDeliveryMode: 'immediate' })}
-                      className={`rounded-xl border px-2.5 py-2 text-left transition ${
-                        settings.eventDeliveryMode === 'immediate'
-                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold">Abrir na Hora</div>
-                      <div className="text-[10px] opacity-80">Força decisão (WebSim)</div>
-                    </button>
-                  </div>
-                </div>
+                <p className="text-[10px] text-[var(--text-muted)]">
+                  Quando um evento dispara, ele aparece direto no chat da história e exige que você escolha uma das decisões para continuar.
+                </p>
               </div>
 
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">

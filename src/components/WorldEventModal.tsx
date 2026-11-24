@@ -4,14 +4,12 @@ import {
   Dices,
   Heart,
   Home,
+  Lock,
   Scale,
-  Send,
   Sparkles,
   Users,
-  X,
   Zap,
 } from 'lucide-react';
-import { useState } from 'react';
 import {
   ATTRIBUTE_META,
   getSupplyMetaForTheme,
@@ -26,16 +24,12 @@ import type {
   WorldEventRecord,
 } from '../types/game';
 
-interface WorldEventModalProps {
-  open: boolean;
-  event: WorldEventRecord | null;
+interface WorldEventInlineCardProps {
+  event: WorldEventRecord;
   campaign: Campaign;
   language: LanguageId;
   isBusy: boolean;
-  canDefer: boolean;
-  onDefer: () => void;
   onSelectChoice: (choice: WorldEventChoice) => void;
-  onSubmitCustomDecision: (customText: string) => void;
 }
 
 const CATEGORY_META: Record<
@@ -80,21 +74,13 @@ const CATEGORY_META: Record<
   },
 };
 
-export function WorldEventModal({
-  open,
+export function WorldEventInlineCard({
   event,
   campaign,
   language,
   isBusy,
-  canDefer,
-  onDefer,
   onSelectChoice,
-  onSubmitCustomDecision,
-}: WorldEventModalProps) {
-  const [customText, setCustomText] = useState('');
-
-  if (!open || !event) return null;
-
+}: WorldEventInlineCardProps) {
   const meta = CATEGORY_META[event.category] ?? CATEGORY_META.dilemma;
   const CatIcon = meta.Icon;
   const supplyMeta = getSupplyMetaForTheme(campaign.world.primaryTheme);
@@ -168,130 +154,117 @@ export function WorldEventModal({
     return chips;
   };
 
-  const handleCustomSubmit = () => {
-    const trimmed = customText.trim();
-    if (!trimmed || isBusy) return;
-    setCustomText('');
-    onSubmitCustomDecision(trimmed);
-  };
-
   return (
-    <div
-      onClick={canDefer ? onDefer : undefined}
-      className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/78 p-2.5 sm:p-4 backdrop-blur-md"
-      role="dialog"
+    <article
       aria-label="Evento Dinâmico do Mundo"
+      className="animate-modal-spring overflow-hidden rounded-2xl border-2 bg-[var(--bg-surface)] shadow-[0_14px_40px_rgba(0,0,0,0.45)]"
+      style={{ borderColor: `${meta.accent}80` }}
     >
+      {/* Dramatic Category Banner */}
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="animate-modal-spring flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border bg-[var(--bg-surface)] shadow-[0_24px_70px_rgba(0,0,0,0.65)]"
-        style={{ borderColor: `${meta.accent}60` }}
+        className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4"
+        style={{
+          background: `linear-gradient(135deg, ${meta.bg}, transparent 75%)`,
+        }}
       >
-        {/* Dramatic Category Header */}
-        <div
-          className="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4"
-          style={{
-            background: `linear-gradient(135deg, ${meta.bg}, transparent 75%)`,
-          }}
-        >
-          <div className="flex min-w-0 items-start gap-3">
-            <span
-              className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border"
-              style={{
-                borderColor: `${meta.accent}60`,
-                backgroundColor: meta.bg,
-                color: meta.accent,
-              }}
-            >
-              <CatIcon className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider">
-                <span style={{ color: meta.accent }}>{meta.label}</span>
-                <span className="text-[var(--text-muted)]">·</span>
-                <span className="font-mono-tech text-[var(--text-secondary)]">
-                  Dia {event.dayTriggered} · {event.timeTriggered}
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border"
+            style={{
+              borderColor: `${meta.accent}65`,
+              backgroundColor: meta.bg,
+              color: meta.accent,
+            }}
+          >
+            <CatIcon className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider">
+              <span style={{ color: meta.accent }}>{meta.label}</span>
+              <span className="text-[var(--text-muted)]">·</span>
+              <span className="font-mono-tech text-[var(--text-secondary)]">
+                Dia {event.dayTriggered} · {event.timeTriggered}
+              </span>
+              {event.urgency === 'urgent' ? (
+                <span className="rounded-full bg-[#f87171]/20 px-2 py-0.5 text-[9px] text-[#f87171]">
+                  URGENTE
                 </span>
-                {event.urgency === 'urgent' ? (
-                  <span className="rounded-full bg-[#f87171]/20 px-2 py-0.5 text-[9px] text-[#f87171]">
-                    URGENTE
-                  </span>
-                ) : null}
-              </div>
-              <h2 className="font-display mt-0.5 text-base font-semibold text-[var(--text-primary)] sm:text-lg">
-                {event.title}
-              </h2>
-              {event.triggerReason ? (
-                <p className="mt-0.5 text-[10px] italic text-[var(--text-muted)]">
-                  Gatilho do Mundo Vivo: {event.triggerReason}
-                </p>
               ) : null}
             </div>
+            <h3 className="font-display mt-0.5 text-base font-semibold text-[var(--text-primary)] sm:text-lg">
+              {event.title}
+            </h3>
+            {event.triggerReason ? (
+              <p className="mt-0.5 text-[10px] italic text-[var(--text-muted)]">
+                Mundo Vivo: {event.triggerReason}
+              </p>
+            ) : null}
           </div>
-
-          {canDefer ? (
-            <button
-              type="button"
-              onClick={onDefer}
-              title="Minimizar para a Dynamic Island e decidir depois"
-              className="rounded-lg border border-[var(--border-subtle)] p-1.5 text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          ) : null}
         </div>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
-          {/* Event Narrative */}
-          <p className="font-reading text-[15px] leading-relaxed text-[var(--text-primary)] sm:text-base">
-            {event.description}
-          </p>
+        <span
+          className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider"
+          style={{
+            borderColor: `${meta.accent}60`,
+            backgroundColor: meta.bg,
+            color: meta.accent,
+          }}
+        >
+          <Lock className="h-3 w-3" />
+          Decisão Obrigatória
+        </span>
+      </div>
 
-          {/* Companion Opinion Bubble */}
-          {event.companionReaction ? (
-            <div className="animate-bubble-left flex items-start gap-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
-              {reactionNpc?.portraitUrl ? (
-                <img
-                  src={reactionNpc.portraitUrl}
-                  alt={event.companionReaction.speaker}
-                  className="h-9 w-9 shrink-0 rounded-xl border object-cover"
-                  style={{ borderColor: reactionRel?.color || 'var(--accent)' }}
-                />
-              ) : (
-                <span className="font-display flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent)]">
-                  {event.companionReaction.speaker.slice(0, 2).toUpperCase()}
-                </span>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold">
-                  <span style={{ color: reactionRel?.color || 'var(--accent)' }}>
-                    {event.companionReaction.speaker}
-                  </span>
-                  {isRomanticCompanion ? (
-                    <Heart className="h-3 w-3 fill-[#f472b6] text-[#f472b6]" />
-                  ) : null}
-                  <span className="text-[10px] font-normal text-[var(--text-muted)]">
-                    opina antes da sua decisão
-                  </span>
-                </div>
-                <p className="mt-1 text-xs leading-relaxed italic text-[var(--text-secondary)] sm:text-[13px]">
-                  “{event.companionReaction.quote}”
-                </p>
-              </div>
-            </div>
-          ) : null}
+      {/* Body */}
+      <div className="space-y-4 p-5">
+        <p className="font-reading text-[15px] leading-relaxed text-[var(--text-primary)] sm:text-base">
+          {event.description}
+        </p>
 
-          {/* 3 Tactical Choices */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-              <span className="inline-flex items-center gap-1.5">
-                <Zap className="h-3.5 w-3.5 text-[var(--accent)]" />
-                Como você responde a isso?
+        {/* Companion Opinion Bubble */}
+        {event.companionReaction ? (
+          <div className="animate-bubble-left flex items-start gap-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
+            {reactionNpc?.portraitUrl ? (
+              <img
+                src={reactionNpc.portraitUrl}
+                alt={event.companionReaction.speaker}
+                className="h-9 w-9 shrink-0 rounded-xl border object-cover"
+                style={{ borderColor: reactionRel?.color || 'var(--accent)' }}
+              />
+            ) : (
+              <span className="font-display flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent)]">
+                {event.companionReaction.speaker.slice(0, 2).toUpperCase()}
               </span>
-              <span>Escolha 1 decisão</span>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <span style={{ color: reactionRel?.color || 'var(--accent)' }}>
+                  {event.companionReaction.speaker}
+                </span>
+                {isRomanticCompanion ? (
+                  <Heart className="h-3 w-3 fill-[#f472b6] text-[#f472b6]" />
+                ) : null}
+                <span className="text-[10px] font-normal text-[var(--text-muted)]">
+                  reage ao evento
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed italic text-[var(--text-secondary)] sm:text-[13px]">
+                “{event.companionReaction.quote}”
+              </p>
             </div>
+          </div>
+        ) : null}
 
+        {/* Mandatory Choices */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            <span className="inline-flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5" style={{ color: meta.accent }} />
+              Escolha uma decisão para continuar
+            </span>
+          </div>
+
+          <div className="space-y-2">
             {event.choices.map((choice, idx) => {
               const chips = buildImpactChips(choice);
               return (
@@ -301,7 +274,7 @@ export function WorldEventModal({
                   disabled={isBusy}
                   style={{ animationDelay: `${idx * 55}ms` }}
                   onClick={() => onSelectChoice(choice)}
-                  className="animate-choice-in group block w-full rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:bg-[var(--bg-elevated)]/90 hover:shadow-md disabled:opacity-45"
+                  className="animate-choice-in group block w-full rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:bg-[var(--bg-elevated)]/95 hover:shadow-md disabled:opacity-45"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)] sm:text-sm">
@@ -341,50 +314,8 @@ export function WorldEventModal({
               );
             })}
           </div>
-
-          {/* Freeform Decision Fallback */}
-          <div className="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-canvas)]/55 p-3">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-              Ou faça do seu próprio jeito (Decisão Livre)
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={customText}
-                onChange={(e) => setCustomText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCustomSubmit();
-                }}
-                placeholder="Descreva exatamente como você lida com este evento..."
-                className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--accent)]"
-              />
-              <button
-                type="button"
-                disabled={isBusy || !customText.trim()}
-                onClick={handleCustomSubmit}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[var(--accent)] px-3.5 py-2 text-xs font-semibold text-[var(--accent-ink)] transition hover:brightness-110 disabled:opacity-40"
-              >
-                <Send className="h-3.5 w-3.5" />
-                Agir
-              </button>
-            </div>
-          </div>
         </div>
-
-        {/* Footer */}
-        {canDefer ? (
-          <div className="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 px-5 py-2.5 text-[11px] text-[var(--text-muted)]">
-            <span>Você pode checar sua Base/Inventário antes de decidir.</span>
-            <button
-              type="button"
-              onClick={onDefer}
-              className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-            >
-              Manter na Dynamic Island
-            </button>
-          </div>
-        ) : null}
       </div>
-    </div>
+    </article>
   );
 }

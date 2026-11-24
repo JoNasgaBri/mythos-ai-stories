@@ -55,6 +55,7 @@ import type {
   NpcRecord,
   TacticalAction,
   WorldConfig,
+  WorldEventChoice,
 } from '../types/game';
 import { ContextHud } from './ContextHud';
 import { EpiloguePanel } from './EpiloguePanel';
@@ -62,6 +63,7 @@ import {
   extractPlayerSpeech,
   SceneBeatsRenderer,
 } from './SceneBeatsRenderer';
+import { WorldEventInlineCard } from './WorldEventModal';
 import { ZenLeftRail, type ZenRailMode } from './ZenLeftRail';
 
 interface StoryStageProps {
@@ -114,6 +116,8 @@ interface StoryStageProps {
   onOpenRest?: () => void;
   onOpenEditProtagonist?: () => void;
   onOpenOrTriggerWorldEvent?: () => void;
+  onSelectWorldEventChoice?: (choice: WorldEventChoice) => void;
+  focusEventNonce?: number;
   isGeneratingEvent?: boolean;
   onSendAction: (
     text: string,
@@ -203,6 +207,8 @@ export function StoryStage({
   onOpenRest,
   onOpenEditProtagonist,
   onOpenOrTriggerWorldEvent,
+  onSelectWorldEventChoice,
+  focusEventNonce,
   isGeneratingEvent,
   onSendAction,
   onTypingActivity,
@@ -237,7 +243,13 @@ export function StoryStage({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [campaign.entries.length, isBusy, campaign.status]);
+  }, [
+    campaign.entries.length,
+    campaign.activeWorldEvent?.id,
+    focusEventNonce,
+    isBusy,
+    campaign.status,
+  ]);
 
   useEffect(() => {
     if (!lightboxImage) return;
@@ -979,6 +991,16 @@ export function StoryStage({
               />
             ) : null}
 
+            {campaign.activeWorldEvent && !isEnded && onSelectWorldEventChoice ? (
+              <WorldEventInlineCard
+                event={campaign.activeWorldEvent}
+                campaign={campaign}
+                language={language}
+                isBusy={isBusy}
+                onSelectChoice={onSelectWorldEventChoice}
+              />
+            ) : null}
+
             {isBusy ? (
               <div className="flex items-center gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/60 px-5 py-4 text-sm text-[var(--text-secondary)]">
                 <span className="h-2.5 w-2.5 animate-ping rounded-full bg-[var(--accent)]" />
@@ -993,7 +1015,32 @@ export function StoryStage({
         {/* Bottom Command Dock */}
         {!isEnded ? (
           <div className="mx-auto w-full max-w-[960px] shrink-0 pt-2 2xl:max-w-[1060px]">
-            {isVigorCrisis ? (
+            {campaign.activeWorldEvent ? (
+              <div className="animate-beat-enter flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#fbbf24]/55 bg-[#fbbf24]/10 px-4 py-3 text-xs text-[#fbbf24] shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <Zap className="h-4 w-4 shrink-0 animate-pulse" />
+                  <span>
+                    <strong>Decisão Obrigatória:</strong> resolva o evento{' '}
+                    <strong className="text-[var(--text-primary)]">
+                      “{campaign.activeWorldEvent.title}”
+                    </strong>{' '}
+                    no chat acima para continuar a história.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    bottomRef.current?.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'end',
+                    })
+                  }
+                  className="shrink-0 rounded-xl border border-[#fbbf24]/55 bg-[#fbbf24]/18 px-3 py-1.5 text-[11px] font-semibold text-[#fbbf24] transition hover:bg-[#fbbf24]/30"
+                >
+                  Ir para o Evento ↓
+                </button>
+              </div>
+            ) : isVigorCrisis ? (
               <div className="animate-beat-enter rounded-2xl border border-[var(--danger)]/60 bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-elevated)]">
                 <div className="flex items-start gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--danger)]/15 text-[var(--danger)]">

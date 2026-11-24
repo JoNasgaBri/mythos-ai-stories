@@ -16,7 +16,6 @@ import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
 import { WeatherAtmosphere } from './components/WeatherAtmosphere';
 import { WorkbenchModal } from './components/WorkbenchModal';
-import { WorldEventModal } from './components/WorldEventModal';
 import { WorldForge } from './components/WorldForge';
 import { WorldMapModal } from './components/WorldMapModal';
 import type { ZenRailMode } from './components/ZenLeftRail';
@@ -193,7 +192,7 @@ export function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [isCrafting, setIsCrafting] = useState(false);
   const [lastCraftResult, setLastCraftResult] = useState<CraftResponse | null>(null);
-  const [worldEventModalOpen, setWorldEventModalOpen] = useState(false);
+  const [focusEventNonce, setFocusEventNonce] = useState(0);
   const [isGeneratingEvent, setIsGeneratingEvent] = useState(false);
   const [queuedUseItem, setQueuedUseItem] = useState<InventoryItem | null>(null);
   const [queuedSayNpc, setQueuedSayNpc] = useState<NpcRecord | null>(null);
@@ -974,14 +973,8 @@ export function App() {
         lastWorldEventTurn: latest.turnCount,
       });
 
-      const shouldOpenNow =
-        opts?.openImmediately ||
-        (settings.eventDeliveryMode ?? 'island') === 'immediate';
-      if (shouldOpenNow) {
-        setWorldEventModalOpen(true);
-      } else {
-        pushToast('crisis', `⚡ Evento no Mundo: ${eventRecord.title} (veja na Dynamic Island)`);
-      }
+      setFocusEventNonce((n) => n + 1);
+      pushToast('crisis', `⚡ Evento no Mundo: ${eventRecord.title}`);
     } catch (err) {
       if (opts?.openImmediately) {
         pushToast(
@@ -1467,7 +1460,7 @@ export function App() {
     const camp = activeCampaignRef.current;
     if (!camp || camp.status !== 'active') return;
     if (camp.activeWorldEvent) {
-      setWorldEventModalOpen(true);
+      setFocusEventNonce((n) => n + 1);
       return;
     }
     const suggestedCategory = pickStorytellerCategory(camp);
@@ -1613,7 +1606,6 @@ export function App() {
       entries: [...camp.entries, eventSystemEntry],
     };
 
-    setWorldEventModalOpen(false);
     persistActiveCampaign(updatedCamp);
 
     void executeStoryTurn(
@@ -1638,21 +1630,6 @@ export function App() {
       attribute: choice.attribute,
       choice,
     });
-  };
-
-  const handleResolveWorldEventCustom = (customText: string) => {
-    const event = activeCampaignRef.current?.activeWorldEvent;
-    if (!event) return;
-    applyWorldEventResolution(
-      event,
-      customText,
-      `Diante do evento "${event.title}" (${event.description}), eu decido: ${customText}`,
-      {
-        intent: 'bold',
-        risk: 'low',
-        requiresRoll: false,
-      },
-    );
   };
 
   const handleUndoTurn = () => {
@@ -3277,7 +3254,7 @@ export function App() {
         onToggleRightHud={handleToggleRightHud}
         onOpenClock={() => setClockOpen(true)}
         onOpenMap={() => setWorldMapOpen(true)}
-        onOpenWorldEvent={() => setWorldEventModalOpen(true)}
+        onOpenWorldEvent={() => setFocusEventNonce((n) => n + 1)}
         isGeneratingEvent={isGeneratingEvent}
         onToggleAmbientSound={() =>
           updateSettings({ ambientSoundEnabled: !settings.ambientSoundEnabled })
@@ -3382,6 +3359,8 @@ export function App() {
           onOpenRest={() => setRestModalOpen(true)}
           onOpenEditProtagonist={() => setEditProtagonistOpen(true)}
           onOpenOrTriggerWorldEvent={handleOpenOrTriggerWorldEvent}
+          onSelectWorldEventChoice={handleResolveWorldEventChoice}
+          focusEventNonce={focusEventNonce}
           isGeneratingEvent={isGeneratingEvent}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
@@ -3528,17 +3507,6 @@ export function App() {
             onClearResult={() => setLastCraftResult(null)}
             onClose={() => setWorkbenchOpen(false)}
             onExecuteCraft={(req) => void handleExecuteCraft(req)}
-          />
-          <WorldEventModal
-            open={worldEventModalOpen}
-            event={activeCampaign.activeWorldEvent ?? null}
-            campaign={activeCampaign}
-            language={settings.language}
-            isBusy={isBusy}
-            canDefer={(settings.eventDeliveryMode ?? 'island') !== 'immediate'}
-            onDefer={() => setWorldEventModalOpen(false)}
-            onSelectChoice={handleResolveWorldEventChoice}
-            onSubmitCustomDecision={handleResolveWorldEventCustom}
           />
         </>
       ) : null}
