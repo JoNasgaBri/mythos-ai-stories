@@ -92,6 +92,7 @@ async function postJson<T>(
   url: string,
   body: unknown,
   settings: AppSettings,
+  signal?: AbortSignal,
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -103,6 +104,7 @@ async function postJson<T>(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) {
     const errBody = (await response.json().catch(() => ({}))) as {
@@ -182,6 +184,7 @@ export async function requestStoryTurn(
   settings: AppSettings,
   health: ApiHealthStatus,
   crisisMode?: 'survival_test' | 'breaking_point',
+  signal?: AbortSignal,
 ): Promise<StoryTurnResponse> {
   if (shouldUseGemini(settings, health)) {
     return postJson<StoryTurnResponse>(
@@ -201,6 +204,7 @@ export async function requestStoryTurn(
         crisisMode,
       },
       settings,
+      signal,
     );
   }
   await briefDemoDelay(560);
@@ -217,12 +221,14 @@ export async function requestLivingWorldPulse(
   campaign: Campaign,
   settings: AppSettings,
   health: ApiHealthStatus,
+  signal?: AbortSignal,
 ): Promise<StoryTurnResponse> {
   if (shouldUseGemini(settings, health)) {
     return postJson<StoryTurnResponse>(
       '/api/story/pulse',
       { campaign: stripHeavyMediaForApi(campaign) },
       settings,
+      signal,
     );
   }
   await briefDemoDelay(400);

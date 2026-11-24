@@ -238,6 +238,20 @@ export function App() {
   activeCampaignRef.current = activeCampaign;
   const bannerTimerRef = useRef<number | null>(null);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
+  const turnSeqRef = useRef(0);
+  const isTurnInFlightRef = useRef(false);
+  const turnAbortRef = useRef<AbortController | null>(null);
+  const pulseSecondsRef = useRef(settings.livingWorldSeconds);
+  pulseSecondsRef.current = pulseSecondsLeft;
+
+  const cancelActiveTurnRequest = useCallback(() => {
+    turnSeqRef.current += 1;
+    if (turnAbortRef.current) {
+      turnAbortRef.current.abort();
+      turnAbortRef.current = null;
+    }
+    isTurnInFlightRef.current = false;
+  }, []);
 
   const triggerChapterBanner = useCallback(
     (eyebrow: string, title: string, subtitle?: string) => {
@@ -361,6 +375,7 @@ export function App() {
   }, []);
 
   const persistActiveCampaign = useCallback((next: Campaign) => {
+    activeCampaignRef.current = next;
     setActiveCampaign(next);
     void saveCampaignAsync(next).then(setCampaigns);
   }, []);
@@ -924,9 +939,12 @@ export function App() {
   };
 
   const handleOpenCampaign = (camp: Campaign) => {
+    cancelActiveTurnRequest();
     stopSpeechPlayback();
+    setIsBusy(false);
     setUndoStack([]);
     setLastTurnMeta(null);
+    activeCampaignRef.current = camp;
     setActiveCampaign(camp);
     setPreviewTheme(camp.world.primaryTheme);
     setPulseSecondsLeft(settings.livingWorldSeconds);
@@ -1004,8 +1022,22 @@ export function App() {
       pushToUndoStack?: boolean;
       extraPromptNote?: string;
       skipStoryteller?: boolean;
+      forceReplace?: boolean;
     },
   ) => {
+    // Synchronous mutex prevents double-fire / duplicate AI responses overwriting each other
+    if (isTurnInFlightRef.current && !options?.forceReplace) {
+      return;
+    }
+    if (turnAbortRef.current) {
+      turnAbortRef.current.abort();
+      turnAbortRef.current = null;
+    }
+    const mySeq = ++turnSeqRef.current;
+    const abortController = new AbortController();
+    turnAbortRef.current = abortController;
+    isTurnInFlightRef.current = true;
+
     const crisisMode =
       baseCamp.status === 'crisis_tension' ? 'breaking_point' : undefined;
 
@@ -1104,6 +1136,7 @@ export function App() {
       entries: [...baseCamp.entries, playerEntry],
     };
 
+    activeCampaignRef.current = optimisticCampaign;
     setActiveCampaign(optimisticCampaign);
     setIsBusy(true);
     setPulseSecondsLeft(settings.livingWorldSeconds);
@@ -1120,7 +1153,13 @@ export function App() {
         settings,
         apiHealth,
         crisisMode,
+        abortController.signal,
       );
+
+      // Discard stale/superseded response (e.g. after Inspiration Reroll, Undo, or campaign switch)
+      if (mySeq !== turnSeqRef.current) {
+        return;
+      }
 
       const hasTrainingStation = Boolean(
         optimisticCampaign.stronghold?.upgrades.some((u) => u.id === 'training'),
@@ -1415,6 +1454,13 @@ export function App() {
         }
       }
     } catch (err) {
+      if (
+        mySeq !== turnSeqRef.current ||
+        (err instanceof DOMException && err.name === 'AbortError')
+      ) {
+        return;
+      }
+      activeCampaignRef.current = baseCamp;
       setActiveCampaign(baseCamp);
       setRestoredDraft({
         id: Date.now(),
@@ -1427,7 +1473,13 @@ export function App() {
           : 'Falha ao gerar resposta — sua mensagem foi restaurada na barra abaixo.',
       );
     } finally {
-      setIsBusy(false);
+      if (mySeq === turnSeqRef.current) {
+        if (turnAbortRef.current === abortController) {
+          turnAbortRef.current = null;
+        }
+        isTurnInFlightRef.current = false;
+        setIsBusy(false);
+      }
     }
   };
 
@@ -1443,6 +1495,8 @@ export function App() {
     if (
       !camp ||
       isBusy ||
+      isTurnInFlightRef.current ||
+      camp.activeWorldEvent ||
       camp.status === 'ended_fallen' ||
       camp.status === 'ended_victory'
     ) {
@@ -1488,7 +1542,9 @@ export function App() {
     },
   ) => {
     const camp = activeCampaignRef.current;
-    if (!camp) return;
+    if (!camp || isBusy || isTurnInFlightRef.current || !camp.activeWorldEvent) {
+      return;
+    }
 
     const choice = meta.choice;
     const stronghold =
@@ -1637,7 +1693,8 @@ export function App() {
   };
 
   const handleUndoTurn = () => {
-    if (isBusy || undoStack.length === 0) return;
+    if (isBusy || isTurnInFlightRef.current || undoStack.length === 0) return;
+    cancelActiveTurnRequest();
     stopSpeechPlayback();
     const prevSnapshot = undoStack[undoStack.length - 1];
     setUndoStack((stack) => stack.slice(0, -1));
@@ -1647,7 +1704,7 @@ export function App() {
   };
 
   const handleRegenerateTurn = async () => {
-    if (isBusy || !lastTurnMeta) return;
+    if (isBusy || isTurnInFlightRef.current || !lastTurnMeta) return;
     stopSpeechPlayback();
     await executeStoryTurn(
       lastTurnMeta.preTurnSnapshot,
@@ -1760,6 +1817,7 @@ export function App() {
       {
         precomputedDiceRoll: newRoll,
         pushToUndoStack: false,
+        forceReplace: true,
       },
     );
   };
@@ -1947,20 +2005,45 @@ export function App() {
 
   const handleAdvanceWorld = useCallback(async () => {
     const camp = activeCampaignRef.current;
-    if (!camp || isBusy || camp.status !== 'active') return;
+    if (
+      !camp ||
+      isBusy ||
+      isTurnInFlightRef.current ||
+      camp.activeWorldEvent ||
+      camp.status !== 'active'
+    ) {
+      return;
+    }
 
+    const mySeq = ++turnSeqRef.current;
+    const abortController = new AbortController();
+    turnAbortRef.current = abortController;
+    isTurnInFlightRef.current = true;
     setIsBusy(true);
     try {
-      const response = await requestLivingWorldPulse(camp, settings, apiHealth);
+      const response = await requestLivingWorldPulse(
+        camp,
+        settings,
+        apiHealth,
+        abortController.signal,
+      );
+      if (mySeq !== turnSeqRef.current) {
+        return;
+      }
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id || latest.turnCount !== camp.turnCount) {
+        return;
+      }
+
       const { nextPlayer, deltas: playerDeltas } = applyStateChanges(
-        camp.player,
+        latest.player,
         response.stateChanges,
       );
-      const resolvedLoc = response.location || camp.currentLocation;
+      const resolvedLoc = response.location || latest.currentLocation;
       const { nextCodex, deltas: codexDeltas } = applyCodexChanges(
-        camp.codex,
+        latest.codex,
         resolvedLoc,
-        camp.turnCount,
+        latest.turnCount,
         response.stateChanges,
       );
       const nextStatus = evaluateStatus(nextPlayer.vigor, nextPlayer.tension);
@@ -1968,7 +2051,7 @@ export function App() {
       const pulseEntry: StoryEntry = {
         id: `entry_pulse_${Date.now()}`,
         role: 'pulse',
-        turn: camp.turnCount,
+        turn: latest.turnCount,
         sceneTitle: response.sceneTitle,
         location: resolvedLoc,
         mood: response.mood,
@@ -1978,17 +2061,17 @@ export function App() {
       };
 
       persistActiveCampaign({
-        ...camp,
+        ...latest,
         currentLocation: resolvedLoc,
-        currentMood: response.mood || camp.currentMood,
+        currentMood: response.mood || latest.currentMood,
         player: nextPlayer,
         codex: nextCodex,
         status: nextStatus,
         actions:
           response.actions.length > 0
             ? toTacticalActions(response.actions)
-            : camp.actions,
-        entries: [...camp.entries, pulseEntry],
+            : latest.actions,
+        entries: [...latest.entries, pulseEntry],
         engineUsed: response.engineUsed,
       });
       setPulseSecondsLeft(settings.livingWorldSeconds);
@@ -1996,12 +2079,24 @@ export function App() {
         setPulsePaused(true);
       }
     } catch (err) {
+      if (
+        mySeq !== turnSeqRef.current ||
+        (err instanceof DOMException && err.name === 'AbortError')
+      ) {
+        return;
+      }
       pushToast(
         'error',
         err instanceof Error ? err.message : 'Erro no Pulso do Mundo Vivo.',
       );
     } finally {
-      setIsBusy(false);
+      if (mySeq === turnSeqRef.current) {
+        if (turnAbortRef.current === abortController) {
+          turnAbortRef.current = null;
+        }
+        isTurnInFlightRef.current = false;
+        setIsBusy(false);
+      }
     }
   }, [apiHealth, isBusy, persistActiveCampaign, pushToast, settings]);
 
@@ -2010,6 +2105,7 @@ export function App() {
       view !== 'stage' ||
       !activeCampaign ||
       activeCampaign.status !== 'active' ||
+      Boolean(activeCampaign.activeWorldEvent) ||
       !settings.livingWorldEnabled ||
       pulsePaused ||
       isBusy ||
@@ -2020,13 +2116,16 @@ export function App() {
     }
 
     const timer = window.setInterval(() => {
-      setPulseSecondsLeft((prev) => {
-        if (prev <= 1) {
-          void handleAdvanceWorld();
-          return settings.livingWorldSeconds;
-        }
-        return prev - 1;
-      });
+      if (isTurnInFlightRef.current) return;
+      const next = pulseSecondsRef.current - 1;
+      if (next <= 0) {
+        pulseSecondsRef.current = settings.livingWorldSeconds;
+        setPulseSecondsLeft(settings.livingWorldSeconds);
+        void handleAdvanceWorld();
+      } else {
+        pulseSecondsRef.current = next;
+        setPulseSecondsLeft(next);
+      }
     }, 1000);
 
     return () => window.clearInterval(timer);

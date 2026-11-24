@@ -1346,7 +1346,12 @@ export function StoryStage({
                         onTypingActivity();
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
+                        if (
+                          e.key === 'Enter' &&
+                          !e.shiftKey &&
+                          !e.repeat &&
+                          !e.nativeEvent.isComposing
+                        ) {
                           e.preventDefault();
                           handleSubmit();
                         }
