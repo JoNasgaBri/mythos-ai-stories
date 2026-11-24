@@ -4,6 +4,7 @@ import {
   FolderOpen,
   Heart,
   MapPin,
+  QrCode,
   Save,
   Trash2,
   Upload,
@@ -22,6 +23,7 @@ interface SaveSlotsDrawerProps {
   onDeleteSave: (slotId: string) => void;
   onExportJson: () => void;
   onImportJson: (rawJson: string) => void;
+  onOpenQrSync?: () => void;
 }
 
 function formatSavedTime(ts: number): string {
@@ -47,6 +49,7 @@ export function SaveSlotsDrawer({
   onDeleteSave,
   onExportJson,
   onImportJson,
+  onOpenQrSync,
 }: SaveSlotsDrawerProps) {
   const [slotName, setSlotName] = useState('');
   const [confirmLoadId, setConfirmLoadId] = useState<string | null>(null);
@@ -231,31 +234,50 @@ export function SaveSlotsDrawer({
           )}
         </div>
 
-        {/* Footer Export / Import Backup */}
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-canvas)]/45 p-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/json,.json"
-            onChange={handleImportFile}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] py-2 text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            <span>Importar Backup</span>
-          </button>
-          <button
-            type="button"
-            onClick={onExportJson}
-            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] py-2 text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span>Exportar Crônica</span>
-          </button>
+        {/* Footer QR Sync + Export / Import Backup */}
+        <div
+          className="space-y-2 border-t border-[var(--border-subtle)] bg-[var(--bg-canvas)]/45 p-4"
+          style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+        >
+          {onOpenQrSync ? (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenQrSync();
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] py-2.5 text-xs font-semibold text-[var(--accent)] transition hover:brightness-110"
+            >
+              <QrCode className="h-4 w-4" />
+              <span>Enviar / Receber por QR Code (PC ↔ Celular)</span>
+            </button>
+          ) : null}
+
+          <div className="flex items-center justify-between gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={handleImportFile}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] py-2 text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Importar JSON</span>
+            </button>
+            <button
+              type="button"
+              onClick={onExportJson}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] py-2 text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>Exportar JSON</span>
+            </button>
+          </div>
         </div>
       </aside>
     </div>

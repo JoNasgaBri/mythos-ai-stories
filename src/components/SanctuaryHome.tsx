@@ -6,6 +6,7 @@ import {
   MessageSquare,
   Play,
   Plus,
+  QrCode,
   Sparkles,
   Trash2,
   Upload,
@@ -29,6 +30,8 @@ interface SanctuaryHomeProps {
   onStartFreeform: (difficulty: DifficultyId, theme: WorldThemeId) => void;
   onPlayInstantDemo: () => void;
   onOpenDocs: () => void;
+  onShareCampaignQr: (campaign: Campaign) => void;
+  onReceiveCampaignQr: () => void;
   onOpenCampaign: (campaign: Campaign) => void;
   onExportCampaign: (campaign: Campaign) => void;
   onDeleteCampaign: (id: string) => void;
@@ -45,6 +48,8 @@ export function SanctuaryHome({
   onStartFreeform,
   onPlayInstantDemo,
   onOpenDocs,
+  onShareCampaignQr,
+  onReceiveCampaignQr,
   onOpenCampaign,
   onExportCampaign,
   onDeleteCampaign,
@@ -224,7 +229,17 @@ export function SanctuaryHome({
             </span>
           </div>
 
-          <div>
+          <div className="flex flex-wrap items-center gap-2">
+            {onReceiveCampaignQr ? (
+              <button
+                type="button"
+                onClick={onReceiveCampaignQr}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent)]/40 bg-[var(--accent-soft)] px-3.5 py-2 text-xs font-semibold text-[var(--accent)] transition hover:border-[var(--accent)] hover:brightness-110"
+              >
+                <QrCode className="h-3.5 w-3.5" />
+                <span>{language === 'en' ? 'Receive via QR / Code' : 'Receber QR / Código'}</span>
+              </button>
+            ) : null}
             <input
               ref={fileInputRef}
               type="file"
@@ -353,6 +368,21 @@ export function SanctuaryHome({
                       </span>
 
                       <div className="flex items-center gap-1.5">
+                        {onShareCampaignQr ? (
+                          <button
+                            type="button"
+                            onClick={() => onShareCampaignQr(camp)}
+                            title={
+                              language === 'en'
+                                ? 'Send to Phone via QR Code'
+                                : 'Enviar para Celular por QR Code'
+                            }
+                            className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-soft)] p-1.5 text-[var(--accent)] transition hover:border-[var(--accent)] hover:brightness-110"
+                          >
+                            <QrCode className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+
                         <button
                           type="button"
                           onClick={() => onExportCampaign(camp)}

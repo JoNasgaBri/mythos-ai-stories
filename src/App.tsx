@@ -8,6 +8,7 @@ import { DocsPortal } from './components/docs/DocsPortal';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
 import { OrganizationModal } from './components/OrganizationModal';
 import { ProtagonistEditModal } from './components/ProtagonistEditModal';
+import { QrSyncModal } from './components/QrSyncModal';
 import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
 import { SanctuaryHome } from './components/SanctuaryHome';
@@ -258,6 +259,16 @@ export function App() {
   const [mobileRightHudOpen, setMobileRightHudOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savesOpen, setSavesOpen] = useState(false);
+  const [qrSyncState, setQrSyncState] = useState<{
+    open: boolean;
+    mode: 'send' | 'receive';
+    campaign: Campaign | null;
+    receiveCode?: string;
+  }>({
+    open: false,
+    mode: 'send',
+    campaign: null,
+  });
   const [settingsInitialTab, setSettingsInitialTab] = useState<
     'ai' | 'game' | 'reading'
   >('game');
@@ -324,6 +335,25 @@ export function App() {
   useEffect(() => {
     void fetchApiHealth().then(setApiHealth);
     void loadCampaignsAsync().then(setCampaigns);
+
+    // Auto-detect scanned QR sync link (?sync=CODIGO) on mobile or PC
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const syncCode = params.get('sync')?.trim();
+      if (syncCode && syncCode.length >= 4) {
+        params.delete('sync');
+        const nextUrl = `${window.location.pathname}${
+          params.toString() ? `?${params.toString()}` : ''
+        }${window.location.hash}`;
+        window.history.replaceState({}, '', nextUrl);
+        setQrSyncState({
+          open: true,
+          mode: 'receive',
+          campaign: null,
+          receiveCode: syncCode.toUpperCase(),
+        });
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -989,6 +1019,18 @@ export function App() {
     setPulseSecondsLeft(settings.livingWorldSeconds);
     setPulsePaused(false);
     setView('stage');
+  };
+
+  const handleQrCampaignReceived = (received: Campaign, openImmediately: boolean) => {
+    void saveCampaignAsync(received).then((updated) => {
+      setCampaigns(updated);
+      if (openImmediately) {
+        handleOpenCampaign(received);
+        pushToast('save', `Crônica recebida e aberta: ${received.world.title}`);
+      } else {
+        pushToast('save', `Crônica recebida e salva na estante: ${received.world.title}`);
+      }
+    });
   };
 
   const triggerWorldEvent = async (opts?: {
@@ -4495,6 +4537,12 @@ export function App() {
             });
           }}
           onImportCampaign={handleImportCampaign}
+          onShareCampaignQr={(camp) =>
+            setQrSyncState({ open: true, mode: 'send', campaign: camp })
+          }
+          onReceiveCampaignQr={() =>
+            setQrSyncState({ open: true, mode: 'receive', campaign: null })
+          }
         />
       ) : null}
 
@@ -4760,6 +4808,25 @@ export function App() {
         onDeleteSave={(slotId) => void handleDeleteSaveSlot(slotId)}
         onExportJson={() => activeCampaign && exportCampaignJson(activeCampaign)}
         onImportJson={handleImportCampaign}
+        onOpenQrSync={() => {
+          setSavesOpen(false);
+          setQrSyncState({
+            open: true,
+            mode: activeCampaign ? 'send' : 'receive',
+            campaign: activeCampaign,
+          });
+        }}
+      />
+
+      <QrSyncModal
+        open={qrSyncState.open}
+        initialMode={qrSyncState.mode}
+        initialReceiveCode={qrSyncState.receiveCode}
+        campaign={qrSyncState.campaign ?? activeCampaign}
+        onClose={() =>
+          setQrSyncState((prev) => ({ ...prev, open: false, receiveCode: undefined }))
+        }
+        onCampaignReceived={handleQrCampaignReceived}
       />
 
       <SettingsDrawer
