@@ -601,7 +601,7 @@ export function ProceduralTerrainMap({
 
       {/* Top-Left Title & Layer Toggle */}
       <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2">
-        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)]/90 px-3 py-1.5 text-[11px] font-medium text-[var(--text-primary)] shadow-lg backdrop-blur-md">
+        <div className="hidden sm:inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)]/90 px-3 py-1.5 text-[11px] font-medium text-[var(--text-primary)] shadow-lg backdrop-blur-md">
           <MapIcon className="h-3.5 w-3.5 text-[var(--accent)]" />
           <span>{worldTitle} · Terreno Procedural</span>
         </div>

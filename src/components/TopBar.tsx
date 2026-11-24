@@ -163,7 +163,9 @@ export function TopBar({
                 </button>
               ) : null}
 
-              <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
+              {clock && timeStr ? (
+                <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
+              ) : null}
 
               <button
                 type="button"

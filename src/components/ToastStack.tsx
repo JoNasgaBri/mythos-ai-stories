@@ -26,7 +26,12 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex max-w-xs flex-col gap-2 sm:right-6 sm:bottom-6">
+    <div
+      className="pointer-events-none fixed right-3 left-3 z-50 flex flex-col items-center gap-2 sm:top-auto sm:right-6 sm:bottom-6 sm:left-auto sm:max-w-xs sm:items-end"
+      style={{
+        top: 'calc(3.35rem + env(safe-area-inset-top))',
+      }}
+    >
       {toasts.map((toast) => {
         const icon =
           toast.kind === 'level' || toast.kind === 'talent' ? (

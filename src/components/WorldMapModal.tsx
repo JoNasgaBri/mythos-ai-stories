@@ -191,26 +191,37 @@ export function WorldMapModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/75 px-4 py-3 sm:px-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]">
-              <Compass className="h-5 w-5" />
+        <div className="flex flex-col gap-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/75 px-3.5 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-5">
+          <div className="flex min-w-0 items-center justify-between gap-2.5">
+            <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+              <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]">
+                <Compass className="h-4 w-4 sm:h-5 sm:w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="truncate font-display text-sm sm:text-base font-semibold text-[var(--text-primary)]">
+                  Atlas · {campaign.world.title}
+                </h2>
+                <p className="truncate text-[11px] text-[var(--text-muted)]">
+                  {allLocations.length} locais descobertos
+                  {campaign.mapMeta?.realWorldRegion
+                    ? ` · ${campaign.mapMeta.realWorldRegion}`
+                    : ''}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h2 className="truncate font-display text-sm sm:text-base font-semibold text-[var(--text-primary)]">
-                Atlas Cartográfico · {campaign.world.title}
-              </h2>
-              <p className="truncate text-[11px] text-[var(--text-muted)]">
-                {allLocations.length} locais descobertos
-                {campaign.mapMeta?.realWorldRegion
-                  ? ` · ${campaign.mapMeta.realWorldRegion}`
-                  : ''}
-              </p>
-            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fechar Atlas"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border-subtle)] text-[var(--text-muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] sm:hidden"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
 
           {/* View Mode Tabs + Sync GPS */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
             {/* Primary 2-Tab Switcher */}
             <div className="flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-1">
               <button
@@ -293,7 +304,7 @@ export function WorldMapModal({
               type="button"
               onClick={onClose}
               aria-label="Fechar Atlas"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-subtle)] text-[var(--text-muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+              className="hidden h-8 w-8 items-center justify-center rounded-full border border-[var(--border-subtle)] text-[var(--text-muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] sm:flex"
             >
               <X className="h-4 w-4" />
             </button>
@@ -301,15 +312,15 @@ export function WorldMapModal({
         </div>
 
         {/* Search & Interactive Category Filter Bar */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2.5 sm:px-5">
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
+        <div className="flex flex-col gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:px-5 sm:py-2.5">
+          <div className="relative w-full sm:max-w-xs sm:flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Buscar local, bairro ou região..."
-              className="w-full rounded-full border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 py-1.5 pr-7 pl-8 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
+              className="w-full rounded-full border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 py-1.5 pr-7 pl-8 text-[16px] sm:text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
             />
             {searchQuery ? (
               <button
@@ -322,11 +333,11 @@ export function WorldMapModal({
             ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="no-scrollbar flex flex-nowrap items-center gap-1.5 overflow-x-auto sm:flex-wrap">
             <button
               type="button"
               onClick={() => setKindFilter('all')}
-              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+              className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                 kindFilter === 'all'
                   ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
                   : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -344,7 +355,7 @@ export function WorldMapModal({
                   key={k}
                   type="button"
                   onClick={() => setKindFilter(active ? 'all' : k)}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                     active
                       ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--text-primary)] font-semibold'
                       : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
