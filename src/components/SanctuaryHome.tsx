@@ -28,6 +28,7 @@ interface SanctuaryHomeProps {
   onStartForge: () => void;
   onStartFreeform: (difficulty: DifficultyId, theme: WorldThemeId) => void;
   onPlayInstantDemo: () => void;
+  onOpenDocs: () => void;
   onOpenCampaign: (campaign: Campaign) => void;
   onExportCampaign: (campaign: Campaign) => void;
   onDeleteCampaign: (id: string) => void;
@@ -43,6 +44,7 @@ export function SanctuaryHome({
   onStartForge,
   onStartFreeform,
   onPlayInstantDemo,
+  onOpenDocs,
   onOpenCampaign,
   onExportCampaign,
   onDeleteCampaign,
@@ -107,6 +109,15 @@ export function SanctuaryHome({
             >
               <Flame className="h-4 w-4 text-[var(--accent)]" />
               <span>{copy.playInstantDemo}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onOpenDocs}
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-5 py-3.5 text-sm font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            >
+              <BookOpen className="h-4 w-4 text-[var(--accent)]" />
+              <span>Documentação & Guias</span>
             </button>
           </div>
 

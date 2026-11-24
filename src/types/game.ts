@@ -728,7 +728,7 @@ export interface ToastMessage {
   message: string;
 }
 
-export type AppView = 'home' | 'forge' | 'stage';
+export type AppView = 'home' | 'forge' | 'stage' | 'docs';
 
 export type ForgeArchitectMode =
   | 'full_world'

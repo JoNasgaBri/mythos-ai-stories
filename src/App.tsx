@@ -4,6 +4,7 @@ import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
+import { DocsPortal } from './components/docs/DocsPortal';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
 import { OrganizationModal } from './components/OrganizationModal';
 import { ProtagonistEditModal } from './components/ProtagonistEditModal';
@@ -191,6 +192,8 @@ export function App() {
   const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [saveSlots, setSaveSlots] = useState<SaveSlot[]>([]);
   const [view, setView] = useState<AppView>('home');
+  const [docsReturnView, setDocsReturnView] = useState<'home' | 'forge' | 'stage'>('home');
+  const [docsInitialArticleId, setDocsInitialArticleId] = useState<string | undefined>(undefined);
   const [previewTheme, setPreviewTheme] = useState<WorldThemeId>('fantasy');
 
   const [apiHealth, setApiHealth] = useState<ApiHealthStatus>({
@@ -4389,6 +4392,28 @@ export function App() {
     setFocusMode((f) => !f);
   };
 
+  const handleOpenDocs = (articleId?: string) => {
+    if (view === 'docs') {
+      setView(docsReturnView);
+      return;
+    }
+    setDocsReturnView(view);
+    setDocsInitialArticleId(articleId);
+    setMobileLeftRailOpen(false);
+    setMobileRightHudOpen(false);
+    setView('docs');
+  };
+
+  const handleReturnFromDocs = () => {
+    if (docsReturnView === 'stage' && activeCampaign) {
+      setView('stage');
+    } else if (docsReturnView === 'forge') {
+      setView('forge');
+    } else {
+      setView('home');
+    }
+  };
+
   return (
     <div
       className={
@@ -4434,11 +4459,21 @@ export function App() {
             colorMode: settings.colorMode === 'dark' ? 'light' : 'dark',
           })
         }
+        onOpenDocs={() => handleOpenDocs()}
         onOpenSettings={(tab = 'game') => {
           setSettingsInitialTab(tab);
           setSettingsOpen(true);
         }}
       />
+
+      {view === 'docs' ? (
+        <DocsPortal
+          initialArticleId={docsInitialArticleId}
+          hasActiveCampaign={Boolean(activeCampaign)}
+          activeCampaignTitle={activeCampaign?.world.title}
+          onReturn={handleReturnFromDocs}
+        />
+      ) : null}
 
       {view === 'home' ? (
         <SanctuaryHome
@@ -4450,6 +4485,7 @@ export function App() {
           onStartForge={() => setView('forge')}
           onStartFreeform={handleStartFreeformStory}
           onPlayInstantDemo={handlePlayInstantDemo}
+          onOpenDocs={() => handleOpenDocs('overview')}
           onOpenCampaign={handleOpenCampaign}
           onExportCampaign={exportCampaignJson}
           onDeleteCampaign={(id) => {

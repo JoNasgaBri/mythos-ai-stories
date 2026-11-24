@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  BookOpen,
   ChevronLeft,
   Compass,
   MapPin,
@@ -35,6 +36,7 @@ interface TopBarProps {
   isGeneratingEvent?: boolean;
   onToggleAmbientSound?: () => void;
   onToggleColorMode: () => void;
+  onOpenDocs?: () => void;
   onOpenSettings: (initialTab?: 'ai' | 'game' | 'reading') => void;
 }
 
@@ -54,6 +56,7 @@ export function TopBar({
   isGeneratingEvent,
   onToggleAmbientSound,
   onToggleColorMode,
+  onOpenDocs,
   onOpenSettings,
 }: TopBarProps) {
   const copy = UI_COPY[settings.language];
@@ -291,6 +294,26 @@ export function TopBar({
                 <Moon className="h-3.5 w-3.5" />
               )}
             </button>
+
+            {onOpenDocs ? (
+              <button
+                type="button"
+                onClick={onOpenDocs}
+                title={
+                  view === 'docs'
+                    ? 'Fechar Documentação e voltar'
+                    : 'Documentação & Guias do MYTHOS'
+                }
+                className={`inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[10px] font-semibold transition ${
+                  view === 'docs'
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <BookOpen className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden md:inline">Docs</span>
+              </button>
+            ) : null}
 
             <button
               type="button"
