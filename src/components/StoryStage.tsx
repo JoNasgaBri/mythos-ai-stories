@@ -112,6 +112,7 @@ interface StoryStageProps {
   onOpenRumors?: () => void;
   onOpenWorkbench?: () => void;
   onOpenRest?: () => void;
+  onOpenEditProtagonist?: () => void;
   onSendAction: (
     text: string,
     intent?: ActionIntent,
@@ -198,6 +199,7 @@ export function StoryStage({
   onOpenRumors,
   onOpenWorkbench,
   onOpenRest,
+  onOpenEditProtagonist,
   onSendAction,
   onTypingActivity,
   onSummarizeNow,
@@ -1375,6 +1377,7 @@ export function StoryStage({
             onOpenCharacterInventory={onOpenCharacterInventory}
             onOpenBaseBlueprint={onOpenBaseBlueprint}
             onOpenRelationships={onOpenRelationships}
+            onOpenEditProtagonist={onOpenEditProtagonist}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
@@ -1452,6 +1455,10 @@ export function StoryStage({
                     setRightHudPeek(false);
                     onOpenRelationships?.(npcId);
                   }}
+                  onOpenEditProtagonist={() => {
+                    setRightHudPeek(false);
+                    onOpenEditProtagonist?.();
+                  }}
                   onMentionNpc={handleMentionNpcFromHud}
                   onTravelLocation={handleTravelFromHud}
                   onAddCanonFact={onAddCanonFact}
@@ -1519,6 +1526,10 @@ export function StoryStage({
                 onOpenRelationships={(npcId) => {
                   onCloseMobileRightHud();
                   onOpenRelationships?.(npcId);
+                }}
+                onOpenEditProtagonist={() => {
+                  onCloseMobileRightHud();
+                  onOpenEditProtagonist?.();
                 }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}

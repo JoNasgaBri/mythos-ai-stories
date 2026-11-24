@@ -110,9 +110,81 @@ export const ATTRIBUTE_META: Record<
   },
 };
 
+export const MAX_LEVEL = 20;
+export const NATURAL_ATTRIBUTE_CAP = 20;
+export const EQUIPMENT_ATTRIBUTE_CAP = 24;
+export const ASI_LEVELS = [4, 8, 12, 16, 20] as const;
+
 export const POINT_BUY_BUDGET = 27;
 export const POINT_BUY_MIN = 8;
 export const POINT_BUY_MAX = 15;
+
+export function getProficiencyBonus(level: number): number {
+  const lv = Math.max(1, Math.min(MAX_LEVEL, Math.round(level || 1)));
+  if (lv <= 4) return 2;
+  if (lv <= 8) return 3;
+  if (lv <= 12) return 4;
+  if (lv <= 16) return 5;
+  return 6;
+}
+
+export function getAsiPointsForLevel(level: number): number {
+  return (ASI_LEVELS as readonly number[]).includes(level) ? 2 : 0;
+}
+
+export function getNextAsiLevel(level: number): number | null {
+  for (const milestone of ASI_LEVELS) {
+    if (milestone > level) return milestone;
+  }
+  return null;
+}
+
+export function getAttributeTierMeta(score: number): {
+  label: string;
+  color: string;
+} {
+  if (score <= 7) return { label: 'Fraco', color: '#f87171' };
+  if (score <= 9) return { label: 'Abaixo da Média', color: '#fb923c' };
+  if (score <= 11) return { label: 'Comum', color: '#94a3b8' };
+  if (score <= 13) return { label: 'Treinado', color: '#86efac' };
+  if (score <= 15) return { label: 'Profissional', color: '#38bdf8' };
+  if (score <= 17) return { label: 'Elite', color: '#a78bfa' };
+  if (score <= 19) return { label: 'Ápice Humano', color: '#fbbf24' };
+  if (score === 20) return { label: 'Sobre-humano (Teto)', color: '#f472b6' };
+  return { label: 'Mítico (Equip./Relíquia)', color: '#f59e0b' };
+}
+
+export const BG3_BUILD_PRESETS: Array<{
+  id: string;
+  label: string;
+  summary: string;
+  attributes: CharacterAttributes;
+}> = [
+  {
+    id: 'strategist',
+    label: 'Estrategista / Investigador',
+    summary: 'Mente afiada e percepção alta, porte físico comum (FOR 8).',
+    attributes: { str: 8, dex: 11, con: 10, int: 16, wis: 14, cha: 14 },
+  },
+  {
+    id: 'survivor',
+    label: 'Sobrevivente / Furtivo',
+    summary: 'Reflexos, pontaria e instinto aguçados, força moderada.',
+    attributes: { str: 10, dex: 16, con: 13, int: 11, wis: 15, cha: 8 },
+  },
+  {
+    id: 'athlete',
+    label: 'Atleta / Combatente',
+    summary: 'Força e vigor dominantes, perfil físico de linha de frente.',
+    attributes: { str: 16, dex: 13, con: 15, int: 9, wis: 11, cha: 9 },
+  },
+  {
+    id: 'diplomat',
+    label: 'Diplomata / Líder',
+    summary: 'Carisma magnético e leitura social, físico civil comum.',
+    attributes: { str: 8, dex: 11, con: 10, int: 13, wis: 14, cha: 16 },
+  },
+];
 
 export function getPointBuyCost(score: number): number {
   if (score <= 8) return 0;
@@ -138,8 +210,9 @@ export function formatModifier(mod: number): string {
 }
 
 export function xpRequiredForLevel(level: number): number {
-  const safeLevel = Math.max(1, Math.min(20, Math.round(level)));
-  return 100 * safeLevel + 50 * (safeLevel - 1) * safeLevel;
+  const safeLevel = Math.max(1, Math.min(MAX_LEVEL, Math.round(level)));
+  // Authentic 1–20 pacing curve so reaching Level 20 is a true epic journey
+  return Math.round(200 * safeLevel + 85 * (safeLevel - 1) * safeLevel);
 }
 
 export function computeMaxVigor(

@@ -5,6 +5,7 @@ import { ChapterBanner } from './components/ChapterBanner';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
+import { ProtagonistEditModal } from './components/ProtagonistEditModal';
 import { RelationshipsModal } from './components/RelationshipsModal';
 import { RestCampModal, type RestChoicePayload } from './components/RestCampModal';
 import { SanctuaryHome } from './components/SanctuaryHome';
@@ -41,13 +42,16 @@ import {
   defaultWorldClockForTheme,
   deriveRelationshipFromAffinity,
   formatClockTime,
+  getAsiPointsForLevel,
   getEffectiveAttributes,
   getEquippedGearBonuses,
   getSupplyMetaForTheme,
   inferItemStorage,
   isVehicleLikeItem,
+  MAX_LEVEL,
   MAX_PARTY_SIZE,
   MAX_SHORT_RESTS_PER_DAY,
+  NATURAL_ATTRIBUTE_CAP,
   STRONGHOLD_UPGRADE_CATALOG,
   SUPPLY_KEYS,
   xpRequiredForLevel,
@@ -171,6 +175,7 @@ export function App() {
   const [clockOpen, setClockOpen] = useState(false);
   const [restModalOpen, setRestModalOpen] = useState(false);
   const [charInventoryOpen, setCharInventoryOpen] = useState(false);
+  const [editProtagonistOpen, setEditProtagonistOpen] = useState(false);
   const [baseBlueprintOpen, setBaseBlueprintOpen] = useState(false);
   const [relationshipsOpen, setRelationshipsOpen] = useState(false);
   const [relationshipsFocusNpcId, setRelationshipsFocusNpcId] = useState<string | null>(null);
@@ -832,7 +837,7 @@ export function App() {
         level: 1,
         xp: 0,
         xpToNextLevel: xpRequiredForLevel(1),
-        attributePoints: 6,
+        attributePoints: 0,
         attributes: { ...DEFAULT_ATTRIBUTES },
         vigor: 100,
         maxVigor: 100,
@@ -1829,7 +1834,7 @@ export function App() {
     const camp = activeCampaignRef.current;
     if (!camp || camp.player.attributePoints <= 0) return;
     const currentVal = camp.player.attributes[attr] ?? 10;
-    if (currentVal >= 20) return;
+    if (currentVal >= NATURAL_ATTRIBUTE_CAP) return;
 
     const nextAttributes = {
       ...camp.player.attributes,
@@ -2323,16 +2328,19 @@ export function App() {
         );
       }
 
-      // Award crafting XP & check level-up
+      // Award crafting XP & check level-up (BG3/5e cap at Level 20 + ASI at 4/8/12/16/20)
       let nextLevel = latest.player.level;
       let nextXp = latest.player.xp + res.xpGain;
       let nextXpReq = latest.player.xpToNextLevel;
       let nextAttrPoints = latest.player.attributePoints;
-      while (nextXp >= nextXpReq) {
+      while (nextXp >= nextXpReq && nextLevel < MAX_LEVEL) {
         nextXp -= nextXpReq;
         nextLevel += 1;
         nextXpReq = xpRequiredForLevel(nextLevel);
-        nextAttrPoints += 2;
+        nextAttrPoints += getAsiPointsForLevel(nextLevel);
+      }
+      if (nextLevel >= MAX_LEVEL) {
+        nextXp = Math.min(nextXp, nextXpReq);
       }
       const gear = getEquippedGearBonuses(nextInventory);
       const nextMaxVigor = computeMaxVigor(
@@ -3082,6 +3090,7 @@ export function App() {
             setWorkbenchOpen(true);
           }}
           onOpenRest={() => setRestModalOpen(true)}
+          onOpenEditProtagonist={() => setEditProtagonistOpen(true)}
           queuedUseItem={queuedUseItem}
           onConsumeQueuedUseItem={() => setQueuedUseItem(null)}
           queuedSayNpc={queuedSayNpc}
@@ -3173,6 +3182,13 @@ export function App() {
               setLastCraftResult(null);
               setWorkbenchOpen(true);
             }}
+          />
+          <ProtagonistEditModal
+            open={editProtagonistOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            onClose={() => setEditProtagonistOpen(false)}
+            onSaveProfile={handleUpdatePlayerProfile}
           />
           <BaseBlueprintModal
             open={baseBlueprintOpen}

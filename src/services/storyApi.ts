@@ -15,12 +15,15 @@ import {
   defaultAffinityFromStance,
   defaultNpcAttributes,
   deriveRelationshipFromAffinity,
+  getAsiPointsForLevel,
   getEquippedGearBonuses,
+  getProficiencyBonus,
   inferEquipSlotFromCategory,
   inferItemStorage,
   inferNpcAssistAttribute,
   inferSkillAttribute,
   MAX_INSPIRATION,
+  MAX_LEVEL,
   RELATIONSHIP_META,
   syncSkillLevels,
   xpRequiredForLevel,
@@ -690,11 +693,14 @@ export function applyStateChanges(
       positive: true,
     });
 
-    while (xp >= xpToNextLevel && level < 20) {
+    while (xp >= xpToNextLevel && level < MAX_LEVEL) {
+      const prevProf = getProficiencyBonus(level);
       xp -= xpToNextLevel;
       level += 1;
-      attributePoints += 1;
+      const asiGain = getAsiPointsForLevel(level);
+      attributePoints += asiGain;
       xpToNextLevel = xpRequiredForLevel(level);
+      const nextProf = getProficiencyBonus(level);
       const gearBonuses = getEquippedGearBonuses(inventory);
       const nextMax = computeMaxVigor(
         level,
@@ -702,12 +708,22 @@ export function applyStateChanges(
         gearBonuses.maxVigor ?? 0,
       );
       maxVigor = Math.max(maxVigor, nextMax);
-      vigor = Math.min(maxVigor, vigor + 15);
+      vigor = Math.min(maxVigor, vigor + 12);
+      const perks = [
+        asiGain > 0 ? `+${asiGain} ASI` : null,
+        nextProf > prevProf ? `Prof. +${nextProf}` : null,
+        '+Vigor Máx',
+      ]
+        .filter(Boolean)
+        .join(' · ');
       deltas.push({
         kind: 'level',
-        label: `Nível ${level}! (+1 Atributo)`,
+        label: `Nível ${level}! (${perks})`,
         positive: true,
       });
+    }
+    if (level >= MAX_LEVEL) {
+      xp = Math.min(xp, xpToNextLevel);
     }
   }
 

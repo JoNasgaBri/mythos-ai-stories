@@ -48,12 +48,17 @@ import {
   EQUIP_SLOT_LABEL,
   formatModifier,
   getAttributeModifier,
+  getAttributeTierMeta,
   getEffectiveAttributes,
   getEquippedGearBonuses,
+  getNextAsiLevel,
+  getProficiencyBonus,
   LOCATION_KIND_META,
   LOCATION_STATUS_META,
   MAX_INSPIRATION,
+  MAX_LEVEL,
   MAX_PARTY_SIZE,
+  NATURAL_ATTRIBUTE_CAP,
   RARITY_META,
   RELATIONSHIP_META,
   STRONGHOLD_UPGRADE_CATALOG,
@@ -89,6 +94,7 @@ interface ContextHudProps {
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
+  onOpenEditProtagonist?: () => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
@@ -154,6 +160,7 @@ export function ContextHud({
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
   onOpenRelationships,
+  onOpenEditProtagonist,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
@@ -319,40 +326,70 @@ export function ContextHud({
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={isGeneratingPortrait}
-                onClick={onGeneratePortrait}
-                title={player.portraitUrl ? 'Gerar novo retrato' : 'Gerar retrato do personagem'}
-                className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--accent)] transition hover:border-[var(--accent)] disabled:opacity-50"
-              >
-                <Camera className={`h-3.5 w-3.5 ${isGeneratingPortrait ? 'animate-spin' : ''}`} />
-                <span>{isGeneratingPortrait ? '...' : player.portraitUrl ? 'Novo' : 'Retrato'}</span>
-              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {onOpenEditProtagonist && !isEnded ? (
+                  <button
+                    type="button"
+                    onClick={onOpenEditProtagonist}
+                    title="Editar Nome, Altura, Porte Físico e Atributos BG3"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent)] transition hover:brightness-110"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    <span>Editar</span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={isGeneratingPortrait}
+                  onClick={onGeneratePortrait}
+                  title={player.portraitUrl ? 'Gerar novo retrato' : 'Gerar retrato do personagem'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--accent)] transition hover:border-[var(--accent)] disabled:opacity-50"
+                >
+                  <Camera className={`h-3.5 w-3.5 ${isGeneratingPortrait ? 'animate-spin' : ''}`} />
+                  <span>{isGeneratingPortrait ? '...' : player.portraitUrl ? 'Novo' : 'Retrato'}</span>
+                </button>
+              </div>
             </div>
 
-            {/* Level XP Bar + Level Up Callout */}
+            {/* Level XP Bar + Proficiency + Next ASI */}
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5">
               <div className="mb-1 flex items-center justify-between text-[11px]">
                 <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)]">
                   <Award className="h-3.5 w-3.5" />
-                  Experiência · Nível {player.level}
+                  Nível {player.level}/{MAX_LEVEL} · Prof. +{getProficiencyBonus(player.level)}
                 </span>
                 <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
-                  {player.xp} / {player.xpToNextLevel} XP
+                  {player.level >= MAX_LEVEL
+                    ? 'NÍVEL MÁXIMO'
+                    : `${player.xp} / ${player.xpToNextLevel} XP`}
                 </span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
                 <div
                   className="h-full rounded-full bg-[var(--accent)] transition-all duration-500"
                   style={{
-                    width: `${Math.max(0, Math.min(100, (player.xp / Math.max(1, player.xpToNextLevel)) * 100))}%`,
+                    width: `${
+                      player.level >= MAX_LEVEL
+                        ? 100
+                        : Math.max(0, Math.min(100, (player.xp / Math.max(1, player.xpToNextLevel)) * 100))
+                    }%`,
                   }}
                 />
               </div>
+              <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+                <span>
+                  {(() => {
+                    const nextAsi = getNextAsiLevel(player.level);
+                    return nextAsi
+                      ? `Próximo ASI (+2): Nv.${nextAsi}`
+                      : 'Todos os ASIs (4/8/12/16/20) alcançados';
+                  })()}
+                </span>
+                <span>Teto Natural: {NATURAL_ATTRIBUTE_CAP}</span>
+              </div>
               {player.attributePoints > 0 && onSpendAttributePoint && !isEnded ? (
                 <div className="mt-2 flex items-center justify-between rounded-lg border border-[var(--accent)]/60 bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent)]">
-                  <span>Ponto de Atributo disponível!</span>
+                  <span>Pontos ASI disponíveis!</span>
                   <span className="font-mono-tech">+{player.attributePoints}</span>
                 </div>
               ) : null}
@@ -360,9 +397,20 @@ export function ContextHud({
 
             {/* BG3 6-Attribute Grid */}
             <div>
-              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Atributos (Estilo BG3)
-              </h4>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Atributos (BG3 · Teto {NATURAL_ATTRIBUTE_CAP})
+                </h4>
+                {onOpenEditProtagonist && !isEnded ? (
+                  <button
+                    type="button"
+                    onClick={onOpenEditProtagonist}
+                    className="text-[10px] font-semibold text-[var(--accent)] hover:underline"
+                  >
+                    Recalibrar build
+                  </button>
+                ) : null}
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {ATTRIBUTE_KEYS.map((key) => {
                   const meta = ATTRIBUTE_META[key];
@@ -370,9 +418,10 @@ export function ContextHud({
                   const effScore = effectiveAttrs[key];
                   const mod = getAttributeModifier(effScore);
                   const gearAdd = gearBonuses[key] ?? 0;
+                  const tier = getAttributeTierMeta(effScore);
                   const canSpend =
                     player.attributePoints > 0 &&
-                    baseScore < 20 &&
+                    baseScore < NATURAL_ATTRIBUTE_CAP &&
                     Boolean(onSpendAttributePoint) &&
                     !isEnded;
 
@@ -399,6 +448,12 @@ export function ContextHud({
                             ({gearAdd > 0 ? `+${gearAdd}` : gearAdd})
                           </span>
                         ) : null}
+                      </span>
+                      <span
+                        className="mt-0.5 truncate max-w-full text-[9px] font-medium"
+                        style={{ color: tier.color }}
+                      >
+                        {tier.label}
                       </span>
                       {canSpend ? (
                         <button

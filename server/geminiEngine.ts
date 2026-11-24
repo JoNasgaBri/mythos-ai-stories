@@ -3,6 +3,7 @@ import {
   formatModifier,
   getAttributeModifier,
   getEffectiveAttributes,
+  getProficiencyBonus,
 } from '../src/engine/rpgSystem.js';
 import type {
   AiNarrationPreferences,
@@ -877,7 +878,7 @@ function buildSystemInstruction(
     campaign.freeformMode && campaign.turnCount <= 3
       ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
       : '',
-    'PHYSICAL & STAT REALISM (STRICT): Always respect real physical differences (height, physique, body build, base STR/CON/DEX, and combat/athletic background) between the protagonist and NPCs. If a taller, heavier, stronger, or athletically trained NPC (e.g. 1,90m elite athlete) faces a smaller or non-athletic protagonist (e.g. 1,70m civilian strategist) in direct grappling, wrestling, or raw strength, portray that physical gap honestly — the stronger/bigger character naturally dominates direct physical contests unless the dice roll explicitly succeeded against a tough opposed DC or the protagonist uses a genuinely clever non-strength tactic. Never hand out easy unrealistic physical victories.',
+    'PHYSICAL & STAT REALISM (STRICT BG3 / D&D 5e SCALE 1–20): Honor the authentic BG3 ability scale (8-9 = below average civilian, 10-11 = ordinary, 12-13 = trained, 14-15 = professional, 16-17 = elite athlete/master, 18-19 = human peak, 20 = superhuman natural cap; >20 only via legendary gear/relics). Always respect real physical differences (height, physique, body build, base STR/CON/DEX, and combat/athletic background) between the protagonist and NPCs. If a taller, heavier, stronger, or athletically trained NPC (e.g. 1,90m elite athlete) faces a smaller or non-athletic protagonist (e.g. 1,70m civilian strategist) in direct grappling, wrestling, or raw strength, portray that physical gap honestly — the stronger/bigger character naturally dominates direct physical contests unless the dice roll explicitly succeeded against a tough opposed DC or the protagonist uses a genuinely clever non-strength tactic. Never hand out easy unrealistic physical victories.',
     'DICE & ACTION DISCIPLINE: Reserve requiresRoll=true (risk: "medium" or "high") strictly for actions with real danger, combat, sneaking past active threats, hacking/lockpicking, risky physical/magic feats, or high-stakes deception/intimidation. Keep ordinary dialogue, walking, planning, resting, and routine observation at risk: "safe" with requiresRoll=false, and include at least 1-2 narrative (requiresRoll=false) choices in non-combat scenes.',
     'MEMORY DISCIPLINE: Honor recent story developments and player-directed changes first; if an older starting-seed fact conflicts with where the player took the story, follow the player’s evolved story. Only emit stateChanges.addCanonFacts (0-2 concise sentences) when a lasting development, new relationship, promise, or revelation occurs.',
     'Keep stateChanges grounded: track NPCs via upsertNpcs, places/dungeons via discoverLocation, and faction shifts via upsertFactions.',
@@ -917,7 +918,8 @@ function buildCompactStateContext(campaign: Campaign): string {
         height: campaign.player.height ?? null,
         physique: campaign.player.physique ?? null,
         appearance: campaign.player.appearance ?? null,
-        level: campaign.player.level,
+        level: `${campaign.player.level}/20`,
+        proficiencyBonus: `+${getProficiencyBonus(campaign.player.level)}`,
         xp: `${campaign.player.xp}/${campaign.player.xpToNextLevel}`,
         attributes: {
           STR: `${effAttrs.str} (${formatModifier(getAttributeModifier(effAttrs.str))})`,
