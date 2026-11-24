@@ -3437,7 +3437,13 @@ export function App() {
   };
 
   return (
-    <div className="relative min-h-screen">
+    <div
+      className={
+        view === 'stage'
+          ? 'relative flex h-dvh flex-col overflow-hidden'
+          : 'relative min-h-dvh'
+      }
+    >
       <div className="mythos-ambient" />
       <div className="mythos-grain" />
       {view === 'stage' && activeCampaign ? (

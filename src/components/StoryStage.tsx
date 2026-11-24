@@ -3,6 +3,7 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Compass,
   Dices,
   Eye,
@@ -59,6 +60,8 @@ import type {
 } from '../types/game';
 import { ContextHud } from './ContextHud';
 import { EpiloguePanel } from './EpiloguePanel';
+import { MobileChoicesSheet } from './MobileChoicesSheet';
+import { MobileCommandBar } from './MobileCommandBar';
 import {
   extractPlayerSpeech,
   SceneBeatsRenderer,
@@ -232,6 +235,7 @@ export function StoryStage({
   const [dicePolicy, setDicePolicy] = useState<DiceRollPolicy>('auto');
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [rightHudPeek, setRightHudPeek] = useState(false);
+  const [mobileChoicesOpen, setMobileChoicesOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{
     url: string;
     caption?: string;
@@ -240,6 +244,19 @@ export function StoryStage({
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mobileTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const focusActiveTextarea = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      mobileTextareaRef.current?.focus();
+    } else {
+      textareaRef.current?.focus();
+    }
+  };
+
+  useEffect(() => {
+    if (isBusy) setMobileChoicesOpen(false);
+  }, [isBusy]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -427,7 +444,7 @@ export function StoryStage({
     e.stopPropagation();
     setInputMode(action.intent === 'diplomatic' ? 'say' : 'act');
     setInputText(action.label);
-    textareaRef.current?.focus();
+    window.setTimeout(() => focusActiveTextarea(), 40);
   };
 
   const renderProseParagraphs = (text: string, useDropCap: boolean) => {
@@ -456,7 +473,7 @@ export function StoryStage({
   }
 
   return (
-    <div className="animate-view-enter relative z-10 mx-auto flex h-[calc(100dvh-3.05rem)] w-full max-w-[1860px] gap-3 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-2.5">
+    <div className="animate-view-enter relative z-10 mx-auto flex min-h-0 w-full max-w-[1860px] flex-1 gap-0 px-0 pt-1 pb-0 sm:gap-4 sm:px-4 sm:py-2.5">
       {/* Left Zen Browser Retractable Tactical Rail */}
       <ZenLeftRail
         campaign={campaign}
@@ -484,10 +501,10 @@ export function StoryStage({
       />
 
       {/* Main Narrative Theater */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Scrollable Editorial Chronicle */}
-        <div className="flex-1 overflow-y-auto pr-1 pb-6">
-          <div className="mx-auto max-w-[960px] space-y-6 pt-2 2xl:max-w-[1060px]">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-2.5 pb-5 sm:px-0 sm:pr-1 sm:pb-6">
+          <div className="mx-auto max-w-[960px] space-y-4 pt-1.5 sm:space-y-6 sm:pt-2 2xl:max-w-[1060px]">
             {campaign.entries.map((entry, idx) => {
               if (entry.role === 'prologue') {
                 const isIllustrating = illustratingEntryId === entry.id;
@@ -549,7 +566,7 @@ export function StoryStage({
                       </h1>
                     </div>
 
-                    <div className="p-6 sm:p-8">
+                    <div className="p-4 sm:p-8">
                       <div>{renderProseParagraphs(entry.text, true)}</div>
 
                       {(campaign.world.worldLaws || campaign.codex.factions.length > 0) ? (
@@ -834,8 +851,8 @@ export function StoryStage({
                     </button>
                   ) : null}
 
-                  <div className="p-5 sm:p-7">
-                    <header className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+                  <div className="p-3.5 sm:p-7">
+                    <header className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2.5 sm:mb-4 sm:pb-3">
                       <div className="flex items-center gap-2">
                         <Compass className="h-4 w-4 text-[var(--accent)]" />
                         <h2 className="font-display text-sm font-semibold tracking-wider text-[var(--accent)] uppercase">
@@ -1006,6 +1023,32 @@ export function StoryStage({
                 <span className="h-2.5 w-2.5 animate-ping rounded-full bg-[var(--accent)]" />
                 <span className="font-prose italic">{copy.weaving}</span>
               </div>
+            ) : !isEnded &&
+              !isVigorCrisis &&
+              !campaign.activeWorldEvent &&
+              campaign.actions.length > 0 ? (
+              <div className="pt-1 pb-2 md:hidden">
+                <button
+                  type="button"
+                  onClick={() => setMobileChoicesOpen(true)}
+                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--accent)]/45 bg-[var(--accent-soft)]/70 px-4 py-3 text-left shadow-sm transition active:scale-[0.99]"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/20 text-[var(--accent)]">
+                      <Sparkles className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold text-[var(--text-primary)]">
+                        {campaign.actions.length} escolhas disponíveis
+                      </p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">
+                        Toque para abrir ou escreva abaixo
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronUp className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+                </button>
+              </div>
             ) : null}
 
             <div ref={bottomRef} />
@@ -1014,9 +1057,14 @@ export function StoryStage({
 
         {/* Bottom Command Dock */}
         {!isEnded ? (
-          <div className="mx-auto w-full max-w-[960px] shrink-0 pt-2 2xl:max-w-[1060px]">
+          <div className="mx-auto w-full max-w-[960px] shrink-0 pt-0 md:pt-2 2xl:max-w-[1060px]">
             {campaign.activeWorldEvent ? (
-              <div className="animate-beat-enter flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#fbbf24]/55 bg-[#fbbf24]/10 px-4 py-3 text-xs text-[#fbbf24] shadow-md">
+              <div
+                className="animate-beat-enter mx-2.5 mb-2 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-[#fbbf24]/55 bg-[#fbbf24]/10 px-3.5 py-2.5 text-xs text-[#fbbf24] shadow-md sm:mx-0 sm:mb-0 sm:px-4 sm:py-3"
+                style={{
+                  marginBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+                }}
+              >
                 <div className="flex items-center gap-2.5">
                   <Zap className="h-4 w-4 shrink-0 animate-pulse" />
                   <span>
@@ -1041,7 +1089,12 @@ export function StoryStage({
                 </button>
               </div>
             ) : isVigorCrisis ? (
-              <div className="animate-beat-enter rounded-2xl border border-[var(--danger)]/60 bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-elevated)]">
+              <div
+                className="animate-beat-enter mx-2.5 mb-2 rounded-2xl border border-[var(--danger)]/60 bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-elevated)] sm:mx-0 sm:mb-0 sm:p-5"
+                style={{
+                  marginBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+                }}
+              >
                 <div className="flex items-start gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--danger)]/15 text-[var(--danger)]">
                     <AlertTriangle className="h-5 w-5" />
@@ -1096,7 +1149,7 @@ export function StoryStage({
             ) : (
               <>
                 {isTensionCrisis ? (
-                  <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[var(--warning)]/60 bg-[var(--warning)]/12 px-4 py-2.5 text-xs text-[var(--warning)]">
+                  <div className="mx-2.5 mb-2 flex items-center gap-2 rounded-xl border border-[var(--warning)]/60 bg-[var(--warning)]/12 px-3 py-2 text-xs text-[var(--warning)] md:mx-0 md:mb-3 md:px-4 md:py-2.5">
                     <Zap className="h-4 w-4 shrink-0" />
                     <span>
                       <strong>Ponto de Ruptura (Tensão 100%):</strong> sua próxima ação desencadeia uma virada climática decisiva na cena!
@@ -1104,6 +1157,30 @@ export function StoryStage({
                   </div>
                 ) : null}
 
+                {/* Mobile Compact Native Command Bar (Android & iOS — frees ~82% of viewport for reading!) */}
+                <MobileCommandBar
+                  language={language}
+                  inputText={inputText}
+                  inputMode={inputMode}
+                  dicePolicy={dicePolicy}
+                  liveAssessment={liveAssessment}
+                  selectedItem={selectedItem}
+                  actionsCount={campaign.actions.length}
+                  isBusy={isBusy}
+                  textareaRef={mobileTextareaRef}
+                  onChangeInputText={(val) => {
+                    setInputText(val);
+                    onTypingActivity();
+                  }}
+                  onChangeInputMode={setInputMode}
+                  onCycleDicePolicy={cycleDicePolicy}
+                  onClearSelectedItem={() => setSelectedItem(null)}
+                  onOpenChoicesSheet={() => setMobileChoicesOpen(true)}
+                  onSubmit={handleSubmit}
+                />
+
+                {/* Desktop Full 2x2 Choices + Spotlight Command Bar */}
+                <div className="hidden md:block">
                 {campaign.actions.length > 0 ? (
                   <div className="mb-3 space-y-1.5">
                     <div className="flex items-center justify-between px-1 text-[11px]">
@@ -1402,6 +1479,7 @@ export function StoryStage({
                     </button>
                   </div>
                 </div>
+                </div>
               </>
             )}
           </div>
@@ -1543,7 +1621,13 @@ export function StoryStage({
             onClick={onCloseMobileRightHud}
             aria-hidden="true"
           />
-          <div className="animate-drawer-right relative z-10 flex h-full w-full max-w-sm flex-col bg-[var(--bg-canvas)] p-3">
+          <div
+            className="animate-drawer-right relative z-10 flex h-full w-full max-w-sm flex-col bg-[var(--bg-canvas)] px-3"
+            style={{
+              paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
+              paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+            }}
+          >
             <div className="mb-2 flex items-center justify-between px-1">
               <span className="font-display text-sm font-semibold text-[var(--accent)]">
                 Mundo, Memória & Ficha
@@ -1639,6 +1723,19 @@ export function StoryStage({
           </div>
         </div>
       ) : null}
+
+      {/* Native-feeling Mobile Choices Bottom Sheet (Android & iOS) */}
+      <MobileChoicesSheet
+        open={mobileChoicesOpen}
+        campaign={campaign}
+        language={language}
+        dicePolicy={dicePolicy}
+        effectiveAttrs={effectiveAttrs}
+        isBusy={isBusy}
+        onClose={() => setMobileChoicesOpen(false)}
+        onSelectAction={handleActionCardClick}
+        onCustomizeAction={handleCustomizeAction}
+      />
     </div>
   );
 }

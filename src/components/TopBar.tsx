@@ -69,11 +69,14 @@ export function TopBar({
     Boolean(clock?.countdown) && (clock?.countdown?.daysLeft ?? 99) <= 2;
 
   return (
-    <header className="pointer-events-none sticky top-0 z-30 w-full px-2.5 pt-2 pb-1 sm:px-4">
-      <div className="mx-auto grid h-9 w-full max-w-[1860px] grid-cols-[1fr_auto_1fr] items-center gap-2">
+    <header
+      className="pointer-events-none sticky top-0 z-30 w-full shrink-0 px-2 pb-1 sm:px-4"
+      style={{ paddingTop: 'max(0.45rem, env(safe-area-inset-top))' }}
+    >
+      <div className="mx-auto grid h-9 w-full max-w-[1860px] grid-cols-[1fr_auto_1fr] items-center gap-1.5 sm:gap-2">
         {/* Left Floating Island: Zen Left Toggle + Navigation + Brand */}
         <div className="flex min-w-0 items-center justify-start">
-          <div className="animate-island-drop pointer-events-auto inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-[var(--border-subtle)]/90 bg-[var(--bg-glass)] px-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl transition-all duration-200 hover:border-[var(--border-strong)]">
+          <div className="animate-island-drop pointer-events-auto inline-flex h-9 max-w-full items-center gap-0.5 sm:gap-1 rounded-full border border-[var(--border-subtle)]/90 bg-[var(--bg-glass)] px-1 sm:px-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl transition-all duration-200 hover:border-[var(--border-strong)]">
             {isStage ? (
               <button
                 type="button"
@@ -100,7 +103,7 @@ export function TopBar({
                 type="button"
                 onClick={onBackHome}
                 title={copy.backHome}
-                className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]"
+                className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-1.5 sm:px-2 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]"
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
                 <span className="hidden md:inline">{copy.backHome}</span>
@@ -110,7 +113,9 @@ export function TopBar({
             <button
               type="button"
               onClick={onBackHome}
-              className="flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 text-left transition hover:bg-[var(--bg-surface)]"
+              className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full px-1.5 sm:px-2 text-left transition hover:bg-[var(--bg-surface)] ${
+                isStage ? 'hidden sm:flex' : 'flex'
+              }`}
             >
               <Compass className="h-3.5 w-3.5 text-[var(--accent)]" />
               <span className="font-display text-xs font-semibold tracking-[0.18em] text-[var(--text-primary)]">
@@ -158,16 +163,16 @@ export function TopBar({
                 </button>
               ) : null}
 
-              <span className="hidden h-3.5 w-px bg-[var(--border-subtle)] md:block" />
+              <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
 
               <button
                 type="button"
                 onClick={onOpenMap}
                 title={`Local atual: ${campaign.currentLocation} (Abrir Mapa Visual)`}
-                className="hidden h-7 max-w-[200px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] text-[var(--text-secondary)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--accent)] md:inline-flex xl:max-w-[250px]"
+                className="inline-flex h-7 max-w-[200px] shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-1.5 sm:px-2 text-[11px] text-[var(--text-secondary)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--accent)] xl:max-w-[250px]"
               >
-                <MapPin className="h-3 w-3 shrink-0 text-[var(--accent)]" />
-                <span className="truncate">{campaign.currentLocation}</span>
+                <MapPin className="h-3.5 w-3.5 md:h-3 md:w-3 shrink-0 text-[var(--accent)]" />
+                <span className="hidden truncate md:inline">{campaign.currentLocation}</span>
               </button>
 
               {clock?.countdown ? (

@@ -182,11 +182,12 @@ export function WorldMapModal({
 
   return (
     <div
-      className="mythos-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2.5 sm:p-4 backdrop-blur-md"
+      className="mythos-backdrop-in fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        className="mythos-modal-pop flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl"
+        className="mythos-modal-pop flex h-[94dvh] sm:h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}

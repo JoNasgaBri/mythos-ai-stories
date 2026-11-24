@@ -465,7 +465,13 @@ export function ZenLeftRail({
       {/* Mobile Left Slide-Over Drawer */}
       {mobileOpen ? (
         <div className="animate-backdrop-in fixed inset-0 z-50 flex justify-start bg-black/60 backdrop-blur-sm lg:hidden">
-          <div className="animate-drawer-left relative z-10 flex h-full w-[264px] max-w-[82vw] flex-col border-r border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl">
+          <div
+            className="animate-drawer-left relative z-10 flex h-full w-[264px] max-w-[82vw] flex-col border-r border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-2xl"
+            style={{
+              paddingTop: 'env(safe-area-inset-top)',
+              paddingBottom: 'env(safe-area-inset-bottom)',
+            }}
+          >
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-3">
               <div>
                 <div className="font-display text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
