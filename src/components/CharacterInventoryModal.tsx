@@ -17,7 +17,9 @@ import {
   Key,
   Layers,
   Minus,
+  Pencil,
   Plus,
+  Ruler,
   Search,
   Shield,
   Sparkles,
@@ -45,11 +47,13 @@ import {
 import type {
   AttributeId,
   Campaign,
+  CharacterAttributes,
   EquipSlot,
   InventoryItem,
   ItemCategory,
   ItemStorageLocation,
   LanguageId,
+  PlayerState,
   SupplyType,
 } from '../types/game';
 
@@ -67,6 +71,14 @@ interface CharacterInventoryModalProps {
   onConsumeItemNow: (itemId: string) => void;
   onUseItemInScene: (item: InventoryItem) => void;
   onSpendAttributePoint: (attr: AttributeId) => void;
+  onUpdatePlayerProfile?: (
+    patch: Partial<
+      Pick<
+        PlayerState,
+        'name' | 'age' | 'occupation' | 'height' | 'physique' | 'appearance' | 'attributes'
+      >
+    >,
+  ) => void;
   onGeneratePortrait: () => void;
   onOpenBaseBlueprint: () => void;
   onOpenWorkbench?: () => void;
@@ -107,6 +119,7 @@ export function CharacterInventoryModal({
   onConsumeItemNow,
   onUseItemInScene,
   onSpendAttributePoint,
+  onUpdatePlayerProfile,
   onGeneratePortrait,
   onOpenBaseBlueprint,
   onOpenWorkbench,
@@ -118,6 +131,41 @@ export function CharacterInventoryModal({
   const [filter, setFilter] = useState<PackFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [draftName, setDraftName] = useState(campaign.player.name);
+  const [draftAge, setDraftAge] = useState(String(campaign.player.age));
+  const [draftHeight, setDraftHeight] = useState(campaign.player.height ?? '');
+  const [draftPhysique, setDraftPhysique] = useState(
+    campaign.player.physique ?? '',
+  );
+  const [draftAppearance, setDraftAppearance] = useState(
+    campaign.player.appearance ?? '',
+  );
+  const [draftAttrs, setDraftAttrs] = useState<CharacterAttributes>({
+    ...campaign.player.attributes,
+  });
+
+  const startEditingProfile = () => {
+    setDraftName(campaign.player.name);
+    setDraftAge(String(campaign.player.age));
+    setDraftHeight(campaign.player.height ?? '');
+    setDraftPhysique(campaign.player.physique ?? '');
+    setDraftAppearance(campaign.player.appearance ?? '');
+    setDraftAttrs({ ...campaign.player.attributes });
+    setEditingProfile(true);
+  };
+
+  const saveProfileEdits = () => {
+    onUpdatePlayerProfile?.({
+      name: draftName.trim() || campaign.player.name,
+      age: Math.max(14, Math.min(120, Math.round(Number(draftAge) || campaign.player.age))),
+      height: draftHeight.trim() || undefined,
+      physique: draftPhysique.trim() || undefined,
+      appearance: draftAppearance.trim() || undefined,
+      attributes: draftAttrs,
+    });
+    setEditingProfile(false);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -434,21 +482,197 @@ export function CharacterInventoryModal({
                 mobileSection === 'doll' ? 'hidden lg:block' : ''
               }`}
             >
-              <div className="mb-2 flex items-center justify-between text-xs">
+              <div className="mb-2 flex items-center justify-between gap-2 text-xs">
                 <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)]">
                   <Award className="h-3.5 w-3.5" />
-                  Atributos & Experiência
+                  Atributos & Biometria
                 </span>
-                <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
-                  {player.xp}/{player.xpToNextLevel} XP
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
+                    {player.xp}/{player.xpToNextLevel} XP
+                  </span>
+                  {onUpdatePlayerProfile && !isEnded ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        editingProfile ? setEditingProfile(false) : startEditingProfile()
+                      }
+                      className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition ${
+                        editingProfile
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
+                      }`}
+                    >
+                      <Pencil className="h-2.5 w-2.5" />
+                      {editingProfile ? 'Fechar' : 'Editar'}
+                    </button>
+                  ) : null}
+                </div>
               </div>
-              <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+              <div className="mb-2.5 h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
                 <div
                   className="h-full rounded-full bg-[var(--accent)]"
                   style={{ width: `${xpPct}%` }}
                 />
               </div>
+
+              {/* Biometrics Summary Strip */}
+              {!editingProfile ? (
+                <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
+                  <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-0.5">
+                    <Ruler className="h-2.5 w-2.5 text-[var(--accent)]" />
+                    {player.height ? `Altura: ${player.height}` : 'Altura não definida'}
+                  </span>
+                  <span className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-0.5">
+                    {player.physique ? `Porte: ${player.physique}` : 'Porte não definido'}
+                  </span>
+                </div>
+              ) : (
+                <div className="animate-tab-fade mb-3 space-y-2.5 rounded-xl border border-[var(--accent)]/40 bg-[var(--bg-surface)] p-3 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-[10px] text-[var(--text-muted)]">Nome</span>
+                      <input
+                        type="text"
+                        value={draftName}
+                        onChange={(e) => setDraftName(e.target.value)}
+                        className="mt-0.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] text-[var(--text-muted)]">Idade</span>
+                      <input
+                        type="number"
+                        min={14}
+                        max={120}
+                        value={draftAge}
+                        onChange={(e) => setDraftAge(e.target.value)}
+                        className="mt-0.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-[10px] text-[var(--text-muted)]">Altura (ex.: 1,70m)</span>
+                      <input
+                        type="text"
+                        value={draftHeight}
+                        onChange={(e) => setDraftHeight(e.target.value)}
+                        placeholder="1,70m"
+                        className="mt-0.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] text-[var(--text-muted)]">Porte Físico</span>
+                      <input
+                        type="text"
+                        value={draftPhysique}
+                        onChange={(e) => setDraftPhysique(e.target.value)}
+                        placeholder="Comum / Não atlético"
+                        className="mt-0.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1">
+                    {['Franzino', 'Comum / Não atlético', 'Médio', 'Atlético', 'Robusto'].map(
+                      (preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setDraftPhysique(preset)}
+                          className={`rounded-md border px-1.5 py-0.5 text-[9px] transition ${
+                            draftPhysique === preset
+                              ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ),
+                    )}
+                  </div>
+
+                  <label className="block">
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      Aparência / Detalhes Físicos (Opcional)
+                    </span>
+                    <input
+                      type="text"
+                      value={draftAppearance}
+                      onChange={(e) => setDraftAppearance(e.target.value)}
+                      placeholder="Ex.: 1,70m, corpo comum não atlético, cabelo escuro..."
+                      className="mt-0.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </label>
+
+                  <div>
+                    <div className="mb-1 text-[10px] font-semibold text-[var(--text-muted)]">
+                      Recalibrar Atributos Base (6–20)
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {ATTRIBUTE_KEYS.map((key) => (
+                        <div
+                          key={key}
+                          className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-1"
+                        >
+                          <span className="text-[10px] font-bold text-[var(--text-muted)]">
+                            {ATTRIBUTE_META[key].short[language]}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraftAttrs((prev) => ({
+                                  ...prev,
+                                  [key]: Math.max(6, (prev[key] ?? 10) - 1),
+                                }))
+                              }
+                              className="flex h-4 w-4 items-center justify-center rounded bg-[var(--bg-elevated)] text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            >
+                              -
+                            </button>
+                            <span className="font-mono-tech w-5 text-center text-[11px] font-bold text-[var(--text-primary)]">
+                              {draftAttrs[key]}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraftAttrs((prev) => ({
+                                  ...prev,
+                                  [key]: Math.min(20, (prev[key] ?? 10) + 1),
+                                }))
+                              }
+                              className="flex h-4 w-4 items-center justify-center rounded bg-[var(--bg-elevated)] text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setEditingProfile(false)}
+                      className="rounded-lg border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveProfileEdits}
+                      className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1 text-[11px] font-semibold text-[#111] hover:brightness-110"
+                    >
+                      <Check className="h-3 w-3" />
+                      Salvar Ficha
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {player.attributePoints > 0 && !isEnded ? (
                 <div className="mb-2.5 flex items-center justify-between rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-3 py-1.5 text-[11px] font-semibold text-[var(--accent)]">

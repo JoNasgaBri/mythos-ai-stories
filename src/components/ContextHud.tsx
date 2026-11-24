@@ -309,7 +309,13 @@ export function ContextHud({
                   </div>
                   <p className="truncate text-xs text-[var(--text-secondary)]">
                     {player.occupation} · {player.age} anos
+                    {player.height ? ` · ${player.height}` : ''}
                   </p>
+                  {player.physique ? (
+                    <p className="truncate text-[10px] text-[var(--text-muted)]">
+                      Porte: {player.physique}
+                    </p>
+                  ) : null}
                 </div>
               </div>
 

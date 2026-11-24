@@ -1,4 +1,8 @@
-import { getAttributeModifier, getWeatherRollModifier } from './rpgSystem';
+import {
+  defaultNpcAttributes,
+  getAttributeModifier,
+  getWeatherRollModifier,
+} from './rpgSystem';
 import type {
   ActionIntent,
   ActionRisk,
@@ -11,6 +15,7 @@ import type {
   DifficultyId,
   LanguageId,
   NpcRecord,
+  PlayerState,
   RollMode,
   SkillProgress,
   TacticalAction,
@@ -20,11 +25,171 @@ import type {
 export function findPartyAdvantage(
   attribute: AttributeId,
   npcs: NpcRecord[] | undefined,
+  excludeNpcId?: string,
 ): NpcRecord | undefined {
   if (!Array.isArray(npcs)) return undefined;
   return npcs.find(
-    (n) => n.inParty && n.status === 'alive' && n.assistAttribute === attribute,
+    (n) =>
+      n.inParty &&
+      n.status === 'alive' &&
+      n.id !== excludeNpcId &&
+      n.assistAttribute === attribute,
   );
+}
+
+export function parseHeightCm(raw?: string): number | null {
+  if (!raw) return null;
+  const normalized = raw.replace(',', '.').toLowerCase().trim();
+  const cmMatch = normalized.match(/(\d{3})\s*cm/);
+  if (cmMatch) return Number(cmMatch[1]);
+  const mMatch = normalized.match(/(\d\.\d{1,2})\s*m?/);
+  if (mMatch) {
+    const val = Number(mMatch[1]);
+    if (val >= 1.2 && val <= 2.5) return Math.round(val * 100);
+  }
+  return null;
+}
+
+const UNARMED_CONTEST_PATTERN =
+  /\b(tatame|lute\s+comigo|lutar\s+comigo|sparring|grappling|imobiliz|chave\s+de|queda\s+de\s+bra[cç]o|m[aã]os\s+limpas|desarmad|sem\s+armas|luta\s+livre|wrestle|unarmed|spar)\b/i;
+
+export function isUnarmedContest(actionText: string): boolean {
+  return UNARMED_CONTEST_PATTERN.test(actionText);
+}
+
+const SPOKEN_PROPOSAL_PATTERN =
+  /^(?:ent[aã]o\s+)?(?:falo|digo|pergunto|proponho|sugiro|provoco|brinco|pe[cç]o)\b/i;
+const PROPOSAL_QUESTION_CUE =
+  /\b(topa|aceita|vamos|quer\s+lutar|quem\s+vencer|valendo|aposta)\b.*\?$/i;
+
+const CONTEST_VERB_PATTERN =
+  /\b(lut|enfrent|derrub|imobiliz|vencer|ganhar\s+d|contra\s+|desafi|queda\s+de\s+bra[cç]o|sparring|grappling|empurr|segur|blef|mentir|intimid|convenc|fight|wrestle|spar|pin|beat)\b/i;
+
+const DIRECT_COMPANION_CONTEST_PATTERN =
+  /\b(lute\s+comigo|lutar\s+comigo|contra\s+ela|contra\s+ele|imobiliz[aá]-l[ao]|derrub[aá]-l[ao]|vencer\s+ela|vencer\s+ele|no\s+tatame|sparring|grappling|queda\s+de\s+bra[cç]o)\b/i;
+
+export function detectOpposedNpc(
+  actionText: string,
+  npcs: NpcRecord[] | undefined,
+): NpcRecord | undefined {
+  if (!Array.isArray(npcs) || npcs.length === 0) return undefined;
+  const text = actionText.trim();
+  if (!text || !CONTEST_VERB_PATTERN.test(text)) return undefined;
+  const lower = text.toLowerCase();
+
+  // 1) Explicit mention of a known alive NPC by full name or first name
+  for (const npc of npcs) {
+    if (npc.status !== 'alive') continue;
+    const full = npc.name.trim().toLowerCase();
+    const first = full.split(/\s+/)[0];
+    if (
+      (full.length >= 3 && lower.includes(full)) ||
+      (first.length >= 3 && new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lower))
+    ) {
+      return npc;
+    }
+  }
+
+  // 2) Implicit duel/sparring with an active party companion ("lute comigo", "no tatame", "contra ela")
+  if (DIRECT_COMPANION_CONTEST_PATTERN.test(text)) {
+    const partyCompanion = npcs.find((n) => n.inParty && n.status === 'alive');
+    if (partyCompanion) return partyCompanion;
+  }
+
+  return undefined;
+}
+
+export interface OpposedContestResult {
+  opponent: NpcRecord;
+  opposedDc: number;
+  disadvantage: boolean;
+  disadvantageSource?: string;
+  opposedLabel: string;
+}
+
+export function evaluateOpposedContest(
+  player: PlayerState,
+  opponent: NpcRecord,
+  attribute: AttributeId,
+  actionText: string,
+): OpposedContestResult {
+  const unarmed = isUnarmedContest(actionText);
+  const playerScore = unarmed
+    ? (player.attributes?.[attribute] ?? 10)
+    : (player.attributes?.[attribute] ?? 10);
+  const playerMod = getAttributeModifier(playerScore);
+
+  const oppAttrs =
+    opponent.attributes ?? defaultNpcAttributes(opponent.assistAttribute ?? 'wis');
+  const oppScore = oppAttrs[attribute] ?? 10;
+  const oppMod = getAttributeModifier(oppScore);
+
+  let physicalDominance = 0;
+  const reasonParts: string[] = [];
+
+  if (attribute === 'str' || attribute === 'con') {
+    const oppCm = parseHeightCm(opponent.height);
+    const playerCm = parseHeightCm(player.height);
+    if (oppCm && playerCm) {
+      const diff = oppCm - playerCm;
+      if (diff >= 12) {
+        const bonus = Math.min(3, Math.floor(diff / 8));
+        physicalDominance += bonus;
+        reasonParts.push(`${opponent.height} vs ${player.height}`);
+      } else if (diff <= -12) {
+        physicalDominance -= Math.min(2, Math.floor(Math.abs(diff) / 10));
+      }
+    } else if (oppCm && oppCm >= 184) {
+      physicalDominance += 2;
+      reasonParts.push(`${opponent.height}`);
+    }
+
+    const oppBio = [
+      opponent.role,
+      opponent.appearance,
+      opponent.notes,
+      ...(opponent.skills ?? []),
+      ...(opponent.traits ?? []),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const oppIsAthletic =
+      /(atlet|muscul|lut|grappling|boxe|jiu|marcial|elite|soldad|militar|for[cç]a|muralha|combate|t[aá]tic|peso|envergadura)/i.test(
+        oppBio,
+      );
+    if (oppIsAthletic) {
+      physicalDominance += 2;
+      reasonParts.push('porte atlético');
+    }
+
+    const playerPhysique = `${player.physique ?? ''} ${player.appearance ?? ''} ${player.occupation ?? ''}`.toLowerCase();
+    const playerNonAthletic =
+      /(n[aã]o\s+atl[eé]tic|sedent|franzin|magr|comum|civil|estrateg|investig|acad[eê]mic|escrit[oó]rio)/i.test(
+        playerPhysique,
+      );
+    if (oppIsAthletic && playerNonAthletic && playerScore <= 12) {
+      physicalDominance += 1;
+    }
+  }
+
+  const statGap = oppMod - playerMod;
+  const totalEdge = statGap + physicalDominance;
+  const opposedDc = Math.max(10, Math.min(23, 12 + oppMod + physicalDominance));
+  const disadvantage = totalEdge >= 3;
+
+  const detailText =
+    reasonParts.length > 0 ? reasonParts.join(', ') : `atributo ${oppScore}`;
+
+  return {
+    opponent,
+    opposedDc,
+    disadvantage,
+    disadvantageSource: disadvantage
+      ? `${opponent.name} (${detailText})`
+      : undefined,
+    opposedLabel: `vs ${opponent.name} (${detailText})`,
+  };
 }
 
 export const DIFFICULTY_DC: Record<DifficultyId, number> = {
@@ -367,6 +532,20 @@ export function assessFreeAction(
     };
   }
 
+  // Spoken challenge proposals/questions ("Então falo: lute comigo... topa?") are dialogue, not an immediate combat check
+  if (
+    text.length > 0 &&
+    policy !== 'force' &&
+    (SPOKEN_PROPOSAL_PATTERN.test(text) || PROPOSAL_QUESTION_CUE.test(text)) &&
+    /\?/.test(text)
+  ) {
+    return {
+      requiresRoll: false,
+      inferredIntent: 'diplomatic',
+      inferredRisk: 'safe',
+    };
+  }
+
   const matchedRule = text
     ? RISKY_ACTION_RULES.find((rule) => rule.pattern.test(text))
     : undefined;
@@ -491,6 +670,8 @@ export function resolveFateCheck(
     forcedAttribute?: AttributeId;
     rollMode?: RollMode;
     advantageSource?: string;
+    opposedLabel?: string;
+    dcOverride?: number;
     rerolledWithInspiration?: boolean;
     weatherType?: WeatherType;
   },
@@ -514,7 +695,11 @@ export function resolveFateCheck(
   const baseDc = DIFFICULTY_DC[difficulty];
   const riskAdjustment =
     risk === 'safe' ? -3 : risk === 'low' ? -2 : risk === 'high' ? 2 : 0;
-  const dc = Math.max(4, Math.min(22, baseDc + riskAdjustment));
+  const standardDc = Math.max(4, Math.min(22, baseDc + riskAdjustment));
+  const dc =
+    typeof rpgContext?.dcOverride === 'number'
+      ? Math.max(standardDc, Math.min(24, rpgContext.dcOverride))
+      : standardDc;
 
   const attribute =
     rpgContext?.forcedAttribute ?? inferActionAttribute(actionText, intent);
@@ -571,6 +756,7 @@ export function resolveFateCheck(
     rolls,
     rollMode,
     advantageSource: rpgContext?.advantageSource,
+    opposedLabel: rpgContext?.opposedLabel,
     rerolledWithInspiration: rpgContext?.rerolledWithInspiration,
     bonus,
     bonusSource: bonusSourceParts.length > 0 ? bonusSourceParts.join(' · ') : undefined,

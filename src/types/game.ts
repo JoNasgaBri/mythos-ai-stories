@@ -316,6 +316,7 @@ export interface DiceRollResult {
   rolls?: [number, number];
   rollMode?: RollMode;
   advantageSource?: string;
+  opposedLabel?: string;
   rerolledWithInspiration?: boolean;
   bonus: number;
   bonusSource?: string;
@@ -390,6 +391,9 @@ export interface PlayerState {
   name: string;
   age: number;
   occupation: string;
+  height?: string;
+  physique?: string;
+  appearance?: string;
   portraitUrl?: string;
   portraitEngine?: 'gemini' | 'demo';
   level: number;

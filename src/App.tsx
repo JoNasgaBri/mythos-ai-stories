@@ -21,8 +21,11 @@ import type { ZenRailMode } from './components/ZenLeftRail';
 import { createInstantDemoCampaign } from './data/presets';
 import { ambientAudio } from './engine/ambientAudio';
 import {
+  detectOpposedNpc,
+  evaluateOpposedContest,
   findPartyAdvantage,
   inferActionAttribute,
+  isUnarmedContest,
   resolveFateCheck,
 } from './engine/diceEngine';
 import {
@@ -98,6 +101,7 @@ import type {
   JournalEntry,
   LocationRecord,
   NpcRecord,
+  PlayerState,
   SaveSlot,
   StateDelta,
   StoryEntry,
@@ -936,7 +940,35 @@ export function App() {
     if (!diceRoll && !isDirection) {
       const targetAttr =
         forcedAttribute ?? inferActionAttribute(actionText, intent);
-      const partyHelper = findPartyAdvantage(targetAttr, baseCamp.codex.npcs);
+      const opposedNpc = detectOpposedNpc(actionText, baseCamp.codex.npcs);
+      const opposed = opposedNpc
+        ? evaluateOpposedContest(baseCamp.player, opposedNpc, targetAttr, actionText)
+        : undefined;
+      const partyHelper = findPartyAdvantage(
+        targetAttr,
+        baseCamp.codex.npcs,
+        opposedNpc?.id,
+      );
+      const effectiveAttrs = isUnarmedContest(actionText)
+        ? baseCamp.player.attributes
+        : getEffectiveAttributes(baseCamp.player);
+
+      // BG3 rule: Advantage and Disadvantage cancel each other to Normal
+      const resolvedRollMode =
+        opposed?.disadvantage && partyHelper
+          ? 'normal'
+          : opposed?.disadvantage
+            ? 'disadvantage'
+            : partyHelper
+              ? 'advantage'
+              : 'normal';
+      const resolvedSource =
+        resolvedRollMode === 'disadvantage'
+          ? opposed?.disadvantageSource
+          : resolvedRollMode === 'advantage'
+            ? partyHelper?.name
+            : undefined;
+
       diceRoll = resolveFateCheck(
         actionText,
         intent,
@@ -946,11 +978,13 @@ export function App() {
         requiresRoll,
         baseCamp.player.tension,
         {
-          attributes: getEffectiveAttributes(baseCamp.player),
+          attributes: effectiveAttrs,
           skillLevels: baseCamp.player.skillLevels,
           forcedAttribute: targetAttr,
-          rollMode: partyHelper ? 'advantage' : 'normal',
-          advantageSource: partyHelper?.name,
+          rollMode: resolvedRollMode,
+          advantageSource: resolvedSource,
+          opposedLabel: opposed?.opposedLabel,
+          dcOverride: opposed?.opposedDc,
           weatherType: baseCamp.worldClock?.weatherType,
         },
       );
@@ -1382,7 +1416,41 @@ export function App() {
       lastTurnMeta.diceRoll.attribute ??
       lastTurnMeta.forcedAttribute ??
       inferActionAttribute(lastTurnMeta.actionText, lastTurnMeta.intent);
-    const partyHelper = findPartyAdvantage(targetAttr, spentCamp.codex.npcs);
+    const opposedNpc = detectOpposedNpc(
+      lastTurnMeta.actionText,
+      spentCamp.codex.npcs,
+    );
+    const opposed = opposedNpc
+      ? evaluateOpposedContest(
+          spentCamp.player,
+          opposedNpc,
+          targetAttr,
+          lastTurnMeta.actionText,
+        )
+      : undefined;
+    const partyHelper = findPartyAdvantage(
+      targetAttr,
+      spentCamp.codex.npcs,
+      opposedNpc?.id,
+    );
+    const effectiveAttrs = isUnarmedContest(lastTurnMeta.actionText)
+      ? spentCamp.player.attributes
+      : getEffectiveAttributes(spentCamp.player);
+
+    const resolvedRollMode =
+      opposed?.disadvantage && partyHelper
+        ? 'normal'
+        : opposed?.disadvantage
+          ? 'disadvantage'
+          : partyHelper
+            ? 'advantage'
+            : 'normal';
+    const resolvedSource =
+      resolvedRollMode === 'disadvantage'
+        ? opposed?.disadvantageSource
+        : resolvedRollMode === 'advantage'
+          ? partyHelper?.name
+          : undefined;
 
     const newRoll = resolveFateCheck(
       lastTurnMeta.actionText,
@@ -1393,12 +1461,15 @@ export function App() {
       true,
       spentCamp.player.tension,
       {
-        attributes: getEffectiveAttributes(spentCamp.player),
+        attributes: effectiveAttrs,
         skillLevels: spentCamp.player.skillLevels,
         forcedAttribute: targetAttr,
-        rollMode: partyHelper ? 'advantage' : 'normal',
-        advantageSource: partyHelper?.name,
+        rollMode: resolvedRollMode,
+        advantageSource: resolvedSource,
+        opposedLabel: opposed?.opposedLabel,
+        dcOverride: opposed?.opposedDc,
         rerolledWithInspiration: true,
+        weatherType: spentCamp.worldClock?.weatherType,
       },
     );
 
@@ -1786,6 +1857,44 @@ export function App() {
       'level',
       `${ATTRIBUTE_META[attr].full[settings.language]} aumentou para ${currentVal + 1}!`,
     );
+  };
+
+  const handleUpdatePlayerProfile = (
+    patch: Partial<
+      Pick<
+        PlayerState,
+        'name' | 'age' | 'occupation' | 'height' | 'physique' | 'appearance' | 'attributes'
+      >
+    >,
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp) return;
+    const nextAttributes = patch.attributes
+      ? { ...camp.player.attributes, ...patch.attributes }
+      : camp.player.attributes;
+    const gear = getEquippedGearBonuses(camp.player.inventory);
+    const nextMaxVigor = computeMaxVigor(
+      camp.player.level,
+      nextAttributes.con + (gear.con ?? 0),
+      gear.maxVigor ?? 0,
+    );
+    const nextVigor = Math.max(
+      1,
+      Math.min(nextMaxVigor, camp.player.vigor + Math.max(0, nextMaxVigor - camp.player.maxVigor)),
+    );
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: {
+        ...camp.player,
+        ...patch,
+        attributes: nextAttributes,
+        maxVigor: nextMaxVigor,
+        vigor: nextVigor,
+      },
+    });
+    pushToast('memory', 'Perfil, biometria e atributos atualizados na memória da IA!');
   };
 
   const handleToggleEquipItem = (itemId: string) => {
@@ -3057,6 +3166,7 @@ export function App() {
             onConsumeItemNow={handleConsumeItemNow}
             onUseItemInScene={(item) => setQueuedUseItem(item)}
             onSpendAttributePoint={handleSpendAttributePoint}
+            onUpdatePlayerProfile={handleUpdatePlayerProfile}
             onGeneratePortrait={() => void handleGeneratePortrait()}
             onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
             onOpenWorkbench={() => {

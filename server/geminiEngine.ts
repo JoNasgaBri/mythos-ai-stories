@@ -877,6 +877,7 @@ function buildSystemInstruction(
     campaign.freeformMode && campaign.turnCount <= 3
       ? 'SESSION ZERO FREEFORM MODE: This story started as an open WebSim-style conversation with no rigid preset. Embrace whatever world, genre mix, era, or character the player describes, populate stateChanges.updateIdentity (name, age, occupation, worldTitle, worldEra, worldPremise), seed initial skillTraining, currencyLabel, items, and NPCs organically, and launch straight into an engaging scene with 4 rich choices!'
       : '',
+    'PHYSICAL & STAT REALISM (STRICT): Always respect real physical differences (height, physique, body build, base STR/CON/DEX, and combat/athletic background) between the protagonist and NPCs. If a taller, heavier, stronger, or athletically trained NPC (e.g. 1,90m elite athlete) faces a smaller or non-athletic protagonist (e.g. 1,70m civilian strategist) in direct grappling, wrestling, or raw strength, portray that physical gap honestly — the stronger/bigger character naturally dominates direct physical contests unless the dice roll explicitly succeeded against a tough opposed DC or the protagonist uses a genuinely clever non-strength tactic. Never hand out easy unrealistic physical victories.',
     'DICE & ACTION DISCIPLINE: Reserve requiresRoll=true (risk: "medium" or "high") strictly for actions with real danger, combat, sneaking past active threats, hacking/lockpicking, risky physical/magic feats, or high-stakes deception/intimidation. Keep ordinary dialogue, walking, planning, resting, and routine observation at risk: "safe" with requiresRoll=false, and include at least 1-2 narrative (requiresRoll=false) choices in non-combat scenes.',
     'MEMORY DISCIPLINE: Honor recent story developments and player-directed changes first; if an older starting-seed fact conflicts with where the player took the story, follow the player’s evolved story. Only emit stateChanges.addCanonFacts (0-2 concise sentences) when a lasting development, new relationship, promise, or revelation occurs.',
     'Keep stateChanges grounded: track NPCs via upsertNpcs, places/dungeons via discoverLocation, and faction shifts via upsertFactions.',
@@ -913,6 +914,9 @@ function buildCompactStateContext(campaign: Campaign): string {
         name: campaign.player.name,
         age: campaign.player.age,
         occupation: campaign.player.occupation,
+        height: campaign.player.height ?? null,
+        physique: campaign.player.physique ?? null,
+        appearance: campaign.player.appearance ?? null,
         level: campaign.player.level,
         xp: `${campaign.player.xp}/${campaign.player.xpToNextLevel}`,
         attributes: {
@@ -1199,8 +1203,14 @@ export async function generateStoryTurn(
   );
 
   const rollInstruction = diceRoll
-    ? `DETERMINISTIC FATE ROLL: d20=${diceRoll.roll}${diceRoll.rolls ? ` (rolled ${diceRoll.rolls[0]} & ${diceRoll.rolls[1]} with ${diceRoll.rollMode}${diceRoll.advantageSource ? ` from ${diceRoll.advantageSource}` : ''})` : ''}${diceRoll.rerolledWithInspiration ? ' [REROLLED WITH BG3 INSPIRATION]' : ''}, total_bonus=${diceRoll.bonus >= 0 ? '+' : ''}${diceRoll.bonus}${diceRoll.bonusSource ? ` (${diceRoll.bonusSource})` : ''}, total=${diceRoll.total} vs DC=${diceRoll.dc} => OUTCOME: ${diceRoll.outcome.toUpperCase()}. Narrate consequences strictly matching this outcome${diceRoll.advantageSource ? ` and highlight how ${diceRoll.advantageSource} assisted!` : '.'}`
-    : 'NARRATIVE FLOW (NO DICE ROLL): This action or dialogue needs no dice check. Resolve it fluidly, naturally, and responsively based on the fiction, character traits, and NPC personalities — never invent an arbitrary roll failure.';
+    ? `DETERMINISTIC FATE ROLL${diceRoll.opposedLabel ? ` [OPPOSED CONTEST ${diceRoll.opposedLabel}]` : ''}: d20=${diceRoll.roll}${diceRoll.rolls ? ` (rolled ${diceRoll.rolls[0]} & ${diceRoll.rolls[1]} with ${diceRoll.rollMode}${diceRoll.advantageSource ? ` due to ${diceRoll.advantageSource}` : ''})` : ''}${diceRoll.rerolledWithInspiration ? ' [REROLLED WITH BG3 INSPIRATION]' : ''}, total_bonus=${diceRoll.bonus >= 0 ? '+' : ''}${diceRoll.bonus}${diceRoll.bonusSource ? ` (${diceRoll.bonusSource})` : ''}, total=${diceRoll.total} vs DC=${diceRoll.dc} => OUTCOME: ${diceRoll.outcome.toUpperCase()}. Narrate consequences strictly matching this outcome${
+        diceRoll.rollMode === 'disadvantage' && diceRoll.advantageSource
+          ? ` and emphasize the tough physical/tactical disadvantage imposed by ${diceRoll.advantageSource}.`
+          : diceRoll.rollMode === 'advantage' && diceRoll.advantageSource
+            ? ` and highlight how ${diceRoll.advantageSource} assisted!`
+            : '.'
+      }`
+    : 'NARRATIVE FLOW (NO DICE ROLL): This action or dialogue needs no dice check. Resolve it fluidly, naturally, and responsively based on the fiction, character traits, physical builds, and NPC personalities — never invent an arbitrary roll failure.';
 
   const isCoAuthorDirection = CO_AUTHOR_TURN_PATTERN.test(playerAction.trim());
   const directionDirective = isCoAuthorDirection

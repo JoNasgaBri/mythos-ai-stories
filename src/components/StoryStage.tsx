@@ -696,9 +696,22 @@ export function StoryStage({
                                 : ''}{' '}
                             = <strong className="text-[var(--text-primary)]">{entry.diceRoll.total}</strong> vs DC {entry.diceRoll.dc}
                           </span>
+                          {entry.diceRoll.opposedLabel ? (
+                            <span className="rounded bg-[var(--warning)]/12 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]">
+                              {entry.diceRoll.opposedLabel}
+                            </span>
+                          ) : null}
                           {entry.diceRoll.advantageSource ? (
-                            <span className="rounded bg-[var(--success)]/12 px-1.5 py-0.5 text-[10px] font-medium text-[var(--success)]">
-                              Vantagem ({entry.diceRoll.advantageSource})
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                entry.diceRoll.rollMode === 'disadvantage'
+                                  ? 'bg-[var(--danger)]/14 text-[var(--danger)]'
+                                  : 'bg-[var(--success)]/12 text-[var(--success)]'
+                              }`}
+                            >
+                              {entry.diceRoll.rollMode === 'disadvantage'
+                                ? `Desvantagem (${entry.diceRoll.advantageSource})`
+                                : `Vantagem (${entry.diceRoll.advantageSource})`}
                             </span>
                           ) : null}
                           {entry.diceRoll.rerolledWithInspiration ? (
