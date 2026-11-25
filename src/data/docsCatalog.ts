@@ -112,7 +112,7 @@ export const DOC_ARTICLES: DocArticle[] = [
         headers: ['Recurso', 'Gemini IA Conectado', 'Modo Demo Local'],
         rows: [
           ['Narração & Diálogos', 'Gemini 3.8 Flash / 4 Argon com cenas dinâmicas e bolhas por personagem', 'Motor procedural offline de demonstração'],
-          ['Ilustrações & Mapa IA', 'Nano Banana 2.1 (cenas 16:9, retratos 1:1 e mapas cartográficos)', 'Arte procedural SVG local'],
+          ['Ilustrações & Mapa IA', 'Nano Banana 2.1 (cenas 16:9) e Nano Banana Pro (retratos 1:1 e mapas cartográficos)', 'Arte procedural SVG local'],
           ['Narração em Voz (TTS)', 'Gemini 3.8 Flash TTS com alternância Narrador/Personagem', 'Síntese de voz nativa do navegador'],
           ['Atlas GPS & Guilda', 'Geocoding em lote por IA, candidatos e relatórios táticos narrados', 'Presets locais de cidades reais e geradores offline'],
         ],
@@ -560,7 +560,7 @@ export const DOC_ARTICLES: DocArticle[] = [
         items: [
           { lead: 'Grupo Ativo (até 3 companheiros):', text: 'Aliados no Grupo acompanham suas cenas, comentam suas decisões com reações de aprovação/desaprovação e concedem Vantagem (2×d20) na especialidade deles.' },
           { lead: 'Presentear Itens:', text: 'Envie um item da sua mochila para um NPC; itens alinhados aos Gostos pessoais do personagem rendem bônus extra de afinidade.' },
-          { lead: 'Editar Ficha & Retrato IA:', text: 'Você pode ajustar altura, idade, personalidade ou atributos de qualquer NPC e gerar retratos exclusivos com Nano Banana 2.1.' },
+          { lead: 'Editar Ficha & Retrato IA:', text: 'Você pode ajustar altura, idade, personalidade ou atributos de qualquer NPC e gerar retratos exclusivos com Nano Banana Pro.' },
         ],
       },
     ],
@@ -750,7 +750,7 @@ export const DOC_ARTICLES: DocArticle[] = [
           {
             title: 'Terreno Procedural + Arte IA',
             subtitle: 'Mundos fictícios',
-            body: 'Gera continentes e curvas de nível procedurais com seed única do seu mundo, além de permitir gerar uma ilustração cartográfica top-down com Nano Banana 2.1.',
+            body: 'Gera continentes e curvas de nível procedurais com seed única do seu mundo, além de permitir gerar uma ilustração cartográfica top-down com Nano Banana Pro.',
             accent: '#fbbf24',
           },
           {

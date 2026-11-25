@@ -1538,27 +1538,39 @@ export async function generateVisualAsset(
           .filter(Boolean)
           .join(' ');
 
+  const useProModel = isPortrait || isMap;
+  const imageModel = useProModel ? 'gemini-3-pro-image' : 'gemini-nano-banana-2.1';
+
   const interaction = await client.interactions.create({
-    model: 'gemini-nano-banana-2.1',
+    model: imageModel,
     input: prompt,
     response_format: isPortrait
       ? {
           type: 'image',
           aspect_ratio: '1:1',
-          image_size: '512',
-          mime_type: 'image/jpeg',
-        }
-      : {
-          type: 'image',
-          aspect_ratio: '16:9',
           image_size: '1K',
           mime_type: 'image/jpeg',
-        },
+        }
+      : isMap
+        ? {
+            type: 'image',
+            aspect_ratio: '16:9',
+            image_size: '2K',
+            mime_type: 'image/jpeg',
+          }
+        : {
+            type: 'image',
+            aspect_ratio: '16:9',
+            image_size: '1K',
+            mime_type: 'image/jpeg',
+          },
   });
 
   const img = interaction.output_image;
   if (!img?.data) {
-    throw new Error('Nano Banana 2.1 did not return image data.');
+    throw new Error(
+      `${useProModel ? 'Nano Banana Pro' : 'Nano Banana 2.1'} did not return image data.`,
+    );
   }
 
   const mimeType = img.mime_type || 'image/jpeg';
