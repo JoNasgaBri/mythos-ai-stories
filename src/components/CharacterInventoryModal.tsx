@@ -44,6 +44,8 @@ import {
   RARITY_META,
   SUPPLY_KEYS,
 } from '../engine/rpgSystem';
+import { DND_WEAPON_MASTERIES } from '../data/dnd52Catalog';
+import { computeArmorClass, isDndRuleset } from '../engine/dnd52Rules';
 import type {
   AttributeId,
   Campaign,
@@ -179,6 +181,11 @@ export function CharacterInventoryModal({
   if (!open) return null;
 
   const { player, stronghold } = campaign;
+  const isDnd = isDndRuleset(campaign);
+  const acInfo = isDnd ? computeArmorClass(player) : null;
+  const attunedCount = player.inventory.filter(
+    (i) => i.equipped && i.dndStats?.requiresAttunement,
+  ).length;
   const isEnded =
     campaign.status === 'ended_fallen' || campaign.status === 'ended_victory';
   const effectiveAttrs = getEffectiveAttributes(player);
@@ -398,25 +405,71 @@ export function CharacterInventoryModal({
                 mobileSection === 'stats' ? 'hidden lg:block' : ''
               }`}
             >
-              <div className="mb-2.5 flex items-center justify-between gap-2">
+              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent)]">
                   Visual & Equipamento
                 </span>
-                <button
-                  type="button"
-                  disabled={isGeneratingPortrait || isEnded}
-                  onClick={onGeneratePortrait}
-                  title="Gera retrato atualizado considerando seus itens equipados"
-                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-45"
-                >
-                  <Camera
-                    className={`h-3 w-3 ${isGeneratingPortrait ? 'animate-spin' : ''}`}
-                  />
-                  <span>
-                    {isGeneratingPortrait ? 'Gerando...' : 'Retrato c/ Gear'}
-                  </span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {acInfo ? (
+                    <span
+                      title={acInfo.formula}
+                      className="font-mono-tech inline-flex items-center gap-1 rounded-lg border border-sky-400/45 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300"
+                    >
+                      <Shield className="h-3 w-3" />
+                      CA {acInfo.ac}
+                    </span>
+                  ) : null}
+                  {isDnd ? (
+                    <span
+                      title="Itens mágicos sintonizados (máximo 3 pelas regras oficiais de D&D 5.2)"
+                      className="font-mono-tech rounded-lg border border-violet-400/35 bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-300"
+                    >
+                      Sintonia {attunedCount}/3
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={isGeneratingPortrait || isEnded}
+                    onClick={onGeneratePortrait}
+                    title="Gera retrato atualizado considerando seus itens equipados"
+                    className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2.5 py-1 text-[10px] font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-45"
+                  >
+                    <Camera
+                      className={`h-3 w-3 ${isGeneratingPortrait ? 'animate-spin' : ''}`}
+                    />
+                    <span>
+                      {isGeneratingPortrait ? 'Gerando...' : 'Retrato c/ Gear'}
+                    </span>
+                  </button>
+                </div>
               </div>
+
+              {acInfo ? (
+                <div className="mb-2.5 space-y-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/80 px-2.5 py-1.5 text-[10px] text-[var(--text-secondary)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{acInfo.formula}</span>
+                  </div>
+                  {(acInfo.stealthDisadvantage || acInfo.nonProficientArmor || acInfo.lacksStrReq) ? (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {acInfo.stealthDisadvantage ? (
+                        <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300">
+                          Desvantagem em Furtividade
+                        </span>
+                      ) : null}
+                      {acInfo.lacksStrReq ? (
+                        <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-rose-300">
+                          FOR insuficiente (−3m deslocamento)
+                        </span>
+                      ) : null}
+                      {acInfo.nonProficientArmor ? (
+                        <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-rose-300">
+                          Sem proficiência na armadura (Desv. FOR/DES, sem magias)
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-3 items-stretch gap-2">
                 <div className="flex flex-col justify-between gap-2">
@@ -425,7 +478,7 @@ export function CharacterInventoryModal({
                   {renderSlotTile('offhand')}
                 </div>
 
-                {/* Center Character Portrait with clean Vigor footer */}
+                {/* Center Character Portrait with clean PV footer */}
                 <div className="relative flex min-h-[245px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-gradient-to-b from-[var(--bg-elevated)] via-[var(--bg-surface)] to-[var(--bg-canvas)] shadow-inner">
                   <div className="relative flex-1 overflow-hidden">
                     {player.portraitUrl ? (
@@ -446,15 +499,18 @@ export function CharacterInventoryModal({
                     )}
                   </div>
 
-                  {/* Clean non-overlapping Vigor footer */}
+                  {/* Clean non-overlapping PV/Vigor footer */}
                   <div className="shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 px-2.5 py-1.5">
                     <div className="mb-1 flex items-center justify-between gap-1 text-[10px]">
                       <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
                         <Activity className="h-2.5 w-2.5 text-[var(--success)]" />
-                        HP
+                        {isDnd ? 'PV' : 'HP'}
                       </span>
                       <span className="font-mono-tech font-semibold text-[var(--text-primary)]">
                         {player.vigor}/{player.maxVigor}
+                        {isDnd && (player.dnd?.tempHp ?? 0) > 0 ? (
+                          <span className="ml-1 text-cyan-300">+{player.dnd!.tempHp}</span>
+                        ) : null}
                       </span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
@@ -1036,6 +1092,47 @@ export function CharacterInventoryModal({
                           </p>
                         ) : null}
 
+                        {selectedItem.dndStats ? (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {selectedItem.dndStats.weaponDice ? (
+                              <span className="font-mono-tech rounded-md border border-amber-400/35 bg-amber-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                                ⚔️ {selectedItem.dndStats.weaponDice}
+                                {selectedItem.dndStats.versatileDice
+                                  ? ` / ${selectedItem.dndStats.versatileDice}`
+                                  : ''}
+                                {selectedItem.dndStats.attackBonus
+                                  ? ` (+${selectedItem.dndStats.attackBonus})`
+                                  : ''}
+                              </span>
+                            ) : null}
+                            {selectedItem.dndStats.mastery ? (
+                              <span className="rounded-md border border-violet-400/35 bg-violet-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                                Maestria: {DND_WEAPON_MASTERIES[selectedItem.dndStats.mastery]?.label ?? selectedItem.dndStats.mastery}
+                              </span>
+                            ) : null}
+                            {selectedItem.dndStats.armorBaseAc ? (
+                              <span className="font-mono-tech rounded-md border border-sky-400/35 bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                                🛡️ CA Base {selectedItem.dndStats.armorBaseAc}
+                              </span>
+                            ) : null}
+                            {selectedItem.dndStats.acBonus ? (
+                              <span className="font-mono-tech rounded-md border border-sky-400/35 bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                                🛡️ +{selectedItem.dndStats.acBonus} CA
+                              </span>
+                            ) : null}
+                            {selectedItem.dndStats.healDice ? (
+                              <span className="font-mono-tech rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                Cura {selectedItem.dndStats.healDice} PV
+                              </span>
+                            ) : null}
+                            {selectedItem.dndStats.requiresAttunement ? (
+                              <span className="rounded-md border border-fuchsia-400/35 bg-fuchsia-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-300">
+                                Requer Sintonia
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+
                         {selectedItem.bonuses ? (
                           <div className="mt-1.5 flex flex-wrap gap-1">
                             {ATTRIBUTE_KEYS.filter(
@@ -1054,7 +1151,7 @@ export function CharacterInventoryModal({
                             })}
                             {selectedItem.bonuses.maxVigor ? (
                               <span className="font-mono-tech rounded-md border border-[var(--success)]/35 bg-[var(--success)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--success)]">
-                                +{selectedItem.bonuses.maxVigor} Vigor Máx
+                                +{selectedItem.bonuses.maxVigor} {isDnd ? 'PV Máx' : 'Vigor Máx'}
                               </span>
                             ) : null}
                           </div>
@@ -1121,7 +1218,11 @@ export function CharacterInventoryModal({
                             className="inline-flex items-center gap-1 rounded-xl border border-[var(--success)]/50 bg-[var(--success)]/15 px-3 py-1.5 text-[11px] font-semibold text-[var(--success)] hover:brightness-110"
                           >
                             <Flame className="h-3 w-3" />
-                            <span>+25 Vigor</span>
+                            <span>
+                              {isDnd
+                                ? `Curar (${selectedItem.dndStats?.healDice ?? '2d4+2'} PV)`
+                                : '+25 Vigor'}
+                            </span>
                           </button>
                         ) : null}
 

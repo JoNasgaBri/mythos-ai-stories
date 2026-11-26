@@ -337,6 +337,27 @@ export function SettingsDrawer({
               </div>
 
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-[var(--text-primary)]">
+                      Nomes Clássicos de D&amp;D 5.2 em Todos os Mundos
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Desligado (padrão): adapta nomes ao gênero (ex.: Netrunner, Hacking, Medkit). Ligado: exibe sempre os termos clássicos (Mago, Arcanismo, Poção).
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.useClassicDndNames)}
+                    onChange={(e) =>
+                      onUpdateSettings({ useClassicDndNames: e.target.checked })
+                    }
+                    className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium text-[var(--text-primary)]">

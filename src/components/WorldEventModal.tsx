@@ -141,7 +141,7 @@ export function WorldEventInlineCard({
     }
     if (typeof choice.vigorDelta === 'number' && choice.vigorDelta !== 0) {
       chips.push({
-        label: `${choice.vigorDelta > 0 ? '+' : ''}${choice.vigorDelta} Vigor`,
+        label: `${choice.vigorDelta > 0 ? '+' : ''}${choice.vigorDelta} ${campaign.ruleset === 'dnd5e_2024' ? 'PV' : 'Vigor'}`,
         positive: choice.vigorDelta > 0,
       });
     }

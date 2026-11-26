@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BaseBlueprintModal } from './components/BaseBlueprintModal';
 import { CharacterInventoryModal } from './components/CharacterInventoryModal';
 import { ChapterBanner } from './components/ChapterBanner';
+import { ClashBattleArena } from './components/ClashBattleArena';
+import { ClashLauncherModal } from './components/ClashBannerTrigger';
 import { ClockWeatherPopover } from './components/ClockWeatherPopover';
 import { DiceRollOverlay } from './components/DiceRollOverlay';
 import { DocsPortal } from './components/docs/DocsPortal';
 import { InteractiveTourOverlay } from './components/InteractiveTourOverlay';
+import { LevelUpModal, type LevelUpChoicePayload } from './components/LevelUpModal';
 import { NewsRumorsModal } from './components/NewsRumorsModal';
 import { OrganizationModal } from './components/OrganizationModal';
 import { ProtagonistEditModal } from './components/ProtagonistEditModal';
@@ -36,6 +39,17 @@ import {
   ensureCampaignTimeline,
 } from './engine/timelineSystem';
 import {
+  buildClashRollModifiers,
+  CLASH_ARCHETYPE_META,
+  convertChaseToCombat,
+  extractClashChoreographyBeats,
+  hydrateClashState,
+  resolveClashRound,
+  type ClashChoreographyBeat,
+  type ClashRoundResolution,
+  type ClashVfxKind,
+} from './engine/clashSystem';
+import {
   evaluateStorytellerTrigger,
   pickStorytellerCategory,
 } from './engine/eventDirector';
@@ -51,19 +65,39 @@ import {
   processDailyOrgUpkeep,
   resolveOperationDeterministically,
 } from './engine/orgSystem';
+import { DND_CLASSES, DND_FEATS } from './data/dnd52Catalog';
 import {
   detectOpposedNpc,
   evaluateOpposedContest,
   findPartyAdvantage,
   inferActionAttribute,
   isUnarmedContest,
+  resolveDndDeathSave,
+  resolveDndSavingThrow,
   resolveFateCheck,
 } from './engine/diceEngine';
+import {
+  executeDnd52BonusAction,
+  executeDnd52FreeMove,
+  resolveDnd52ClashRound,
+} from './engine/dnd52ClashResolver';
+import {
+  applyDnd2024LongRest,
+  applyDnd2024ShortRest,
+  applyDndDamageWithTempHp,
+  buildDnd5eSheetFromConfig,
+  computeMaxHpForRuleset,
+  computeNpcArmorClass,
+  computeNpcMaxHpForRuleset,
+  getXpDeltaForRuleset,
+  hydrateDnd5eSheetFromLegacy,
+  isDndRuleset,
+  rollDiceFormula,
+} from './engine/dnd52Rules';
 import {
   advanceClockByMinutes,
   advanceClockToNextMorning,
   ATTRIBUTE_META,
-  computeMaxVigor,
   DEFAULT_ATTRIBUTES,
   defaultBaseSuppliesForTheme,
   defaultCurrencyForTheme,
@@ -71,10 +105,10 @@ import {
   defaultStrongholdForTheme,
   defaultWorldClockForTheme,
   deriveRelationshipFromAffinity,
+  EPIC_BOON_ATTRIBUTE_CAP,
   formatClockTime,
-  getAsiPointsForLevel,
   getEffectiveAttributes,
-  getEquippedGearBonuses,
+  getProficiencyBonus,
   getSupplyMetaForTheme,
   inferItemStorage,
   isVehicleLikeItem,
@@ -84,13 +118,13 @@ import {
   NATURAL_ATTRIBUTE_CAP,
   STRONGHOLD_UPGRADE_CATALOG,
   SUPPLY_KEYS,
-  xpRequiredForLevel,
 } from './engine/rpgSystem';
 import {
   applyCodexChanges,
   applyStateChanges,
   fetchApiHealth,
   requestCampaignEpilogue,
+  requestClashInit,
   requestCraftUpgrade,
   requestFictionalMapArt,
   requestJournalSummary,
@@ -135,6 +169,11 @@ import type {
   CampaignEpilogue,
   CampaignStatus,
   ChapterTransitionEvent,
+  ClashActionPayload,
+  ClashAllyDirective,
+  ClashArchetype,
+  ClashEnemy,
+  ClashZone,
   CraftRequest,
   CraftResponse,
   DiceRollResult,
@@ -157,6 +196,7 @@ import type {
   SaveSlot,
   StateDelta,
   StoryEntry,
+  SuggestedClashCue,
   SupplyType,
   TacticalAction,
   TimelineBranchPoint,
@@ -266,6 +306,25 @@ export function App() {
     isDirection: boolean;
     forcedAttribute?: AttributeId;
     diceRoll?: DiceRollResult;
+    clashAction?: ClashActionPayload;
+    clashResolution?: ClashRoundResolution;
+  } | null>(null);
+  const [clashLauncherOpen, setClashLauncherOpen] = useState(false);
+  const [isStartingClash, setIsStartingClash] = useState(false);
+  const [suggestedClash, setSuggestedClash] = useState<SuggestedClashCue | null>(
+    null,
+  );
+  const [arenaDiceRoll, setArenaDiceRoll] = useState<DiceRollResult | null>(null);
+  const [arenaBeats, setArenaBeats] = useState<ClashChoreographyBeat[]>([]);
+  const [arenaBattleNonce, setArenaBattleNonce] = useState(0);
+  const [arenaBossArtUrl, setArenaBossArtUrl] = useState<string | null>(null);
+  const [isGeneratingBossArt, setIsGeneratingBossArt] = useState(false);
+  const [isFinishingClash, setIsFinishingClash] = useState(false);
+  const [levelUpModalOpen, setLevelUpModalOpen] = useState(false);
+  const [lastArenaTurnSnapshot, setLastArenaTurnSnapshot] = useState<{
+    campSnapshot: Campaign;
+    payload: ClashActionPayload;
+    vfx: ClashVfxKind;
   } | null>(null);
   const [activeDiceRoll, setActiveDiceRoll] = useState<DiceRollResult | null>(null);
   const [chapterBanner, setChapterBanner] = useState<ChapterTransitionEvent | null>(null);
@@ -957,10 +1016,27 @@ export function App() {
             },
           ];
 
+    const freeformAttrs = { ...DEFAULT_ATTRIBUTES };
+    const freeformDnd = buildDnd5eSheetFromConfig({
+      classId: 'fighter',
+      speciesId: 'human',
+      backgroundId: 'wayfarer',
+      level: 1,
+      attributes: freeformAttrs,
+    });
+    const freeformMaxHp = computeMaxHpForRuleset('dnd5e_2024', {
+      level: 1,
+      attributes: freeformAttrs,
+      inventory: [],
+      dnd: freeformDnd,
+    } as unknown as PlayerState);
+
     const freeformCampaign: Campaign = {
       id: `camp_free_${now}_${Math.random().toString(36).slice(2, 6)}`,
       createdAt: now,
       updatedAt: now,
+      ruleset: 'dnd5e_2024',
+      progressionMode: 'xp',
       freeformMode: true,
       world: {
         title: lang === 'en' ? 'New Freeform Chronicle' : 'Nova História Livre',
@@ -983,17 +1059,18 @@ export function App() {
         occupation: lang === 'en' ? 'To be defined' : 'A definir na história',
         level: 1,
         xp: 0,
-        xpToNextLevel: xpRequiredForLevel(1),
+        xpToNextLevel: getXpDeltaForRuleset(1, 'dnd5e_2024'),
         attributePoints: 0,
-        attributes: { ...DEFAULT_ATTRIBUTES },
-        vigor: 100,
-        maxVigor: 100,
+        attributes: freeformAttrs,
+        vigor: freeformMaxHp,
+        maxVigor: freeformMaxHp,
         tension: 10,
         inspiration: 1,
         traits: [],
         skills: [],
         skillLevels: [],
         talents: [],
+        dnd: freeformDnd,
         currency: defaultCurrencyForTheme(theme, lang),
         inventory: [],
         quests: [],
@@ -1071,6 +1148,7 @@ export function App() {
     setIsBusy(false);
     setUndoStack([]);
     setLastTurnMeta(null);
+    setSuggestedClash(null);
     activeCampaignRef.current = camp;
     setActiveCampaign(camp);
     setPreviewTheme(camp.world.primaryTheme);
@@ -1324,6 +1402,8 @@ export function App() {
       extraPromptNote?: string;
       skipStoryteller?: boolean;
       forceReplace?: boolean;
+      clashAction?: ClashActionPayload;
+      precomputedClashResolution?: ClashRoundResolution;
     },
   ) => {
     // Synchronous mutex prevents double-fire / duplicate AI responses overwriting each other
@@ -1339,8 +1419,14 @@ export function App() {
     turnAbortRef.current = abortController;
     isTurnInFlightRef.current = true;
 
+    const activeClashBefore = baseCamp.activeClash;
+    const isRoundClash =
+      activeClashBefore?.status === 'active' && !isDirection;
+
     const crisisMode =
-      baseCamp.status === 'crisis_tension' ? 'breaking_point' : undefined;
+      !isRoundClash && baseCamp.status === 'crisis_tension'
+        ? 'breaking_point'
+        : undefined;
 
     const cleanVisibleText = actionText
       .replace(/^\[DIREÇÃO DO AUTOR\]:\s*/i, '')
@@ -1348,56 +1434,103 @@ export function App() {
 
     let diceRoll = options?.precomputedDiceRoll;
     if (!diceRoll && !isDirection) {
-      const targetAttr =
-        forcedAttribute ?? inferActionAttribute(actionText, intent);
-      const opposedNpc = detectOpposedNpc(actionText, baseCamp.codex.npcs);
-      const opposed = opposedNpc
-        ? evaluateOpposedContest(baseCamp.player, opposedNpc, targetAttr, actionText)
-        : undefined;
-      const partyHelper = findPartyAdvantage(
-        targetAttr,
-        baseCamp.codex.npcs,
-        opposedNpc?.id,
-      );
-      const effectiveAttrs = isUnarmedContest(actionText)
-        ? baseCamp.player.attributes
-        : getEffectiveAttributes(baseCamp.player);
+      const baseAttr =
+        forcedAttribute ??
+        options?.clashAction?.attribute ??
+        inferActionAttribute(actionText, intent);
 
-      // BG3 rule: Advantage and Disadvantage cancel each other to Normal
-      const resolvedRollMode =
-        opposed?.disadvantage && partyHelper
-          ? 'normal'
-          : opposed?.disadvantage
-            ? 'disadvantage'
-            : partyHelper
-              ? 'advantage'
-              : 'normal';
-      const resolvedSource =
-        resolvedRollMode === 'disadvantage'
-          ? opposed?.disadvantageSource
-          : resolvedRollMode === 'advantage'
-            ? partyHelper?.name
-            : undefined;
+      if (isRoundClash && activeClashBefore) {
+        const clashHints = buildClashRollModifiers(
+          baseCamp,
+          activeClashBefore,
+          options?.clashAction,
+          baseAttr,
+        );
+        const partyHelper = findPartyAdvantage(
+          clashHints.attribute,
+          baseCamp.codex.npcs,
+        );
+        const effectiveAttrs = getEffectiveAttributes(baseCamp.player);
+        const resolvedRollMode =
+          clashHints.grantAdvantage || partyHelper ? 'advantage' : 'normal';
+        const resolvedSource =
+          clashHints.advantageSource ?? partyHelper?.name;
 
-      diceRoll = resolveFateCheck(
-        actionText,
-        intent,
-        risk,
-        baseCamp.difficulty,
-        baseCamp.player.skills,
-        requiresRoll,
-        baseCamp.player.tension,
-        {
-          attributes: effectiveAttrs,
-          skillLevels: baseCamp.player.skillLevels,
-          forcedAttribute: targetAttr,
-          rollMode: resolvedRollMode,
-          advantageSource: resolvedSource,
-          opposedLabel: opposed?.opposedLabel,
-          dcOverride: opposed?.opposedDc,
-          weatherType: baseCamp.worldClock?.weatherType,
-        },
-      );
+        const forceClashRoll =
+          options?.clashAction?.kind !== 'reposition' &&
+          options?.clashAction?.kind !== 'guild_support';
+
+        diceRoll = resolveFateCheck(
+          actionText,
+          intent,
+          risk === 'safe' ? 'medium' : risk,
+          baseCamp.difficulty,
+          baseCamp.player.skills,
+          forceClashRoll ? true : requiresRoll,
+          baseCamp.player.tension,
+          {
+            attributes: effectiveAttrs,
+            skillLevels: baseCamp.player.skillLevels,
+            forcedAttribute: clashHints.attribute,
+            rollMode: resolvedRollMode,
+            advantageSource: resolvedSource,
+            opposedLabel: clashHints.opposedLabel,
+            dcOverride: clashHints.dcOverride,
+            weatherType: baseCamp.worldClock?.weatherType,
+          },
+        );
+      } else {
+        const opposedNpc = detectOpposedNpc(actionText, baseCamp.codex.npcs);
+        const opposed = opposedNpc
+          ? evaluateOpposedContest(baseCamp.player, opposedNpc, baseAttr, actionText)
+          : undefined;
+        const partyHelper = findPartyAdvantage(
+          baseAttr,
+          baseCamp.codex.npcs,
+          opposedNpc?.id,
+        );
+        const effectiveAttrs = isUnarmedContest(actionText)
+          ? baseCamp.player.attributes
+          : getEffectiveAttributes(baseCamp.player);
+
+        // BG3 rule: Advantage and Disadvantage cancel each other to Normal
+        const resolvedRollMode =
+          opposed?.disadvantage && partyHelper
+            ? 'normal'
+            : opposed?.disadvantage
+              ? 'disadvantage'
+              : partyHelper
+                ? 'advantage'
+                : 'normal';
+        const resolvedSource =
+          resolvedRollMode === 'disadvantage'
+            ? opposed?.disadvantageSource
+            : resolvedRollMode === 'advantage'
+              ? partyHelper?.name
+              : undefined;
+
+        diceRoll = resolveFateCheck(
+          actionText,
+          intent,
+          risk,
+          baseCamp.difficulty,
+          baseCamp.player.skills,
+          requiresRoll,
+          baseCamp.player.tension,
+          {
+            ruleset: baseCamp.ruleset,
+            player: baseCamp.player,
+            attributes: effectiveAttrs,
+            skillLevels: baseCamp.player.skillLevels,
+            forcedAttribute: baseAttr,
+            rollMode: resolvedRollMode,
+            advantageSource: resolvedSource,
+            opposedLabel: opposed?.opposedLabel,
+            dcOverride: opposed?.opposedDc,
+            weatherType: baseCamp.worldClock?.weatherType,
+          },
+        );
+      }
     }
 
     if (settings.diceAnimations && diceRoll) {
@@ -1408,6 +1541,20 @@ export function App() {
     if (options?.pushToUndoStack !== false) {
       setUndoStack((prev) => [...prev.slice(-4), preTurnSnapshot]);
     }
+
+    // Deterministic Tactical Clash resolution (AFTER preTurnSnapshot so Undo/Reroll stay pure!)
+    const clashResolution: ClashRoundResolution | undefined =
+      isRoundClash && activeClashBefore
+        ? options?.precomputedClashResolution ??
+          resolveClashRound({
+            campaign: baseCamp,
+            clash: activeClashBefore,
+            actionText: cleanVisibleText || actionText,
+            clashAction: options?.clashAction,
+            diceRoll,
+          })
+        : undefined;
+
     setLastTurnMeta({
       preTurnSnapshot,
       actionText,
@@ -1417,6 +1564,8 @@ export function App() {
       isDirection,
       forcedAttribute,
       diceRoll,
+      clashAction: options?.clashAction,
+      clashResolution,
     });
 
     const nextTurn = baseCamp.turnCount + 1;
@@ -1441,6 +1590,9 @@ export function App() {
     setActiveCampaign(optimisticCampaign);
     setIsBusy(true);
     setPulseSecondsLeft(settings.livingWorldSeconds);
+    if (isRoundClash) {
+      setSuggestedClash(null);
+    }
 
     try {
       const aiActionInput = options?.extraPromptNote
@@ -1455,6 +1607,7 @@ export function App() {
         apiHealth,
         crisisMode,
         abortController.signal,
+        clashResolution?.promptDigest,
       );
 
       // Discard stale/superseded response (e.g. after Inspiration Reroll, Undo, or campaign switch)
@@ -1466,8 +1619,39 @@ export function App() {
         optimisticCampaign.stronghold?.upgrades.some((u) => u.id === 'training'),
       );
 
+      const rawPendingSave =
+        isDndRuleset(optimisticCampaign) &&
+        !clashResolution &&
+        response.stateChanges?.pendingSavingThrow &&
+        response.stateChanges.pendingSavingThrow.ability &&
+        typeof response.stateChanges.pendingSavingThrow.dc === 'number'
+          ? {
+              id: `save_${Date.now()}`,
+              ability: response.stateChanges.pendingSavingThrow.ability,
+              dc: Math.max(5, Math.min(30, Math.round(response.stateChanges.pendingSavingThrow.dc))),
+              reason:
+                String(response.stateChanges.pendingSavingThrow.reason || 'Perigo na Cena').trim(),
+              failDamageDice: response.stateChanges.pendingSavingThrow.failDamageDice,
+              halfOnSuccess: Boolean(response.stateChanges.pendingSavingThrow.halfOnSuccess),
+              failCondition: response.stateChanges.pendingSavingThrow.failCondition,
+              sourceTurn: nextTurn,
+            }
+          : null;
+
+      // Single source of truth during Tactical Clash or Pending Saving Throw: zero out AI vigorDelta to prevent double damage!
       const mergedChanges = {
         ...response.stateChanges,
+        vigorDelta: clashResolution
+          ? clashResolution.playerVigorDelta
+          : rawPendingSave
+            ? 0
+            : response.stateChanges?.vigorDelta,
+        tensionDelta: clashResolution
+          ? clashResolution.playerTensionDelta
+          : response.stateChanges?.tensionDelta,
+        xpGain: clashResolution
+          ? Math.max(response.stateChanges?.xpGain ?? 0, clashResolution.xpBonus)
+          : response.stateChanges?.xpGain,
         inspirationGain:
           (response.stateChanges?.inspirationGain ?? 0) +
           (diceRoll?.outcome === 'critical_success' ? 1 : 0),
@@ -1481,7 +1665,7 @@ export function App() {
         optimisticCampaign.player,
         mergedChanges,
         nextTurn,
-        { hasTrainingStation },
+        { hasTrainingStation, ruleset: optimisticCampaign.ruleset },
       );
       const resolvedLocation =
         response.location || optimisticCampaign.currentLocation;
@@ -1490,6 +1674,7 @@ export function App() {
         resolvedLocation,
         nextTurn,
         response.stateChanges,
+        optimisticCampaign.ruleset,
       );
 
       const extraDeltas: StateDelta[] = [];
@@ -1506,7 +1691,9 @@ export function App() {
       const prevWeather = nextClock.weatherType;
 
       let minutesElapsed = 0;
-      if (advanceMode === 'fixed_step') {
+      if (clashResolution) {
+        minutesElapsed = 1; // 1 tactical minute per clash round (prevents day rollover / org upkeep mid-fight)
+      } else if (advanceMode === 'fixed_step') {
         minutesElapsed = nextClock.fixedStepMinutes ?? 15;
       } else if (advanceMode === 'ai_auto') {
         if (typeof at?.minutes === 'number' && at.minutes >= 0) {
@@ -1729,8 +1916,8 @@ export function App() {
           });
         }
 
-        // Daily Organization Upkeep when the world clock turns to a new day
-        if (nextClock.day > (nextOrganization.lastUpkeepDay ?? 1)) {
+        // Daily Organization Upkeep when the world clock turns to a new day (never mid-clash!)
+        if (!clashResolution && nextClock.day > (nextOrganization.lastUpkeepDay ?? 1)) {
           const baseSupplies =
             nextStronghold.supplies ??
             defaultBaseSuppliesForTheme(optimisticCampaign.world.primaryTheme);
@@ -1771,6 +1958,77 @@ export function App() {
         }
       }
 
+      // MYTHOS 11.0 — Apply deterministic Tactical Clash side-effects (ally vigor, affinity, supplies, org morale)
+      if (clashResolution) {
+        if (clashResolution.allyVigorUpdates.length > 0) {
+          const updateMap = new Map(
+            clashResolution.allyVigorUpdates.map((u) => [u.npcId, u]),
+          );
+          finalCodex = {
+            ...finalCodex,
+            npcs: finalCodex.npcs.map((n) => {
+              const u = updateMap.get(n.id);
+              if (!u) return n;
+              const nextAff =
+                clashResolution.affinityBonus > 0
+                  ? Math.max(-100, Math.min(100, (n.affinity ?? 0) + clashResolution.affinityBonus))
+                  : n.affinity;
+              return {
+                ...n,
+                vigor: u.vigor,
+                affinity: nextAff,
+                relationship:
+                  typeof nextAff === 'number'
+                    ? deriveRelationshipFromAffinity(nextAff)
+                    : n.relationship,
+                injuryNote: u.downed
+                  ? 'Ferido no confronto recente'
+                  : n.injuryNote,
+              };
+            }),
+          };
+        }
+
+        if (
+          clashResolution.supplyChanges.ammo ||
+          clashResolution.supplyChanges.materials
+        ) {
+          const baseSupplies =
+            nextStronghold.supplies ??
+            defaultBaseSuppliesForTheme(optimisticCampaign.world.primaryTheme);
+          nextStronghold = {
+            ...nextStronghold,
+            supplies: {
+              ...baseSupplies,
+              ammo: Math.max(
+                0,
+                baseSupplies.ammo + (clashResolution.supplyChanges.ammo ?? 0),
+              ),
+              materials: Math.max(
+                0,
+                baseSupplies.materials +
+                  (clashResolution.supplyChanges.materials ?? 0),
+              ),
+            },
+          };
+        }
+
+        if (nextOrganization && clashResolution.orgMoraleDelta !== 0) {
+          nextOrganization = {
+            ...nextOrganization,
+            morale: Math.max(
+              0,
+              Math.min(
+                100,
+                nextOrganization.morale + clashResolution.orgMoraleDelta,
+              ),
+            ),
+          };
+        }
+
+        extraDeltas.push(...clashResolution.deltas);
+      }
+
       const nextStatus = evaluateStatus(finalPlayer.vigor, finalPlayer.tension);
       const nextActions = toTacticalActions(response.actions);
       const allDeltas: StateDelta[] = [
@@ -1807,6 +2065,12 @@ export function App() {
         timestamp: Date.now(),
       };
 
+      const resolvedActiveClash = clashResolution
+        ? clashResolution.endedOutcome === 'active'
+          ? clashResolution.nextClash
+          : null
+        : optimisticCampaign.activeClash ?? null;
+
       const completedCampaign: Campaign = recordTimelineCheckpoint(
         {
           ...optimisticCampaign,
@@ -1823,17 +2087,50 @@ export function App() {
           status: nextStatus,
           actions: nextActions,
           entries: [...optimisticCampaign.entries, narratorEntry],
+          activeClash: resolvedActiveClash,
+          pendingSavingThrow: rawPendingSave,
           interactionId: response.interactionId ?? optimisticCampaign.interactionId,
           engineUsed: response.engineUsed,
         },
         {
-          title: response.sceneTitle || `Turno ${nextTurn}`,
+          title:
+            clashResolution && clashResolution.endedOutcome !== 'active'
+              ? `${
+                  clashResolution.endedOutcome === 'victory'
+                    ? 'Vitória'
+                    : clashResolution.endedOutcome === 'escaped'
+                      ? 'Fuga'
+                      : 'Revés'
+                }: ${clashResolution.nextClash.title}`
+              : response.sceneTitle || `Turno ${nextTurn}`,
           choiceSummary: cleanVisibleText,
           deltas: allDeltas,
         },
       );
 
       persistActiveCampaign(completedCampaign);
+
+      if (clashResolution && clashResolution.endedOutcome !== 'active') {
+        triggerChapterBanner(
+          clashResolution.endedOutcome === 'victory'
+            ? 'Confronto Vencido'
+            : clashResolution.endedOutcome === 'escaped'
+              ? 'Fuga Bem-Sucedida'
+              : 'Confronto Encerrado',
+          clashResolution.nextClash.title,
+          clashResolution.xpBonus > 0
+            ? `+${clashResolution.xpBonus} XP conquistado`
+            : clashResolution.nextClash.stakes,
+        );
+      } else if (
+        !clashResolution &&
+        completedCampaign.activeClash?.status !== 'active' &&
+        response.suggestedClash
+      ) {
+        setSuggestedClash(response.suggestedClash);
+      } else if (!clashResolution) {
+        setSuggestedClash(null);
+      }
 
       const newLocationDiscovered = codexDeltas.some(
         (d) => d.kind === 'location',
@@ -1857,8 +2154,19 @@ export function App() {
         void runJournalCompressionIfNeeded(completedCampaign, false);
       }
 
-      // AI Storyteller evaluation after non-direction turns (non-blocking background check)
-      if (!isDirection && !options?.skipStoryteller) {
+      // Prompt LevelUpModal when D&D 5.2 level-up unlocks Subclass, ASI/Feat, or Epic Boon!
+      if (
+        finalPlayer.level > optimisticCampaign.player.level &&
+        finalPlayer.dnd &&
+        (finalPlayer.dnd.pendingSubclassChoice ||
+          (finalPlayer.dnd.pendingAsiOrFeat ?? 0) > 0 ||
+          finalPlayer.dnd.pendingEpicBoon)
+      ) {
+        setLevelUpModalOpen(true);
+      }
+
+      // AI Storyteller evaluation after non-direction turns (skip if a reactive Saving Throw is pending!)
+      if (!isDirection && !options?.skipStoryteller && !rawPendingSave) {
         const dayChanged =
           (completedCampaign.worldClock?.day ?? 1) >
           (baseCamp.worldClock?.day ?? 1);
@@ -1921,6 +2229,8 @@ export function App() {
       isBusy ||
       isTurnInFlightRef.current ||
       camp.activeWorldEvent ||
+      camp.pendingSavingThrow ||
+      camp.activeClash?.status === 'active' ||
       camp.status === 'ended_fallen' ||
       camp.status === 'ended_victory'
     ) {
@@ -2123,6 +2433,7 @@ export function App() {
     const prevSnapshot = undoStack[undoStack.length - 1];
     setUndoStack((stack) => stack.slice(0, -1));
     setLastTurnMeta(null);
+    setSuggestedClash(null);
     persistActiveCampaign(prevSnapshot);
     pushToast('info', 'Turno desfeito — estado anterior restaurado.');
   };
@@ -2141,6 +2452,8 @@ export function App() {
       {
         precomputedDiceRoll: lastTurnMeta.diceRoll,
         pushToUndoStack: false,
+        clashAction: lastTurnMeta.clashAction,
+        precomputedClashResolution: lastTurnMeta.clashResolution,
         extraPromptNote:
           '[DIRETRIZ DE REGENERAÇÃO: Escreva uma versão alternativa fresca, criativa e diferente desta cena, mantendo fidelidade total ao estado atual.]',
       },
@@ -2171,10 +2484,19 @@ export function App() {
       lastTurnMeta.diceRoll.attribute ??
       lastTurnMeta.forcedAttribute ??
       inferActionAttribute(lastTurnMeta.actionText, lastTurnMeta.intent);
-    const opposedNpc = detectOpposedNpc(
-      lastTurnMeta.actionText,
-      spentCamp.codex.npcs,
-    );
+    const isClashReroll = spentCamp.activeClash?.status === 'active';
+    const clashHints =
+      isClashReroll && spentCamp.activeClash
+        ? buildClashRollModifiers(
+            spentCamp,
+            spentCamp.activeClash,
+            lastTurnMeta.clashAction,
+            targetAttr,
+          )
+        : undefined;
+    const opposedNpc = isClashReroll
+      ? undefined
+      : detectOpposedNpc(lastTurnMeta.actionText, spentCamp.codex.npcs);
     const opposed = opposedNpc
       ? evaluateOpposedContest(
           spentCamp.player,
@@ -2184,7 +2506,7 @@ export function App() {
         )
       : undefined;
     const partyHelper = findPartyAdvantage(
-      targetAttr,
+      clashHints?.attribute ?? targetAttr,
       spentCamp.codex.npcs,
       opposedNpc?.id,
     );
@@ -2192,16 +2514,20 @@ export function App() {
       ? spentCamp.player.attributes
       : getEffectiveAttributes(spentCamp.player);
 
-    const resolvedRollMode =
-      opposed?.disadvantage && partyHelper
+    const resolvedRollMode = clashHints
+      ? clashHints.grantAdvantage || partyHelper
+        ? 'advantage'
+        : 'normal'
+      : opposed?.disadvantage && partyHelper
         ? 'normal'
         : opposed?.disadvantage
           ? 'disadvantage'
           : partyHelper
             ? 'advantage'
             : 'normal';
-    const resolvedSource =
-      resolvedRollMode === 'disadvantage'
+    const resolvedSource = clashHints
+      ? clashHints.advantageSource ?? partyHelper?.name
+      : resolvedRollMode === 'disadvantage'
         ? opposed?.disadvantageSource
         : resolvedRollMode === 'advantage'
           ? partyHelper?.name
@@ -2216,13 +2542,15 @@ export function App() {
       true,
       spentCamp.player.tension,
       {
+        ruleset: spentCamp.ruleset,
+        player: spentCamp.player,
         attributes: effectiveAttrs,
         skillLevels: spentCamp.player.skillLevels,
-        forcedAttribute: targetAttr,
+        forcedAttribute: clashHints?.attribute ?? targetAttr,
         rollMode: resolvedRollMode,
         advantageSource: resolvedSource,
-        opposedLabel: opposed?.opposedLabel,
-        dcOverride: opposed?.opposedDc,
+        opposedLabel: clashHints?.opposedLabel ?? opposed?.opposedLabel,
+        dcOverride: clashHints?.dcOverride ?? opposed?.opposedDc,
         rerolledWithInspiration: true,
         weatherType: spentCamp.worldClock?.weatherType,
       },
@@ -2237,11 +2565,12 @@ export function App() {
       lastTurnMeta.risk,
       true,
       false,
-      targetAttr,
+      clashHints?.attribute ?? targetAttr,
       {
         precomputedDiceRoll: newRoll,
         pushToUndoStack: false,
         forceReplace: true,
+        clashAction: lastTurnMeta.clashAction,
       },
     );
   };
@@ -2259,10 +2588,22 @@ export function App() {
     }
 
     if (choice === 'use_consumable' && consumable) {
-      const { nextPlayer, deltas } = applyStateChanges(camp.player, {
-        removeItems: [consumable.name],
-        vigorDelta: 30,
-      });
+      const dndMode = isDndRuleset(camp);
+      const healAmount = dndMode
+        ? rollDiceFormula(consumable.dndStats?.healDice ?? '2d4+2').total +
+          (camp.player.dnd?.featIds.includes('field_medic')
+            ? getProficiencyBonus(camp.player.level)
+            : 0)
+        : 30;
+      const { nextPlayer, deltas } = applyStateChanges(
+        camp.player,
+        {
+          removeItems: [consumable.name],
+          vigorDelta: healAmount,
+        },
+        camp.turnCount,
+        { ruleset: camp.ruleset },
+      );
 
       const entry: StoryEntry = {
         id: `entry_crisis_item_${Date.now()}`,
@@ -2272,7 +2613,7 @@ export function App() {
         sceneTitle: 'Fôlego Recuperado',
         location: camp.currentLocation,
         mood: camp.currentMood,
-        text: `No limiar da inconsciência, você recorre a **${consumable.name}**. A dor recua o suficiente para que seus joelhos não cedam — você ainda está na luta.`,
+        text: `No limiar da inconsciência, você recorre a **${consumable.name}** (+${healAmount} ${dndMode ? 'PV' : 'Vigor'}). A dor recua o suficiente para que seus joelhos não cedam — você ainda está na luta.`,
         deltas,
         isCrisisResolution: true,
         timestamp: Date.now(),
@@ -2284,7 +2625,7 @@ export function App() {
         status: evaluateStatus(nextPlayer.vigor, nextPlayer.tension),
         entries: [...camp.entries, entry],
       });
-      pushToast('vigor', `${consumable.name} usado · +30 Vigor`);
+      pushToast('vigor', `${consumable.name} usado · +${healAmount} ${dndMode ? 'PV' : 'Vigor'}`);
       return;
     }
 
@@ -2376,9 +2717,13 @@ export function App() {
           optimisticCamp.player,
           {
             ...res.stateChanges,
-            vigorDelta: 25,
+            vigorDelta: isDndRuleset(optimisticCamp)
+              ? Math.max(2, Math.ceil(optimisticCamp.player.maxVigor * 0.25))
+              : 25,
             addTraits: [...(res.stateChanges.addTraits ?? []), scarTrait],
           },
+          nextTurn,
+          { ruleset: optimisticCamp.ruleset },
         );
         const resolvedLoc = res.location || optimisticCamp.currentLocation;
         const { nextCodex, deltas: codexDeltas } = applyCodexChanges(
@@ -2386,6 +2731,7 @@ export function App() {
           resolvedLoc,
           nextTurn,
           res.stateChanges,
+          optimisticCamp.ruleset,
         );
 
         const survivorEntry: StoryEntry = {
@@ -2427,6 +2773,258 @@ export function App() {
     }
   };
 
+  // MYTHOS 12.0 — D&D 5.2 Reactive Saving Throw, Story Death Save, Level-Up & Legacy Migration
+  const handleResolvePendingSavingThrow = () => {
+    const camp = activeCampaignRef.current;
+    const pending = camp?.pendingSavingThrow;
+    if (!camp || !pending || isBusy) return;
+
+    const saveRoll = resolveDndSavingThrow(
+      camp.player,
+      pending.ability,
+      pending.dc,
+      pending.reason,
+    );
+    if (settings.diceAnimations) {
+      setActiveDiceRoll(saveRoll);
+    }
+
+    const passed = saveRoll.outcome === 'success' || saveRoll.outcome === 'critical_success';
+    let nextPlayer: PlayerState = structuredClone(camp.player);
+    let damageTaken = 0;
+    let absorbed = 0;
+    let concNote = '';
+
+    if (pending.failDamageDice) {
+      const rolled = rollDiceFormula(pending.failDamageDice);
+      const rawDmg = passed
+        ? pending.halfOnSuccess
+          ? Math.floor(rolled.total / 2)
+          : 0
+        : rolled.total;
+      if (rawDmg > 0) {
+        const applied = applyDndDamageWithTempHp(
+          nextPlayer.vigor,
+          nextPlayer.dnd?.tempHp ?? 0,
+          rawDmg,
+        );
+        nextPlayer.vigor = applied.nextHp;
+        if (nextPlayer.dnd) nextPlayer.dnd.tempHp = applied.nextTempHp;
+        damageTaken = rawDmg;
+        absorbed = applied.absorbed;
+        if (applied.hpLost > 0 && nextPlayer.dnd?.concentrationSpellId) {
+          const concDc = Math.max(10, Math.floor(applied.hpLost / 2));
+          const cRoll = resolveDndSavingThrow(nextPlayer, 'con', concDc, 'Concentração', {
+            rollMode: nextPlayer.dnd.featIds.includes('war_focus') ? 'advantage' : 'normal',
+          });
+          if (cRoll.outcome !== 'success') {
+            nextPlayer.dnd.concentrationSpellId = null;
+            concNote = ` · Concentração perdida (CON ${cRoll.total} vs CD ${concDc})`;
+          }
+        }
+      }
+    }
+
+    if (!passed && pending.failCondition && nextPlayer.dnd) {
+      if (!nextPlayer.dnd.conditions.includes(pending.failCondition)) {
+        nextPlayer.dnd.conditions = [...nextPlayer.dnd.conditions, pending.failCondition];
+      }
+    }
+
+    const attrShort = ATTRIBUTE_META[pending.ability].short[settings.language];
+    const outcomeSummary = passed
+      ? `PASSOU (${saveRoll.total} vs CD ${pending.dc})${damageTaken > 0 ? ` · metade do dano (−${damageTaken} PV)` : ' · efeito evitado!'}`
+      : `FALHOU (${saveRoll.total} vs CD ${pending.dc})${damageTaken > 0 ? ` · −${damageTaken} PV${absorbed > 0 ? ` (${absorbed} absorvido)` : ''}` : ''}${pending.failCondition ? ` · Condição: ${pending.failCondition}` : ''}`;
+
+    const sysEntry: StoryEntry = {
+      id: `entry_save_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: `Salvaguarda de ${attrShort} contra ${pending.reason}: ${outcomeSummary}${concNote}`,
+      diceRoll: saveRoll,
+      timestamp: Date.now(),
+    };
+
+    const nextStatus = evaluateStatus(nextPlayer.vigor, nextPlayer.tension);
+    persistActiveCampaign({
+      ...camp,
+      player: nextPlayer,
+      pendingSavingThrow: null,
+      status: nextStatus,
+      entries: [...camp.entries, sysEntry],
+    });
+    pushToast(
+      passed ? 'vigor' : 'crisis',
+      `Salvaguarda ${attrShort}: ${passed ? 'Sucesso!' : `Falhou${damageTaken > 0 ? ` (−${damageTaken} PV)` : ''}`}`,
+    );
+  };
+
+  const handleRollStoryDeathSave = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || !camp.player.dnd || isBusy) return;
+
+    const dsRoll = resolveDndDeathSave(false);
+    if (settings.diceAnimations) {
+      setActiveDiceRoll(dsRoll);
+    }
+
+    const nextPlayer: PlayerState = structuredClone(camp.player);
+    const dnd = nextPlayer.dnd!;
+    let summary = '';
+    let nextStatus: CampaignStatus = camp.status;
+
+    if (dsRoll.outcome === 'critical_success') {
+      nextPlayer.vigor = 1;
+      dnd.deathSaves = { successes: 0, failures: 0, stabilized: false };
+      dnd.conditions = dnd.conditions.filter((c) => c !== 'unconscious');
+      nextStatus = 'active';
+      summary = `✨ 20 NATURAL no Teste Contra a Morte! ${nextPlayer.name} desperta imediatamente com 1 PV!`;
+    } else if (dsRoll.outcome === 'critical_failure') {
+      dnd.deathSaves.failures = Math.min(3, dnd.deathSaves.failures + 2);
+      summary = `💀 1 Natural no Teste Contra a Morte (+2 falhas → ${dnd.deathSaves.failures}/3).`;
+    } else if (dsRoll.outcome === 'success') {
+      dnd.deathSaves.successes = Math.min(3, dnd.deathSaves.successes + 1);
+      if (dnd.deathSaves.successes >= 3) {
+        nextPlayer.vigor = 1;
+        dnd.deathSaves = { successes: 0, failures: 0, stabilized: true };
+        dnd.conditions = dnd.conditions.filter((c) => c !== 'unconscious');
+        nextStatus = 'active';
+        summary = `💚 3/3 Sucessos no Teste Contra a Morte! ${nextPlayer.name} estabilizou e recobrou o fôlego (1 PV).`;
+      } else {
+        summary = `Teste Contra a Morte: Sucesso (${dsRoll.roll} vs CD 10 · ${dnd.deathSaves.successes}/3 sucessos, ${dnd.deathSaves.failures}/3 falhas).`;
+      }
+    } else {
+      dnd.deathSaves.failures = Math.min(3, dnd.deathSaves.failures + 1);
+      summary = `Teste Contra a Morte: Falha (${dsRoll.roll} vs CD 10 · ${dnd.deathSaves.successes}/3 sucessos, ${dnd.deathSaves.failures}/3 falhas).`;
+    }
+
+    const sysEntry: StoryEntry = {
+      id: `entry_ds_${Date.now()}`,
+      role: 'system',
+      turn: camp.turnCount,
+      text: summary,
+      diceRoll: dsRoll,
+      timestamp: Date.now(),
+    };
+
+    const updatedCamp: Campaign = {
+      ...camp,
+      player: nextPlayer,
+      status: nextStatus,
+      entries: [...camp.entries, sysEntry],
+    };
+    persistActiveCampaign(updatedCamp);
+
+    if (dnd.deathSaves.failures >= 3) {
+      pushToast('crisis', '3 falhas no Teste Contra a Morte — a jornada chegou ao fim.');
+      await handleGenerateEpilogue('fallen', updatedCamp);
+    } else {
+      pushToast(nextStatus === 'active' ? 'vigor' : 'info', summary);
+    }
+  };
+
+  const handleConfirmLevelUp = (payload: LevelUpChoicePayload) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.player.dnd) return;
+
+    const nextPlayer: PlayerState = structuredClone(camp.player);
+    const dnd = nextPlayer.dnd!;
+    const notes: string[] = [];
+
+    if (payload.subclassId && !dnd.subclassId) {
+      dnd.subclassId = payload.subclassId;
+      dnd.pendingSubclassChoice = false;
+      const sc = DND_CLASSES[dnd.classId].subclasses.find((s) => s.id === payload.subclassId);
+      if (sc) notes.push(`Subclasse: ${sc.label}`);
+    }
+
+    if (payload.asiIncreases) {
+      for (const [attr, pts] of Object.entries(payload.asiIncreases) as Array<[AttributeId, number]>) {
+        if (!pts || pts <= 0) continue;
+        nextPlayer.attributes[attr] = Math.min(
+          NATURAL_ATTRIBUTE_CAP,
+          (nextPlayer.attributes[attr] ?? 10) + pts,
+        );
+        notes.push(`+${pts} ${ATTRIBUTE_META[attr].short[settings.language]}`);
+      }
+      dnd.pendingAsiOrFeat = Math.max(0, (dnd.pendingAsiOrFeat ?? 0) - 1);
+    }
+
+    if (payload.featId) {
+      if (!dnd.featIds.includes(payload.featId)) {
+        dnd.featIds.push(payload.featId);
+      }
+      if (payload.featAbility) {
+        nextPlayer.attributes[payload.featAbility] = Math.min(
+          NATURAL_ATTRIBUTE_CAP,
+          (nextPlayer.attributes[payload.featAbility] ?? 10) + 1,
+        );
+      }
+      dnd.pendingAsiOrFeat = Math.max(0, (dnd.pendingAsiOrFeat ?? 0) - 1);
+      const fMeta = DND_FEATS[payload.featId];
+      if (fMeta) notes.push(`Talento: ${fMeta.label}`);
+    }
+
+    if (payload.epicBoonId) {
+      if (!dnd.featIds.includes(payload.epicBoonId)) {
+        dnd.featIds.push(payload.epicBoonId);
+      }
+      if (payload.epicBoonAbility) {
+        nextPlayer.attributes[payload.epicBoonAbility] = Math.min(
+          EPIC_BOON_ATTRIBUTE_CAP,
+          (nextPlayer.attributes[payload.epicBoonAbility] ?? 10) + 1,
+        );
+      }
+      dnd.pendingEpicBoon = false;
+      const bMeta = DND_FEATS[payload.epicBoonId];
+      if (bMeta) notes.push(`Dádiva Épica: ${bMeta.label}`);
+    }
+
+    const oldMax = nextPlayer.maxVigor;
+    const newMax = computeMaxHpForRuleset(camp.ruleset, nextPlayer);
+    const hpGain = Math.max(0, newMax - oldMax);
+    nextPlayer.maxVigor = newMax;
+    nextPlayer.vigor = Math.min(newMax, nextPlayer.vigor + hpGain);
+
+    persistActiveCampaign({
+      ...camp,
+      interactionId: undefined,
+      player: nextPlayer,
+    });
+    setLevelUpModalOpen(false);
+    pushToast('level', `Evolução D&D 5.2 aplicada! ${notes.join(' · ')}`);
+  };
+
+  const handleMigrateCampaignToDnd52 = async () => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isDndRuleset(camp) || isBusy) return;
+    if (camp.activeClash?.status === 'active') {
+      pushToast('error', 'Conclua o Confronto Tático antes de migrar para D&D 5.2.');
+      return;
+    }
+
+    const updatedSlots = await createSaveSlotAsync(camp, 'Backup pré-migração D&D 5.2');
+    setSaveSlots(updatedSlots);
+
+    const migrated = hydrateDnd5eSheetFromLegacy(camp);
+    const sysEntry: StoryEntry = {
+      id: `entry_mig_${Date.now()}`,
+      role: 'system',
+      turn: migrated.turnCount,
+      text: `Campanha migrada com segurança para D&D 5e (2024 / SRD 5.2)! Backup salvo automaticamente. Herói: ${migrated.player.vigor}/${migrated.player.maxVigor} PV · ${migrated.codex.npcs.length} NPC(s) convertidos proporcionalmente.`,
+      timestamp: Date.now(),
+    };
+
+    setUndoStack([]);
+    setLastTurnMeta(null);
+    persistActiveCampaign({
+      ...migrated,
+      interactionId: undefined,
+      entries: [...migrated.entries, sysEntry],
+    });
+    pushToast('level', 'Campanha migrada para D&D 5.2 (2024) com backup automático!');
+  };
+
   const handleAdvanceWorld = useCallback(async () => {
     const camp = activeCampaignRef.current;
     if (
@@ -2434,6 +3032,8 @@ export function App() {
       isBusy ||
       isTurnInFlightRef.current ||
       camp.activeWorldEvent ||
+      camp.pendingSavingThrow ||
+      camp.activeClash?.status === 'active' ||
       camp.status !== 'active'
     ) {
       return;
@@ -2462,6 +3062,8 @@ export function App() {
       const { nextPlayer, deltas: playerDeltas } = applyStateChanges(
         latest.player,
         response.stateChanges,
+        latest.turnCount,
+        { ruleset: latest.ruleset },
       );
       const resolvedLoc = response.location || latest.currentLocation;
       const { nextCodex, deltas: codexDeltas } = applyCodexChanges(
@@ -2469,6 +3071,7 @@ export function App() {
         resolvedLoc,
         latest.turnCount,
         response.stateChanges,
+        latest.ruleset,
       );
       const nextStatus = evaluateStatus(nextPlayer.vigor, nextPlayer.tension);
 
@@ -2530,6 +3133,7 @@ export function App() {
       !activeCampaign ||
       activeCampaign.status !== 'active' ||
       Boolean(activeCampaign.activeWorldEvent) ||
+      Boolean(activeCampaign.activeClash?.status === 'active') ||
       !settings.livingWorldEnabled ||
       pulsePaused ||
       isBusy ||
@@ -2626,18 +3230,20 @@ export function App() {
     const camp = activeCampaignRef.current;
     if (!camp || camp.player.attributePoints <= 0) return;
     const currentVal = camp.player.attributes[attr] ?? 10;
-    if (currentVal >= NATURAL_ATTRIBUTE_CAP) return;
+    const hasEpicBoon = Boolean(
+      camp.player.dnd?.featIds.some((id) => DND_FEATS[id]?.category === 'epic_boon'),
+    );
+    const attrCap = hasEpicBoon ? EPIC_BOON_ATTRIBUTE_CAP : NATURAL_ATTRIBUTE_CAP;
+    if (currentVal >= attrCap) return;
 
     const nextAttributes = {
       ...camp.player.attributes,
       [attr]: currentVal + 1,
     };
-    const gear = getEquippedGearBonuses(camp.player.inventory);
-    const nextMaxVigor = computeMaxVigor(
-      camp.player.level,
-      nextAttributes.con + (gear.con ?? 0),
-      gear.maxVigor ?? 0,
-    );
+    const nextMaxVigor = computeMaxHpForRuleset(camp.ruleset, {
+      ...camp.player,
+      attributes: nextAttributes,
+    });
     const vigorBonus = Math.max(0, nextMaxVigor - camp.player.maxVigor);
 
     persistActiveCampaign({
@@ -2647,7 +3253,10 @@ export function App() {
         attributes: nextAttributes,
         attributePoints: camp.player.attributePoints - 1,
         maxVigor: nextMaxVigor,
-        vigor: Math.min(nextMaxVigor, camp.player.vigor + vigorBonus),
+        vigor:
+          camp.player.vigor <= 0
+            ? 0
+            : Math.min(nextMaxVigor, camp.player.vigor + vigorBonus),
       },
     });
     pushToast(
@@ -2669,16 +3278,17 @@ export function App() {
     const nextAttributes = patch.attributes
       ? { ...camp.player.attributes, ...patch.attributes }
       : camp.player.attributes;
-    const gear = getEquippedGearBonuses(camp.player.inventory);
-    const nextMaxVigor = computeMaxVigor(
-      camp.player.level,
-      nextAttributes.con + (gear.con ?? 0),
-      gear.maxVigor ?? 0,
-    );
-    const nextVigor = Math.max(
-      1,
-      Math.min(nextMaxVigor, camp.player.vigor + Math.max(0, nextMaxVigor - camp.player.maxVigor)),
-    );
+    const nextMaxVigor = computeMaxHpForRuleset(camp.ruleset, {
+      ...camp.player,
+      attributes: nextAttributes,
+    });
+    const nextVigor =
+      camp.player.vigor <= 0
+        ? 0
+        : Math.min(
+            nextMaxVigor,
+            camp.player.vigor + Math.max(0, nextMaxVigor - camp.player.maxVigor),
+          );
 
     persistActiveCampaign({
       ...camp,
@@ -2701,6 +3311,31 @@ export function App() {
     if (!target || !target.equipSlot) return;
 
     const equipping = !target.equipped;
+    const dndMode = isDndRuleset(camp);
+
+    // D&D 5.2 Attunement Limit (max 3 attuned items simultaneously!)
+    if (equipping && dndMode && target.dndStats?.requiresAttunement) {
+      const currentAttuned = camp.player.inventory.filter(
+        (i) => i.equipped && i.dndStats?.requiresAttunement && i.id !== itemId,
+      ).length;
+      if (currentAttuned >= 3) {
+        pushToast(
+          'error',
+          'Limite D&D 5.2 de Sintonia atingido (máx. 3 itens mágicos sintonizados). Desequipe um primeiro.',
+        );
+        return;
+      }
+    }
+
+    const equippingTwoHanded =
+      equipping &&
+      target.equipSlot === 'weapon' &&
+      Boolean(target.dndStats?.properties?.includes('two_handed'));
+    const equippingShield =
+      equipping &&
+      target.equipSlot === 'offhand' &&
+      target.dndStats?.armorCategory === 'shield';
+
     const nextInventory = camp.player.inventory.map((item) => {
       if (item.id === itemId) {
         return { ...item, equipped: equipping };
@@ -2708,15 +3343,24 @@ export function App() {
       if (equipping && item.equipSlot === target.equipSlot && item.equipped) {
         return { ...item, equipped: false };
       }
+      if (equippingTwoHanded && item.equipSlot === 'offhand' && item.equipped) {
+        return { ...item, equipped: false };
+      }
+      if (
+        equippingShield &&
+        item.equipSlot === 'weapon' &&
+        item.equipped &&
+        item.dndStats?.properties?.includes('two_handed')
+      ) {
+        return { ...item, equipped: false };
+      }
       return item;
     });
 
-    const gear = getEquippedGearBonuses(nextInventory);
-    const nextMaxVigor = computeMaxVigor(
-      camp.player.level,
-      (camp.player.attributes.con ?? 10) + (gear.con ?? 0),
-      gear.maxVigor ?? 0,
-    );
+    const nextMaxVigor = computeMaxHpForRuleset(camp.ruleset, {
+      ...camp.player,
+      inventory: nextInventory,
+    });
 
     persistActiveCampaign({
       ...camp,
@@ -2823,19 +3467,23 @@ export function App() {
           }
         : n.attributes ?? defaultNpcAttributes(n.assistAttribute ?? 'wis');
       const nextLevel = patch.level ?? n.level ?? camp.player.level;
-      const nextMaxVigor = computeMaxVigor(nextLevel, mergedAttrs.con, 0);
+      const nextDraftNpc = { ...n, ...patch, level: nextLevel, attributes: mergedAttrs };
+      const nextMaxVigor = computeNpcMaxHpForRuleset(camp.ruleset, nextDraftNpc);
       const currentVigor = n.vigor ?? nextMaxVigor;
-      const nextVigor = Math.max(
-        1,
-        Math.min(nextMaxVigor, currentVigor + Math.max(0, nextMaxVigor - (n.maxVigor ?? nextMaxVigor))),
-      );
+      const nextVigor =
+        currentVigor <= 0
+          ? 0
+          : Math.min(
+              nextMaxVigor,
+              currentVigor + Math.max(0, nextMaxVigor - (n.maxVigor ?? nextMaxVigor)),
+            );
       return {
-        ...n,
-        ...patch,
-        level: nextLevel,
-        attributes: mergedAttrs,
+        ...nextDraftNpc,
         maxVigor: nextMaxVigor,
         vigor: nextVigor,
+        armorClass: isDndRuleset(camp)
+          ? patch.armorClass ?? computeNpcArmorClass(nextDraftNpc)
+          : patch.armorClass ?? n.armorClass,
       };
     });
 
@@ -3120,26 +3768,16 @@ export function App() {
         );
       }
 
-      // Award crafting XP & check level-up (BG3/5e cap at Level 20 + ASI at 4/8/12/16/20)
-      let nextLevel = latest.player.level;
-      let nextXp = latest.player.xp + res.xpGain;
-      let nextXpReq = latest.player.xpToNextLevel;
-      let nextAttrPoints = latest.player.attributePoints;
-      while (nextXp >= nextXpReq && nextLevel < MAX_LEVEL) {
-        nextXp -= nextXpReq;
-        nextLevel += 1;
-        nextXpReq = xpRequiredForLevel(nextLevel);
-        nextAttrPoints += getAsiPointsForLevel(nextLevel);
-      }
-      if (nextLevel >= MAX_LEVEL) {
-        nextXp = Math.min(nextXp, nextXpReq);
-      }
-      const gear = getEquippedGearBonuses(nextInventory);
-      const nextMaxVigor = computeMaxVigor(
-        nextLevel,
-        latest.player.attributes.con + (gear.con ?? 0),
-        gear.maxVigor ?? 0,
+      const { nextPlayer: craftedPlayer } = applyStateChanges(
+        {
+          ...latest.player,
+          inventory: nextInventory,
+        },
+        { xpGain: res.xpGain },
+        latest.turnCount,
+        { ruleset: latest.ruleset },
       );
+      const nextMaxVigor = computeMaxHpForRuleset(latest.ruleset, craftedPlayer);
 
       const craftEntry: StoryEntry = {
         id: `entry_craft_${Date.now()}`,
@@ -3153,14 +3791,9 @@ export function App() {
         ...latest,
         interactionId: undefined,
         player: {
-          ...latest.player,
-          level: nextLevel,
-          xp: nextXp,
-          xpToNextLevel: nextXpReq,
-          attributePoints: nextAttrPoints,
+          ...craftedPlayer,
           maxVigor: nextMaxVigor,
-          vigor: Math.min(nextMaxVigor, latest.player.vigor),
-          inventory: nextInventory,
+          vigor: Math.min(nextMaxVigor, craftedPlayer.vigor),
         },
         stronghold: {
           ...stronghold,
@@ -3484,7 +4117,14 @@ export function App() {
       return;
     }
 
-    const maxHp = computeMaxVigor(1, candidate.attributes.con, 0);
+    const recruitLevel = Math.max(1, Math.min(camp.player.level, 5));
+    const draftNpc = {
+      role: candidate.role,
+      level: recruitLevel,
+      attributes: candidate.attributes,
+      assistAttribute: ORG_DIVISION_META[candidate.recommendedDivision].primaryAttr,
+    };
+    const maxHp = computeNpcMaxHpForRuleset(camp.ruleset, draftNpc);
     const newNpc: NpcRecord = {
       id: `npc_merc_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
       name: candidate.name,
@@ -3500,9 +4140,10 @@ export function App() {
       height: candidate.height,
       personality: candidate.personality,
       currentMood: 'Pronto para o serviço',
-      level: Math.max(1, Math.min(camp.player.level, 5)),
+      level: recruitLevel,
       vigor: maxHp,
       maxVigor: maxHp,
+      armorClass: isDndRuleset(camp) ? computeNpcArmorClass(draftNpc) : undefined,
       attributes: candidate.attributes,
       skills: candidate.skills,
       traits: candidate.traits,
@@ -3739,7 +4380,7 @@ export function App() {
             orgDuty: 'injured' as const,
             injuryNote: det.injuryNote,
             recoveryHoursLeft: 24,
-            vigor: Math.max(25, Math.round((n.maxVigor ?? 100) * 0.45)),
+            vigor: Math.max(1, Math.round((n.maxVigor ?? 10) * 0.45)),
           };
         }
         const levelUp = det.grade === 'critical' && (n.level ?? 1) < MAX_LEVEL;
@@ -4176,24 +4817,738 @@ export function App() {
     const target = camp.player.inventory.find((i) => i.id === itemId);
     if (!target || target.category !== 'consumable') return;
 
-    const { nextPlayer } = applyStateChanges(camp.player, {
-      removeItems: [target.name],
-      vigorDelta: 25,
-    });
+    const dndMode = isDndRuleset(camp);
+    const activeClash = camp.activeClash?.status === 'active' ? camp.activeClash : null;
+
+    if (activeClash && dndMode && camp.player.dnd) {
+      if (activeClash.bonusActionUsed) {
+        pushToast('error', 'Ação Bônus já usada nesta rodada D&D 5.2!');
+        return;
+      }
+      const res = executeDnd52BonusAction(camp, activeClash, {
+        kind: 'potion',
+        item: target,
+      });
+      if (!res) return;
+      persistActiveCampaign({
+        ...camp,
+        player: res.nextPlayer,
+        activeClash: res.nextClash,
+      });
+      setArenaBeats([
+        {
+          id: `bonus_pot_${Date.now()}`,
+          actorSide: 'hero',
+          actorId: 'player',
+          targetSide: 'hero',
+          targetId: 'player',
+          vfx: res.vfx ?? 'heal',
+          caption: res.caption,
+          floatingText: res.floatingText,
+          floatingColor: res.floatingColor,
+        },
+      ]);
+      setArenaBattleNonce((n) => n + 1);
+      pushToast('vigor', res.caption);
+      return;
+    }
+
+    if (activeClash && activeClash.bonusItemUsedRound === activeClash.round) {
+      pushToast(
+        'error',
+        'Ação Bônus já usada nesta rodada do confronto (máx. 1 consumível/rodada).',
+      );
+      return;
+    }
+
+    const healAmount = dndMode
+      ? rollDiceFormula(target.dndStats?.healDice ?? '2d4+2').total +
+        (camp.player.dnd?.featIds.includes('field_medic')
+          ? getProficiencyBonus(camp.player.level)
+          : 0)
+      : 25;
+    const { nextPlayer } = applyStateChanges(
+      camp.player,
+      {
+        removeItems: [target.name],
+        vigorDelta: healAmount,
+      },
+      camp.turnCount,
+      { ruleset: camp.ruleset },
+    );
+    const unitLabel = dndMode ? 'PV' : 'Vigor';
     const sysEntry: StoryEntry = {
       id: `entry_use_${Date.now()}`,
       role: 'system',
       turn: camp.turnCount,
-      text: `Você consumiu ${target.name} (+25 Vigor).`,
+      text: `Você consumiu ${target.name} (+${healAmount} ${unitLabel})${activeClash ? ' como Ação Bônus no confronto.' : '.'}`,
       timestamp: Date.now(),
     };
     persistActiveCampaign({
       ...camp,
       player: nextPlayer,
       status: evaluateStatus(nextPlayer.vigor, nextPlayer.tension),
+      activeClash: activeClash
+        ? { ...activeClash, bonusItemUsedRound: activeClash.round }
+        : camp.activeClash,
       entries: [...camp.entries, sysEntry],
     });
-    pushToast('vigor', `${target.name} usado · +25 Vigor`);
+    pushToast(
+      'vigor',
+      `${target.name} usado · +${healAmount} ${unitLabel}${activeClash ? ' (Ação Bônus)' : ''}`,
+    );
+  };
+
+  // MYTHOS 11.5 — Instant JRPG Battle Arena Lifecycle Handlers
+  const handleStartClash = async (opts: {
+    requestedArchetype?: ClashArchetype;
+    customPremise?: string;
+  }) => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isStartingClash || camp.status !== 'active') return;
+    setIsStartingClash(true);
+    try {
+      const initRes = await requestClashInit(camp, settings, apiHealth, opts);
+      const latest = activeCampaignRef.current;
+      if (!latest || latest.id !== camp.id) return;
+
+      const hydrated = hydrateClashState(latest, initRes);
+      const withMark = recordTimelineCheckpoint(
+        {
+          ...latest,
+          activeClash: hydrated,
+        },
+        {
+          kind: 'manual_mark',
+          title: `Início de Confronto: ${hydrated.title}`,
+          choiceSummary: `${CLASH_ARCHETYPE_META[hydrated.archetype].label} · ${hydrated.objective}`,
+        },
+      );
+      setSuggestedClash(null);
+      setClashLauncherOpen(false);
+      setArenaDiceRoll(null);
+      setArenaBeats([]);
+      setArenaBattleNonce(0);
+      setLastArenaTurnSnapshot(null);
+      setArenaBossArtUrl(null);
+      setIsFinishingClash(false);
+      persistActiveCampaign(withMark);
+    } catch (err) {
+      pushToast(
+        'error',
+        err instanceof Error ? err.message : 'Falha ao iniciar confronto tático.',
+      );
+    } finally {
+      setIsStartingClash(false);
+    }
+  };
+
+  const handleSelectClashTarget = (enemyId: string) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.activeClash || camp.activeClash.status !== 'active') return;
+    persistActiveCampaign({
+      ...camp,
+      activeClash: {
+        ...camp.activeClash,
+        selectedTargetId: enemyId,
+      },
+    });
+  };
+
+  const handleChangeClashAllyDirective = (
+    npcId: string,
+    directive: ClashAllyDirective,
+  ) => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.activeClash || camp.activeClash.status !== 'active') return;
+    persistActiveCampaign({
+      ...camp,
+      activeClash: {
+        ...camp.activeClash,
+        allies: camp.activeClash.allies.map((a) =>
+          a.npcId === npcId ? { ...a, directive } : a,
+        ),
+      },
+    });
+  };
+
+  /**
+   * Instant JRPG turn inside ClashBattleArena: resolves d20, posture/damage,
+   * party directives, and enemy counter-attacks in < 2ms with zero AI wait!
+   */
+  const handleArenaFreeMove = (zone: ClashZone) => {
+    const camp = activeCampaignRef.current;
+    const clash = camp?.activeClash;
+    if (!camp || !clash || clash.status !== 'active') return;
+    const res = executeDnd52FreeMove(camp, clash, zone);
+    if (!res) {
+      pushToast('error', 'Deslocamento já usado neste turno ou impedido por condição.');
+      return;
+    }
+    persistActiveCampaign({
+      ...camp,
+      player: res.nextPlayer,
+      activeClash: res.nextClash,
+    });
+    setArenaBeats([
+      {
+        id: `move_${Date.now()}`,
+        actorSide: 'hero',
+        actorId: 'player',
+        targetSide: 'hero',
+        targetId: res.targetId,
+        vfx: res.vfx ?? 'shield',
+        caption: res.caption,
+        floatingText: res.floatingText,
+        floatingColor: res.floatingColor,
+      },
+    ]);
+    setArenaBattleNonce((n) => n + 1);
+  };
+
+  const handleArenaBonusResource = (resourceId: string) => {
+    const camp = activeCampaignRef.current;
+    const clash = camp?.activeClash;
+    if (!camp || !clash || clash.status !== 'active') return;
+    const res = executeDnd52BonusAction(camp, clash, { kind: 'resource', resourceId });
+    if (!res) {
+      pushToast('error', 'Recurso indisponível ou Ação Bônus já gasta neste turno.');
+      return;
+    }
+    persistActiveCampaign({
+      ...camp,
+      player: res.nextPlayer,
+      activeClash: res.nextClash,
+    });
+    setArenaBeats([
+      {
+        id: `res_${Date.now()}`,
+        actorSide: 'hero',
+        actorId: 'player',
+        targetSide: res.targetId && res.targetId !== 'player' ? 'enemy' : 'hero',
+        targetId: res.targetId ?? 'player',
+        vfx: res.vfx ?? 'heal',
+        caption: res.caption,
+        floatingText: res.floatingText,
+        floatingColor: res.floatingColor,
+      },
+    ]);
+    setArenaBattleNonce((n) => n + 1);
+  };
+
+  const handleArenaBonusSpell = (spellId: string) => {
+    const camp = activeCampaignRef.current;
+    const clash = camp?.activeClash;
+    if (!camp || !clash || clash.status !== 'active') return;
+    const res = executeDnd52BonusAction(camp, clash, { kind: 'spell', spellId });
+    if (!res) {
+      pushToast('error', 'Espaço indisponível ou Ação Bônus já usada neste turno.');
+      return;
+    }
+    persistActiveCampaign({
+      ...camp,
+      player: res.nextPlayer,
+      activeClash: res.nextClash,
+    });
+    setArenaBeats([
+      {
+        id: `bsp_${Date.now()}`,
+        actorSide: 'hero',
+        actorId: 'player',
+        targetSide: res.targetId && res.targetId !== 'player' ? 'enemy' : 'hero',
+        targetId: res.targetId ?? 'player',
+        vfx: res.vfx ?? 'psychic',
+        caption: res.caption,
+        floatingText: res.floatingText,
+        floatingColor: res.floatingColor,
+      },
+    ]);
+    setArenaBattleNonce((n) => n + 1);
+  };
+
+  const handleArenaToggleReaction = () => {
+    const camp = activeCampaignRef.current;
+    const clash = camp?.activeClash;
+    if (!camp || !clash || clash.status !== 'active') return;
+    const dnd = camp.player.dnd;
+    const canShield = Boolean(dnd?.preparedSpellIds.includes('shield'));
+    const canUncanny = Boolean(dnd?.classId === 'rogue' && camp.player.level >= 5);
+    const defaultReaction = canShield ? 'shield' : canUncanny ? 'uncanny_dodge' : null;
+    const nextReaction = clash.preArmedReaction ? null : defaultReaction;
+    persistActiveCampaign({
+      ...camp,
+      activeClash: {
+        ...clash,
+        preArmedReaction: nextReaction,
+      },
+    });
+  };
+
+  const handleRerollArenaWithInspiration = () => {
+    if (!lastArenaTurnSnapshot) return;
+    const { campSnapshot, payload, vfx } = lastArenaTurnSnapshot;
+    const currentInsp = campSnapshot.player.inspiration ?? 0;
+    if (currentInsp <= 0) {
+      pushToast('error', 'Sem Inspiração Heroica disponível.');
+      return;
+    }
+    const spentCamp: Campaign = structuredClone(campSnapshot);
+    spentCamp.player.inspiration = Math.max(0, currentInsp - 1);
+    activeCampaignRef.current = spentCamp;
+    setLastArenaTurnSnapshot(null);
+    pushToast('inspiration', '★ Inspiração Heroica gasta — rerrolando rodada na Arena!');
+    handleExecuteInstantClashTurn(payload, vfx, true);
+  };
+
+  const handleExecuteInstantClashTurn = (
+    payload: ClashActionPayload,
+    vfx: ClashVfxKind,
+    isInspirationReroll = false,
+  ) => {
+    const camp = activeCampaignRef.current;
+    const beforeClash = camp?.activeClash;
+    if (!camp || !beforeClash || beforeClash.status !== 'active') return;
+
+    if (!isInspirationReroll) {
+      setLastArenaTurnSnapshot({
+        campSnapshot: structuredClone(camp),
+        payload,
+        vfx,
+      });
+    }
+
+    // MYTHOS 12.0 — Official D&D 5.2 (2024) Battle Resolver for Combat & Siege!
+    if (
+      isDndRuleset(camp) &&
+      camp.player.dnd &&
+      beforeClash.archetype !== 'social' &&
+      beforeClash.archetype !== 'chase'
+    ) {
+      const resolution = resolveDnd52ClashRound({
+        campaign: camp,
+        clash: beforeClash,
+        actionText: payload.label,
+        clashAction: payload,
+      });
+      const diceRoll = resolution.diceRoll
+        ? { ...resolution.diceRoll, rerolledWithInspiration: isInspirationReroll }
+        : undefined;
+
+      const beats = extractClashChoreographyBeats(
+        beforeClash,
+        resolution as unknown as ClashRoundResolution,
+        vfx,
+        diceRoll,
+      );
+
+      const nextTension = Math.max(
+        0,
+        Math.min(94, resolution.nextPlayer.tension + resolution.playerTensionDelta),
+      );
+
+      const { nextPlayer } = applyStateChanges(
+        {
+          ...resolution.nextPlayer,
+          tension: nextTension,
+        },
+        {
+          xpGain: resolution.xpBonus,
+          inspirationGain: diceRoll?.outcome === 'critical_success' ? 1 : 0,
+        },
+        camp.turnCount,
+        { ruleset: camp.ruleset },
+      );
+
+      let nextCodex = camp.codex;
+      if (resolution.allyVigorUpdates.length > 0) {
+        const updateMap = new Map(resolution.allyVigorUpdates.map((u) => [u.npcId, u]));
+        nextCodex = {
+          ...camp.codex,
+          npcs: camp.codex.npcs.map((n) => {
+            const u = updateMap.get(n.id);
+            if (!u) return n;
+            const nextAff =
+              resolution.affinityBonus > 0
+                ? Math.max(-100, Math.min(100, (n.affinity ?? 0) + resolution.affinityBonus))
+                : n.affinity;
+            return {
+              ...n,
+              vigor: u.vigor,
+              affinity: nextAff,
+              relationship:
+                typeof nextAff === 'number'
+                  ? deriveRelationshipFromAffinity(nextAff)
+                  : n.relationship,
+              injuryNote: u.downed ? 'Ferido no confronto recente' : n.injuryNote,
+            };
+          }),
+        };
+      }
+
+      let nextStronghold = camp.stronghold;
+      if (
+        nextStronghold &&
+        (resolution.supplyChanges.ammo || resolution.supplyChanges.materials)
+      ) {
+        const baseSup =
+          nextStronghold.supplies ?? defaultBaseSuppliesForTheme(camp.world.primaryTheme);
+        nextStronghold = {
+          ...nextStronghold,
+          supplies: {
+            ...baseSup,
+            ammo: Math.max(0, baseSup.ammo + (resolution.supplyChanges.ammo ?? 0)),
+            materials: Math.max(0, baseSup.materials + (resolution.supplyChanges.materials ?? 0)),
+          },
+        };
+      }
+
+      let nextOrg = camp.organization;
+      if (nextOrg && resolution.orgMoraleDelta !== 0) {
+        nextOrg = {
+          ...nextOrg,
+          morale: Math.max(0, Math.min(100, nextOrg.morale + resolution.orgMoraleDelta)),
+        };
+      }
+
+      persistActiveCampaign({
+        ...camp,
+        player: nextPlayer,
+        codex: nextCodex,
+        stronghold: nextStronghold,
+        organization: nextOrg,
+        activeClash: resolution.nextClash,
+      });
+
+      setArenaDiceRoll(diceRoll ?? null);
+      setArenaBeats(beats);
+      setArenaBattleNonce((n) => n + 1);
+      if (
+        nextPlayer.level > camp.player.level &&
+        nextPlayer.dnd &&
+        (nextPlayer.dnd.pendingSubclassChoice ||
+          (nextPlayer.dnd.pendingAsiOrFeat ?? 0) > 0 ||
+          nextPlayer.dnd.pendingEpicBoon)
+      ) {
+        setLevelUpModalOpen(true);
+      }
+      return;
+    }
+
+    const intent: ActionIntent =
+      payload.kind === 'defend' || payload.kind === 'reposition'
+        ? 'survival'
+        : payload.kind === 'evidence'
+          ? 'investigate'
+          : beforeClash.archetype === 'social'
+            ? 'diplomatic'
+            : 'bold';
+    const risk: ActionRisk =
+      payload.kind === 'reposition' || payload.kind === 'defend'
+        ? 'low'
+        : 'high';
+    const baseAttr =
+      payload.attribute ?? inferActionAttribute(payload.label, intent);
+
+    const clashHints = buildClashRollModifiers(
+      camp,
+      beforeClash,
+      payload,
+      baseAttr,
+    );
+    const partyHelper = findPartyAdvantage(
+      clashHints.attribute,
+      camp.codex.npcs,
+    );
+    const effectiveAttrs = getEffectiveAttributes(camp.player);
+    const resolvedRollMode =
+      clashHints.grantAdvantage || partyHelper ? 'advantage' : 'normal';
+    const resolvedSource = clashHints.advantageSource ?? partyHelper?.name;
+    const needsRoll =
+      payload.kind !== 'reposition' && payload.kind !== 'guild_support';
+
+    const diceRoll = needsRoll
+      ? resolveFateCheck(
+          payload.label,
+          intent,
+          risk,
+          camp.difficulty,
+          camp.player.skills,
+          true,
+          camp.player.tension,
+          {
+            attributes: effectiveAttrs,
+            skillLevels: camp.player.skillLevels,
+            forcedAttribute: clashHints.attribute,
+            rollMode: resolvedRollMode,
+            advantageSource: resolvedSource,
+            opposedLabel: clashHints.opposedLabel,
+            dcOverride: clashHints.dcOverride,
+            weatherType: camp.worldClock?.weatherType,
+          },
+        )
+      : undefined;
+
+    const resolution = resolveClashRound({
+      campaign: camp,
+      clash: beforeClash,
+      actionText: payload.label,
+      clashAction: payload,
+      diceRoll,
+    });
+
+    const beats = extractClashChoreographyBeats(
+      beforeClash,
+      resolution,
+      vfx,
+      diceRoll,
+    );
+
+    // Apply player vigor, tension & XP immediately so arena bars slide smoothly
+    const nextVigor = Math.max(
+      0,
+      Math.min(
+        camp.player.maxVigor,
+        camp.player.vigor + resolution.playerVigorDelta,
+      ),
+    );
+    const nextTension = Math.max(
+      0,
+      Math.min(94, camp.player.tension + resolution.playerTensionDelta),
+    );
+
+    // If physical vigor reached 0 outside social duels, mark battle defeat cleanly
+    const finalClash =
+      beforeClash.archetype !== 'social' &&
+      nextVigor <= 0 &&
+      resolution.nextClash.status === 'active'
+        ? { ...resolution.nextClash, status: 'defeat' as const }
+        : resolution.nextClash;
+
+    const { nextPlayer } = applyStateChanges(
+      {
+        ...camp.player,
+        vigor: nextVigor,
+        tension: nextTension,
+      },
+      {
+        xpGain: resolution.xpBonus,
+        inspirationGain: diceRoll?.outcome === 'critical_success' ? 1 : 0,
+      },
+      camp.turnCount,
+      { ruleset: camp.ruleset },
+    );
+
+    // Sync party ally vigor + bond affinity
+    let nextCodex = camp.codex;
+    if (resolution.allyVigorUpdates.length > 0) {
+      const updateMap = new Map(
+        resolution.allyVigorUpdates.map((u) => [u.npcId, u]),
+      );
+      nextCodex = {
+        ...camp.codex,
+        npcs: camp.codex.npcs.map((n) => {
+          const u = updateMap.get(n.id);
+          if (!u) return n;
+          const nextAff =
+            resolution.affinityBonus > 0
+              ? Math.max(-100, Math.min(100, (n.affinity ?? 0) + resolution.affinityBonus))
+              : n.affinity;
+          return {
+            ...n,
+            vigor: u.vigor,
+            affinity: nextAff,
+            relationship:
+              typeof nextAff === 'number'
+                ? deriveRelationshipFromAffinity(nextAff)
+                : n.relationship,
+            injuryNote: u.downed ? 'Ferido no confronto recente' : n.injuryNote,
+          };
+        }),
+      };
+    }
+
+    // Sync siege/guild supply costs & org morale
+    let nextStronghold = camp.stronghold;
+    if (
+      nextStronghold &&
+      (resolution.supplyChanges.ammo || resolution.supplyChanges.materials)
+    ) {
+      const baseSup =
+        nextStronghold.supplies ??
+        defaultBaseSuppliesForTheme(camp.world.primaryTheme);
+      nextStronghold = {
+        ...nextStronghold,
+        supplies: {
+          ...baseSup,
+          ammo: Math.max(0, baseSup.ammo + (resolution.supplyChanges.ammo ?? 0)),
+          materials: Math.max(
+            0,
+            baseSup.materials + (resolution.supplyChanges.materials ?? 0),
+          ),
+        },
+      };
+    }
+
+    let nextOrg = camp.organization;
+    if (nextOrg && resolution.orgMoraleDelta !== 0) {
+      nextOrg = {
+        ...nextOrg,
+        morale: Math.max(0, Math.min(100, nextOrg.morale + resolution.orgMoraleDelta)),
+      };
+    }
+
+    persistActiveCampaign({
+      ...camp,
+      player: nextPlayer,
+      codex: nextCodex,
+      stronghold: nextStronghold,
+      organization: nextOrg,
+      activeClash: finalClash,
+    });
+
+    setArenaDiceRoll(diceRoll ?? null);
+    setArenaBeats(beats);
+    setArenaBattleNonce((n) => n + 1);
+  };
+
+  /**
+   * Closes the finished Battle Arena and fires ONE single cinematic AI story turn
+   * narrating the whole battle climax, aftermath, loot, and consequences into the chronicle!
+   */
+  const handleFinishClashToStory = async () => {
+    const camp = activeCampaignRef.current;
+    const finished = camp?.activeClash;
+    if (!camp || !finished || isFinishingClash) return;
+
+    setIsFinishingClash(true);
+    const meta = CLASH_ARCHETYPE_META[finished.archetype];
+    const outcomeWord =
+      finished.status === 'victory'
+        ? 'VITÓRIA'
+        : finished.status === 'escaped'
+          ? 'FUGA BEM-SUCEDIDA'
+          : 'REVÉS / DERROTA';
+
+    const logDigest = finished.roundLog
+      .slice(-8)
+      .map((l) => `[R${l.round}] ${l.summary}`)
+      .join(' | ');
+
+    // On D&D 5.2 victory while unconscious (0 PV), party stabilizes hero at 1 PV!
+    const stabilizedPlayer =
+      finished.status === 'victory' && camp.player.vigor <= 0 && isDndRuleset(camp)
+        ? {
+            ...camp.player,
+            vigor: 1,
+            dnd: camp.player.dnd
+              ? {
+                  ...camp.player.dnd,
+                  deathSaves: { successes: 0, failures: 0, stabilized: false },
+                  conditions: camp.player.dnd.conditions.filter((c) => c !== 'unconscious'),
+                }
+              : camp.player.dnd,
+          }
+        : camp.player;
+
+    const clearedCamp: Campaign = {
+      ...camp,
+      player: stabilizedPlayer,
+      status:
+        stabilizedPlayer.vigor <= 0 && finished.archetype !== 'social'
+          ? 'crisis_vigor'
+          : 'active',
+      activeClash: null,
+    };
+
+    persistActiveCampaign(clearedCamp);
+    setArenaBossArtUrl(null);
+    setArenaBeats([]);
+    setArenaDiceRoll(null);
+    setLastArenaTurnSnapshot(null);
+    setIsFinishingClash(false);
+
+    if (clearedCamp.status === 'crisis_vigor') {
+      pushToast('crisis', 'Vigor esgotado na batalha! Resolva a crise de sobrevivência.');
+      return;
+    }
+
+    const summaryAction =
+      finished.status === 'escaped'
+        ? `Concluí a fuga em "${finished.title}" (${finished.round} rodadas).`
+        : finished.status === 'victory'
+          ? `Venci o confronto "${finished.title}" contra ${finished.enemies.map((e) => e.name).join(', ')} em ${finished.round} rodadas!`
+          : `Sobrevivi ao revés em "${finished.title}" (${finished.round} rodadas).`;
+
+    const extraNote = [
+      `[TACTICAL BATTLE ARENA CONCLUDED — ${outcomeWord}]`,
+      `Archetype: ${meta.label} | Title: ${finished.title} | Rounds: ${finished.round}`,
+      `Enemies: ${finished.enemies.map((e) => `${e.name} (${e.hp}/${e.maxHp})`).join(', ')}`,
+      `Key Battle Highlights: ${logDigest}`,
+      `NARRATE THIS EPIC CLIMAX AND AFTERMATH in vivid literary prose/dialogue beats! Reward fitting loot/clues/canonFacts if victorious. Set vigorDelta = 0 and tensionDelta = 0 (already applied during battle).`,
+    ].join('\n');
+
+    await executeStoryTurn(
+      clearedCamp,
+      summaryAction,
+      'bold',
+      'safe',
+      false,
+      false,
+      undefined,
+      {
+        skipStoryteller: true,
+        extraPromptNote: extraNote,
+      },
+    );
+  };
+
+  const handleGenerateClashBossArt = async (enemy: ClashEnemy) => {
+    const camp = activeCampaignRef.current;
+    if (!camp || isGeneratingBossArt) return;
+    setIsGeneratingBossArt(true);
+    try {
+      const res = await requestNpcPortrait(
+        camp.world,
+        {
+          name: enemy.name,
+          role: enemy.role,
+          notes: `Dramatic JRPG boss battle portrait in ${camp.currentLocation}. Weaknesses: ${enemy.weaknesses.join(', ')}`,
+        },
+        settings,
+        apiHealth,
+      );
+      if (res.dataUrl) {
+        setArenaBossArtUrl(res.dataUrl);
+      }
+    } catch {
+      pushToast('error', 'Não foi possível gerar a arte do inimigo agora.');
+    } finally {
+      setIsGeneratingBossArt(false);
+    }
+  };
+
+  const handleConvertChaseToCombat = () => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.activeClash || camp.activeClash.archetype !== 'chase') return;
+    const nextClash = convertChaseToCombat(camp.activeClash, camp);
+    persistActiveCampaign({
+      ...camp,
+      activeClash: nextClash,
+    });
+    pushToast('crisis', '⚔️ Encurralado! Perseguição convertida em Combate!');
+  };
+
+  const handleRetreatFromClash = () => {
+    const camp = activeCampaignRef.current;
+    if (!camp?.activeClash || isBusy) return;
+    const endedTitle = camp.activeClash.title;
+    persistActiveCampaign({
+      ...camp,
+      activeClash: null,
+    });
+    setSuggestedClash(null);
+    setArenaBossArtUrl(null);
+    pushToast('info', `Você recuou de "${endedTitle}" e voltou para a história.`);
   };
 
   const handleMoveItemStorage = (
@@ -4214,12 +5569,10 @@ export function App() {
       };
     });
 
-    const gear = getEquippedGearBonuses(nextInventory);
-    const nextMaxVigor = computeMaxVigor(
-      camp.player.level,
-      (camp.player.attributes.con ?? 10) + (gear.con ?? 0),
-      gear.maxVigor ?? 0,
-    );
+    const nextMaxVigor = computeMaxHpForRuleset(camp.ruleset, {
+      ...camp.player,
+      inventory: nextInventory,
+    });
 
     persistActiveCampaign({
       ...camp,
@@ -4387,13 +5740,18 @@ export function App() {
   const handleConfirmRest = async (payload: RestChoicePayload) => {
     const camp = activeCampaignRef.current;
     if (!camp || isBusy || camp.status !== 'active') return;
+    if (camp.activeClash?.status === 'active') {
+      pushToast('error', 'Não é possível descansar no meio de um Confronto Tático!');
+      return;
+    }
 
     const currentClock =
       camp.worldClock ??
       defaultWorldClockForTheme(camp.world.primaryTheme, camp.language);
 
+    const dndMode = isDndRuleset(camp);
     const isShort = payload.kind === 'short';
-    if (isShort && (currentClock.shortRestsUsedToday ?? 0) >= MAX_SHORT_RESTS_PER_DAY) {
+    if (!dndMode && isShort && (currentClock.shortRestsUsedToday ?? 0) >= MAX_SHORT_RESTS_PER_DAY) {
       pushToast('error', 'Você já usou seus 2 Descansos Curtos de hoje.');
       return;
     }
@@ -4404,26 +5762,53 @@ export function App() {
 
     const nextClock: WorldClock = isShort
       ? {
-          ...advanceClockByMinutes(currentClock, 90, { lang: camp.language }),
-          shortRestsUsedToday: Math.min(
-            MAX_SHORT_RESTS_PER_DAY,
-            (currentClock.shortRestsUsedToday ?? 0) + 1,
-          ),
+          ...advanceClockByMinutes(currentClock, dndMode ? 60 : 90, { lang: camp.language }),
+          shortRestsUsedToday: dndMode
+            ? (currentClock.shortRestsUsedToday ?? 0) + 1
+            : Math.min(
+                MAX_SHORT_RESTS_PER_DAY,
+                (currentClock.shortRestsUsedToday ?? 0) + 1,
+              ),
         }
       : advanceClockToNextMorning(currentClock);
 
-    const vigorGain = isShort ? 20 : hasMedbay ? 80 : 55;
     const tensionDrop = isShort ? 8 : 20;
-    const nextVigor = Math.min(camp.player.maxVigor, camp.player.vigor + vigorGain);
-    const nextTension = Math.max(0, camp.player.tension - tensionDrop);
-    const actualVigorGain = nextVigor - camp.player.vigor;
+    let nextPlayer: PlayerState;
+    let restSummaryBadge = '';
 
-    // Optional guaranteed skill training progress if focus === 'train'
-    let nextPlayer = {
-      ...camp.player,
-      vigor: nextVigor,
-      tension: nextTension,
-    };
+    if (dndMode && camp.player.dnd) {
+      if (isShort) {
+        const sr = applyDnd2024ShortRest(camp.player, payload.hitDiceToSpend ?? 0);
+        nextPlayer = {
+          ...sr.nextPlayer,
+          tension: Math.max(0, camp.player.tension - tensionDrop),
+        };
+        restSummaryBadge = [
+          sr.healedHp > 0 ? `+${sr.healedHp} PV` : null,
+          ...sr.rechargedNotes,
+        ]
+          .filter(Boolean)
+          .join(' · ') || 'Fôlego renovado (1h)';
+      } else {
+        const lr = applyDnd2024LongRest(camp.player, hasMedbay);
+        nextPlayer = {
+          ...lr.nextPlayer,
+          tension: Math.max(0, camp.player.tension - tensionDrop),
+        };
+        restSummaryBadge = lr.notes.join(' · ');
+      }
+    } else {
+      const vigorGain = isShort ? 20 : hasMedbay ? 80 : 55;
+      const nextVigor = Math.min(camp.player.maxVigor, camp.player.vigor + vigorGain);
+      const actualVigorGain = nextVigor - camp.player.vigor;
+      nextPlayer = {
+        ...camp.player,
+        vigor: nextVigor,
+        tension: Math.max(0, camp.player.tension - tensionDrop),
+      };
+      restSummaryBadge = `+${actualVigorGain} Vigor`;
+    }
+
     if (payload.focus === 'train' && payload.skillName?.trim()) {
       const trained = applyStateChanges(
         nextPlayer,
@@ -4440,21 +5825,65 @@ export function App() {
           hasTrainingStation: Boolean(
             camp.stronghold?.upgrades.some((u) => u.id === 'training'),
           ),
+          ruleset: camp.ruleset,
         },
       );
       nextPlayer = trained.nextPlayer;
+    }
+
+    // Long Rest restores living party NPCs to full HP & triggers daily org upkeep once!
+    let nextCodex = camp.codex;
+    let nextOrg = camp.organization;
+    let nextStronghold = camp.stronghold;
+    if (!isShort) {
+      nextCodex = {
+        ...camp.codex,
+        npcs: camp.codex.npcs.map((n) =>
+          n.inParty && n.status === 'alive'
+            ? { ...n, vigor: n.maxVigor ?? n.vigor, injuryNote: undefined }
+            : n,
+        ),
+      };
+      if (nextOrg && nextClock.day > (nextOrg.lastUpkeepDay ?? 1)) {
+        const baseSupplies =
+          nextStronghold?.supplies ?? defaultBaseSuppliesForTheme(camp.world.primaryTheme);
+        const upkeep = processDailyOrgUpkeep(
+          nextOrg,
+          nextCodex.npcs,
+          baseSupplies,
+          nextPlayer.currency?.amount ?? 0,
+          nextCodex.factions,
+          nextClock.day,
+          camp.turnCount,
+        );
+        nextOrg = upkeep.nextOrg;
+        nextCodex = { ...nextCodex, npcs: upkeep.nextNpcs };
+        if (nextStronghold) {
+          nextStronghold = { ...nextStronghold, supplies: upkeep.nextSupplies };
+        }
+        nextPlayer = {
+          ...nextPlayer,
+          currency: {
+            ...nextPlayer.currency,
+            amount: upkeep.nextCurrencyAmount,
+          },
+        };
+      }
     }
 
     const restedCamp: Campaign = {
       ...camp,
       worldClock: nextClock,
       player: nextPlayer,
+      codex: nextCodex,
+      organization: nextOrg,
+      stronghold: nextStronghold,
     };
 
     const timeLabel = `Dia ${nextClock.day} · ${formatClockTime(nextClock.hour, nextClock.minute)}`;
     pushToast(
       'time',
-      `${isShort ? 'Descanso Curto' : 'Descanso Longo'} (${timeLabel}) · +${actualVigorGain} Vigor`,
+      `${isShort ? 'Descanso Curto' : 'Descanso Longo'} (${timeLabel}) · ${restSummaryBadge}`,
     );
 
     if (!payload.narrateScene) {
@@ -4462,7 +5891,7 @@ export function App() {
         id: `entry_rest_silent_${Date.now()}`,
         role: 'system',
         turn: camp.turnCount,
-        text: `${isShort ? 'Descanso Curto' : 'Descanso Longo'} em ${camp.currentLocation} → ${timeLabel} (+${actualVigorGain} Vigor).`,
+        text: `${isShort ? 'Descanso Curto' : 'Descanso Longo'} em ${camp.currentLocation} → ${timeLabel} (${restSummaryBadge}).`,
         timestamp: Date.now(),
       };
       persistActiveCampaign({
@@ -4576,6 +6005,10 @@ export function App() {
   };
 
   const handleTravelFromMap = (loc: LocationRecord) => {
+    if (activeCampaignRef.current?.activeClash?.status === 'active') {
+      pushToast('error', 'Encerre ou recue do Confronto Tático antes de viajar pelo Atlas!');
+      return;
+    }
     void handleSendAction(`Viajar até ${loc.name}`, 'investigate', 'safe', false, false, 'wis');
   };
 
@@ -4593,6 +6026,7 @@ export function App() {
       interactionId: undefined,
       updatedAt: Date.now(),
     };
+    setSuggestedClash(null);
     persistActiveCampaign(restored);
     setSavesOpen(false);
     setPulseSecondsLeft(settings.livingWorldSeconds);
@@ -4853,6 +6287,13 @@ export function App() {
           onOpenWorldMap={() => setWorldMapOpen(true)}
           onOpenTimeline={() => setTimelineOpen(true)}
           timelineBranchCount={activeSagaBranchCount}
+          suggestedClash={suggestedClash}
+          isStartingClash={isStartingClash}
+          onOpenClashLauncher={() => setClashLauncherOpen(true)}
+          onAcceptSuggestedClash={(arch) =>
+            void handleStartClash({ requestedArchetype: arch })
+          }
+          onDismissSuggestedClash={() => setSuggestedClash(null)}
           onOpenOrganization={() => setOrganizationOpen(true)}
           onOpenCharacterInventory={() => setCharInventoryOpen(true)}
           onOpenBaseBlueprint={() => setBaseBlueprintOpen(true)}
@@ -4864,6 +6305,10 @@ export function App() {
           }}
           onOpenRest={() => setRestModalOpen(true)}
           onOpenEditProtagonist={() => setEditProtagonistOpen(true)}
+          onOpenLevelUpModal={() => setLevelUpModalOpen(true)}
+          onMigrateToDnd52={() => void handleMigrateCampaignToDnd52()}
+          onResolvePendingSavingThrow={handleResolvePendingSavingThrow}
+          onRollStoryDeathSave={() => void handleRollStoryDeathSave()}
           onOpenOrTriggerWorldEvent={handleOpenOrTriggerWorldEvent}
           onSelectWorldEventChoice={handleResolveWorldEventChoice}
           focusEventNonce={focusEventNonce}
@@ -4971,6 +6416,13 @@ export function App() {
             language={settings.language}
             onClose={() => setEditProtagonistOpen(false)}
             onSaveProfile={handleUpdatePlayerProfile}
+          />
+          <LevelUpModal
+            open={levelUpModalOpen}
+            campaign={activeCampaign}
+            language={settings.language}
+            onClose={() => setLevelUpModalOpen(false)}
+            onConfirm={handleConfirmLevelUp}
           />
           <BaseBlueprintModal
             open={baseBlueprintOpen}
@@ -5114,6 +6566,45 @@ export function App() {
         open={tourOpen}
         onClose={handleCloseTour}
         onPrepareStep={handlePrepareTourStep}
+      />
+
+      {view === 'stage' && activeCampaign?.activeClash ? (
+        <ClashBattleArena
+          campaign={activeCampaign}
+          clash={activeCampaign.activeClash}
+          lastDiceRoll={arenaDiceRoll}
+          activeBeats={arenaBeats}
+          battleNonce={arenaBattleNonce}
+          isResolvingFinal={isFinishingClash}
+          bossArtUrl={arenaBossArtUrl}
+          isGeneratingBossArt={isGeneratingBossArt}
+          onGenerateBossArt={(enemy) => void handleGenerateClashBossArt(enemy)}
+          onSelectTarget={handleSelectClashTarget}
+          onChangeAllyDirective={handleChangeClashAllyDirective}
+          onExecuteTurn={handleExecuteInstantClashTurn}
+          onUseConsumable={(item) => handleConsumeItemNow(item.id)}
+          onFreeMove={handleArenaFreeMove}
+          onBonusResource={handleArenaBonusResource}
+          onBonusSpell={handleArenaBonusSpell}
+          onTogglePreArmedReaction={handleArenaToggleReaction}
+          canRerollArenaWithInspiration={Boolean(
+            lastArenaTurnSnapshot &&
+              (lastArenaTurnSnapshot.campSnapshot.player.inspiration ?? 0) > 0 &&
+              activeCampaign.activeClash?.status === 'active',
+          )}
+          onRerollArenaWithInspiration={handleRerollArenaWithInspiration}
+          useClassicDndNames={settings.useClassicDndNames}
+          onConvertChaseToCombat={handleConvertChaseToCombat}
+          onRetreat={handleRetreatFromClash}
+          onFinishToStory={() => void handleFinishClashToStory()}
+        />
+      ) : null}
+
+      <ClashLauncherModal
+        open={clashLauncherOpen}
+        isStarting={isStartingClash}
+        onClose={() => setClashLauncherOpen(false)}
+        onStartClash={(opts) => void handleStartClash(opts)}
       />
 
       <ToastStack

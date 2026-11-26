@@ -7,11 +7,15 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Coins,
   Compass,
+  Eye,
   FilePlus2,
   Flag,
   Flame,
+  Footprints,
   Globe2,
   Hammer,
   Heart,
@@ -28,6 +32,7 @@ import {
   Scale,
   ScrollText,
   Shield,
+  Skull,
   Sparkles,
   Sword,
   Target,
@@ -35,12 +40,40 @@ import {
   UserMinus,
   UserPlus,
   Users,
+  Wand2,
   Wrench,
   X,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import { useState } from 'react';
+import {
+  DND_BACKGROUNDS,
+  DND_CLASSES,
+  DND_CONDITIONS,
+  DND_FEATS,
+  DND_SKILLS,
+  DND_SPECIES,
+  DND_SPELLS,
+  DND_WEAPON_MASTERIES,
+} from '../data/dnd52Catalog';
 import { DIFFICULTIES, STORY_PACE_OPTIONS, UI_COPY } from '../data/presets';
+import {
+  computeArmorClass,
+  computeInitiativeBonus,
+  computePassiveScore,
+  computeSavingThrowModifier,
+  computeSkillModifier,
+  computeSpeedFeet,
+  computeSpellcastingInfo,
+  formatSpeedMetric,
+  getMaxInspirationForRuleset,
+  getThemedClassLabel,
+  getThemedSkillLabel,
+  getThemedSpeciesLabel,
+  getThemedSpellLabel,
+  isDndRuleset,
+} from '../engine/dnd52Rules';
 import {
   ALL_EQUIP_SLOTS,
   ATTRIBUTE_KEYS,
@@ -55,7 +88,6 @@ import {
   getProficiencyBonus,
   LOCATION_KIND_META,
   LOCATION_STATUS_META,
-  MAX_INSPIRATION,
   MAX_LEVEL,
   MAX_PARTY_SIZE,
   NATURAL_ATTRIBUTE_CAP,
@@ -66,6 +98,7 @@ import {
 import type {
   AttributeId,
   Campaign,
+  DndSkillId,
   EquipSlot,
   FactionStanding,
   InventoryItem,
@@ -81,6 +114,7 @@ import type {
 interface ContextHudProps {
   campaign: Campaign;
   language: LanguageId;
+  useClassicDndNames?: boolean;
   isSummarizing: boolean;
   isGeneratingPortrait: boolean;
   generatingNpcPortraitId?: string | null;
@@ -95,6 +129,8 @@ interface ContextHudProps {
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
   onOpenEditProtagonist?: () => void;
+  onOpenLevelUpModal?: () => void;
+  onMigrateToDnd52?: () => void;
   onMentionNpc: (npc: NpcRecord) => void;
   onTravelLocation: (loc: LocationRecord) => void;
   onAddCanonFact: (factText: string) => void;
@@ -147,6 +183,7 @@ const DANGER_META: Record<LocationDanger, { label: string; color: string }> = {
 export function ContextHud({
   campaign,
   language,
+  useClassicDndNames = false,
   isSummarizing,
   isGeneratingPortrait,
   generatingNpcPortraitId,
@@ -161,6 +198,8 @@ export function ContextHud({
   onOpenBaseBlueprint,
   onOpenRelationships,
   onOpenEditProtagonist,
+  onOpenLevelUpModal,
+  onMigrateToDnd52,
   onMentionNpc,
   onTravelLocation,
   onAddCanonFact,
@@ -176,6 +215,8 @@ export function ContextHud({
   >('sheet');
   const [worldSubTab, setWorldSubTab] = useState<'lore' | 'memory' | 'codex' | 'base'>('lore');
   const [newFactInput, setNewFactInput] = useState('');
+  const [showAll18Skills, setShowAll18Skills] = useState(false);
+  const [showGrimoireSection, setShowGrimoireSection] = useState(false);
   const [isEditingLore, setIsEditingLore] = useState(false);
   const [draftEra, setDraftEra] = useState(campaign.world.era);
   const [draftHistory, setDraftHistory] = useState(campaign.world.history);
@@ -204,10 +245,29 @@ export function ContextHud({
 
   const copy = UI_COPY[language];
   const { player, codex, world } = campaign;
+  const isDnd = isDndRuleset(campaign);
+  const dnd = player.dnd;
   const effectiveAttrs = getEffectiveAttributes(player);
   const gearBonuses = getEquippedGearBonuses(player.inventory);
   const difficultyMeta = DIFFICULTIES.find((d) => d.id === campaign.difficulty);
   const paceMeta = STORY_PACE_OPTIONS.find((p) => p.id === world.storyPace);
+  const maxInsp = getMaxInspirationForRuleset(campaign.ruleset);
+  const acInfo = isDnd ? computeArmorClass(player) : null;
+  const initBonus = isDnd ? computeInitiativeBonus(player) : 0;
+  const speedFeet = isDnd ? computeSpeedFeet(player) : 30;
+  const passivePerception = isDnd ? computePassiveScore(player, 'perception') : 10;
+  const spellcastingInfo = isDnd ? computeSpellcastingInfo(player) : null;
+  const hasPendingLevelChoices = Boolean(
+    isDnd &&
+      dnd &&
+      (dnd.pendingSubclassChoice ||
+        (dnd.pendingAsiOrFeat ?? 0) > 0 ||
+        dnd.pendingEpicBoon),
+  );
+  const vigorPct = Math.max(
+    0,
+    Math.min(100, (player.vigor / Math.max(1, player.maxVigor)) * 100),
+  );
 
   const initials = player.name
     .split(/\s+/)
@@ -225,7 +285,7 @@ export function ContextHud({
   const partyMembers = codex.npcs.filter(
     (n) => n.inParty && n.status === 'alive',
   );
-  const inspirationCount = player.inspiration ?? 1;
+  const inspirationCount = Math.min(maxInsp, player.inspiration ?? (isDnd ? 1 : 1));
 
   const handlePinFact = () => {
     const trimmed = newFactInput.trim();
@@ -277,7 +337,60 @@ export function ContextHud({
       {/* Body */}
       <div key={activeTab} className="animate-tab-fade flex-1 overflow-y-auto p-4">
         {activeTab === 'sheet' ? (
-          <div className="space-y-5">
+          <div className="space-y-4">
+            {/* Legacy 1-Click Migration Banner */}
+            {!isDnd && !isEnded && onMigrateToDnd52 ? (
+              <div className="rounded-xl border border-amber-400/45 bg-amber-500/10 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-200">
+                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                      Campanha no Modo Legado (MYTHOS Clássico)
+                    </div>
+                    <p className="mt-0.5 text-[10px] leading-snug text-amber-100/80">
+                      Converta herói e aliados para D&amp;D 5e 2024 (CA, 18 Perícias, Salvaguardas, Magias &amp; Maestrias). Um backup automático é salvo antes.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onMigrateToDnd52}
+                  className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:brightness-110"
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Migrar para D&amp;D 5.2 (2024)
+                </button>
+              </div>
+            ) : null}
+
+            {/* Pending Level-Up Modal Banner (Subclass / ASI / Feat / Epic Boon) */}
+            {hasPendingLevelChoices && !isEnded && onOpenLevelUpModal ? (
+              <button
+                type="button"
+                onClick={onOpenLevelUpModal}
+                className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-400/60 bg-gradient-to-r from-amber-500/20 to-violet-500/20 px-3.5 py-2.5 text-left shadow-sm transition hover:brightness-110"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-200">
+                    <Award className="h-4 w-4 shrink-0 text-amber-400" />
+                    <span>Evolução Pendente (Nv.{player.level})!</span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-amber-100/80">
+                    {[
+                      dnd?.pendingSubclassChoice ? 'Escolher Subclasse' : null,
+                      (dnd?.pendingAsiOrFeat ?? 0) > 0 ? 'ASI (+2) ou Talento' : null,
+                      dnd?.pendingEpicBoon ? 'Dádiva Épica (Nv.19)' : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-lg bg-amber-400 px-2.5 py-1 text-[10px] font-bold text-slate-950">
+                  Escolher
+                </span>
+              </button>
+            ) : null}
+
             {/* Portrait / Crest + Identity */}
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3.5">
@@ -314,9 +427,19 @@ export function ContextHud({
                       Nv.{player.level}
                     </span>
                   </div>
-                  <p className="truncate text-xs text-[var(--text-secondary)]">
-                    {player.occupation} · {player.age} anos
-                    {player.height ? ` · ${player.height}` : ''}
+                  {isDnd && dnd ? (
+                    <p className="truncate text-xs font-medium text-[var(--accent)]">
+                      {getThemedClassLabel(dnd.classId, world.primaryTheme, useClassicDndNames)}
+                      {dnd.subclassId
+                        ? ` (${DND_CLASSES[dnd.classId]?.subclasses.find((s) => s.id === dnd.subclassId)?.label ?? dnd.subclassId})`
+                        : ''}{' '}
+                      · {getThemedSpeciesLabel(dnd.speciesId, world.primaryTheme, useClassicDndNames)}
+                    </p>
+                  ) : null}
+                  <p className="truncate text-[11px] text-[var(--text-secondary)]">
+                    {isDnd && dnd
+                      ? `${DND_BACKGROUNDS[dnd.backgroundId]?.label ?? player.occupation} · ${player.age} anos`
+                      : `${player.occupation} · ${player.age} anos${player.height ? ` · ${player.height}` : ''}`}
                   </p>
                   {player.physique ? (
                     <p className="truncate text-[10px] text-[var(--text-muted)]">
@@ -331,7 +454,7 @@ export function ContextHud({
                   <button
                     type="button"
                     onClick={onOpenEditProtagonist}
-                    title="Editar Nome, Altura, Porte Físico e Atributos BG3"
+                    title="Editar Nome, Altura, Porte Físico e Atributos"
                     className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent)] transition hover:brightness-110"
                   >
                     <Pencil className="h-3 w-3" />
@@ -351,12 +474,66 @@ export function ContextHud({
               </div>
             </div>
 
+            {/* 4-Badge D&D 5.2 Combat Strip (AC / Initiative / Speed / Passive Perception) */}
+            {isDnd && acInfo ? (
+              <div className="grid grid-cols-4 gap-1.5">
+                <div
+                  title={`Classe de Armadura: ${acInfo.formula}`}
+                  className="flex flex-col items-center rounded-xl border border-sky-400/35 bg-sky-500/10 px-1.5 py-1.5 text-center"
+                >
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase text-sky-300">
+                    <Shield className="h-2.5 w-2.5" />
+                    CA
+                  </span>
+                  <span className="font-mono-tech text-sm font-black text-[var(--text-primary)]">
+                    {acInfo.ac}
+                  </span>
+                </div>
+                <div
+                  title="Bônus de Iniciativa (1d20 + DES + talentos)"
+                  className="flex flex-col items-center rounded-xl border border-amber-400/35 bg-amber-500/10 px-1.5 py-1.5 text-center"
+                >
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase text-amber-300">
+                    <Zap className="h-2.5 w-2.5" />
+                    Ini
+                  </span>
+                  <span className="font-mono-tech text-sm font-black text-[var(--text-primary)]">
+                    {formatModifier(initBonus)}
+                  </span>
+                </div>
+                <div
+                  title={`Deslocamento: ${speedFeet} pés (${formatSpeedMetric(speedFeet)})`}
+                  className="flex flex-col items-center rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-1.5 py-1.5 text-center"
+                >
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase text-emerald-300">
+                    <Footprints className="h-2.5 w-2.5" />
+                    Mov
+                  </span>
+                  <span className="font-mono-tech text-sm font-black text-[var(--text-primary)]">
+                    {formatSpeedMetric(speedFeet)}
+                  </span>
+                </div>
+                <div
+                  title={`Percepção Passiva = 10 + Percepção (${formatModifier(computeSkillModifier(player, 'perception'))})`}
+                  className="flex flex-col items-center rounded-xl border border-violet-400/35 bg-violet-500/10 px-1.5 py-1.5 text-center"
+                >
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase text-violet-300">
+                    <Eye className="h-2.5 w-2.5" />
+                    Pas
+                  </span>
+                  <span className="font-mono-tech text-sm font-black text-[var(--text-primary)]">
+                    {passivePerception}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
             {/* Level XP Bar + Proficiency + Next ASI */}
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5">
               <div className="mb-1 flex items-center justify-between text-[11px]">
                 <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)]">
                   <Award className="h-3.5 w-3.5" />
-                  Nível {player.level}/{MAX_LEVEL} · Prof. +{getProficiencyBonus(player.level)}
+                  Nível {player.level}/{MAX_LEVEL} · BP +{getProficiencyBonus(player.level)}
                 </span>
                 <span className="font-mono-tech text-[10px] text-[var(--text-secondary)]">
                   {player.level >= MAX_LEVEL
@@ -381,11 +558,11 @@ export function ContextHud({
                   {(() => {
                     const nextAsi = getNextAsiLevel(player.level);
                     return nextAsi
-                      ? `Próximo ASI (+2): Nv.${nextAsi}`
-                      : 'Todos os ASIs (4/8/12/16/20) alcançados';
+                      ? `Próximo ASI/Talento: Nv.${nextAsi}`
+                      : 'Todos os ASIs (4/8/12/16/19) alcançados';
                   })()}
                 </span>
-                <span>Teto Natural: {NATURAL_ATTRIBUTE_CAP}</span>
+                <span>{isDnd ? 'D&D 5.2 (2024)' : `Teto Natural: ${NATURAL_ATTRIBUTE_CAP}`}</span>
               </div>
               {player.attributePoints > 0 && onSpendAttributePoint && !isEnded ? (
                 <div className="mt-2 flex items-center justify-between rounded-lg border border-[var(--accent)]/60 bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--accent)]">
@@ -395,11 +572,11 @@ export function ContextHud({
               ) : null}
             </div>
 
-            {/* BG3 6-Attribute Grid */}
+            {/* 6-Attribute + Integrated Saving Throw Grid */}
             <div>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  Atributos (BG3 · Teto {NATURAL_ATTRIBUTE_CAP})
+                  {isDnd ? 'Atributos & Salvaguardas' : `Atributos (BG3 · Teto ${NATURAL_ATTRIBUTE_CAP})`}
                 </h4>
                 {onOpenEditProtagonist && !isEnded ? (
                   <button
@@ -419,6 +596,8 @@ export function ContextHud({
                   const mod = getAttributeModifier(effScore);
                   const gearAdd = gearBonuses[key] ?? 0;
                   const tier = getAttributeTierMeta(effScore);
+                  const saveProf = Boolean(isDnd && dnd?.savingThrowProficiencies.includes(key));
+                  const saveMod = isDnd ? computeSavingThrowModifier(player, key) : mod;
                   const canSpend =
                     player.attributePoints > 0 &&
                     baseScore < NATURAL_ATTRIBUTE_CAP &&
@@ -428,7 +607,7 @@ export function ContextHud({
                   return (
                     <div
                       key={key}
-                      title={`${meta.full[language]}: ${meta.hint[language]}`}
+                      title={`${meta.full[language]}: ${meta.hint[language]}${isDnd ? ` · Salvaguarda ${formatModifier(saveMod)}${saveProf ? ' (Proficiente)' : ''}` : ''}`}
                       className={`relative flex flex-col items-center rounded-xl border px-2 py-2 text-center transition ${
                         canSpend
                           ? 'border-[var(--accent)]/70 bg-[var(--accent-soft)]/50'
@@ -449,12 +628,25 @@ export function ContextHud({
                           </span>
                         ) : null}
                       </span>
-                      <span
-                        className="mt-0.5 truncate max-w-full text-[9px] font-medium"
-                        style={{ color: tier.color }}
-                      >
-                        {tier.label}
-                      </span>
+                      {isDnd ? (
+                        <span
+                          className={`font-mono-tech mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                            saveProf
+                              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : 'bg-[var(--bg-canvas)]/70 text-[var(--text-muted)]'
+                          }`}
+                        >
+                          <span>{saveProf ? '●' : '○'}</span>
+                          <span>Salv {formatModifier(saveMod)}</span>
+                        </span>
+                      ) : (
+                        <span
+                          className="mt-0.5 max-w-full truncate text-[9px] font-medium"
+                          style={{ color: tier.color }}
+                        >
+                          {tier.label}
+                        </span>
+                      )}
                       {canSpend ? (
                         <button
                           type="button"
@@ -471,32 +663,57 @@ export function ContextHud({
               </div>
             </div>
 
-            {/* Vigor, Tension & BG3 Inspiration */}
+            {/* PV / Vigor, Hit Dice, Tension, Heroic Inspiration, Conditions & Exhaustion */}
             <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5">
               <div>
-                <div className="mb-1 flex items-center justify-between text-xs">
+                <div className="mb-1 flex items-center justify-between gap-2 text-xs">
                   <span className="flex items-center gap-1.5 font-medium text-[var(--text-secondary)]">
                     <Activity className="h-3.5 w-3.5 text-[var(--success)]" />
-                    Vigor
+                    {isDnd ? 'Pontos de Vida (PV)' : 'Vigor'}
                   </span>
-                  <span className="font-mono-tech text-[var(--text-primary)]">
-                    {player.vigor}/{player.maxVigor}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono-tech font-semibold text-[var(--text-primary)]">
+                      {player.vigor}/{player.maxVigor}
+                    </span>
+                    {isDnd && (dnd?.tempHp ?? 0) > 0 ? (
+                      <span
+                        title="Pontos de Vida Temporários (absorvem dano primeiro)"
+                        className="font-mono-tech rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-bold text-cyan-300"
+                      >
+                        +{dnd!.tempHp} Temp
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
-                      width: `${Math.max(0, Math.min(100, (player.vigor / player.maxVigor) * 100))}%`,
+                      width: `${vigorPct}%`,
                       backgroundColor:
-                        player.vigor > 55
+                        vigorPct > 55
                           ? 'var(--success)'
-                          : player.vigor > 28
+                          : vigorPct > 28
                             ? 'var(--warning)'
                             : 'var(--danger)',
                     }}
                   />
                 </div>
+                {isDnd && dnd ? (
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+                    <span>
+                      🎲 Dados de Vida:{' '}
+                      <strong className="font-mono-tech text-[var(--text-secondary)]">
+                        {dnd.hitDiceRemaining}/{player.level} d{dnd.hitDie}
+                      </strong>
+                    </span>
+                    {player.vigor <= 0 ? (
+                      <span className="font-mono-tech font-bold text-rose-400">
+                        Morte: ✓{dnd.deathSaves.successes} / ✕{dnd.deathSaves.failures}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div>
@@ -523,29 +740,157 @@ export function ContextHud({
 
               <div className="flex items-center justify-between border-t border-[var(--border-subtle)] pt-2.5 text-xs">
                 <span
-                  title="Gaste 1 Inspiração para rerrolar um dado d20 que falhou (Estilo Baldur's Gate 3)"
+                  title={
+                    isDnd
+                      ? 'Inspiração Heroica (2024): binária (0/1). Gaste para rerrolar qualquer dado!'
+                      : "Gaste 1 Inspiração para rerrolar um dado d20 que falhou (Estilo Baldur's Gate 3)"
+                  }
                   className="inline-flex items-center gap-1.5 font-medium text-[#fbbf24]"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
-                  Inspiração BG3
+                  {isDnd ? 'Inspiração Heroica' : 'Inspiração BG3'}
                 </span>
                 <div className="flex items-center gap-1">
-                  {Array.from({ length: MAX_INSPIRATION }).map((_, i) => (
+                  {isDnd ? (
                     <span
-                      key={i}
-                      className={`h-2.5 w-2.5 rounded-full border transition ${
-                        i < inspirationCount
-                          ? 'border-[#fbbf24] bg-[#fbbf24] shadow-[0_0_6px_rgba(251,191,36,0.6)]'
-                          : 'border-[var(--border-strong)] bg-[var(--bg-canvas)]'
+                      className={`font-mono-tech inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                        inspirationCount >= 1
+                          ? 'border-amber-400/70 bg-amber-400/20 text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.35)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-muted)]'
                       }`}
-                    />
-                  ))}
-                  <span className="font-mono-tech ml-1 text-[11px] font-semibold text-[#fbbf24]">
-                    {inspirationCount}/{MAX_INSPIRATION}
-                  </span>
+                    >
+                      {inspirationCount >= 1 ? '★ Ativa (1/1)' : '☆ 0/1'}
+                    </span>
+                  ) : (
+                    <>
+                      {Array.from({ length: maxInsp }).map((_, i) => (
+                        <span
+                          key={i}
+                          className={`h-2.5 w-2.5 rounded-full border transition ${
+                            i < inspirationCount
+                              ? 'border-[#fbbf24] bg-[#fbbf24] shadow-[0_0_6px_rgba(251,191,36,0.6)]'
+                              : 'border-[var(--border-strong)] bg-[var(--bg-canvas)]'
+                          }`}
+                        />
+                      ))}
+                      <span className="font-mono-tech ml-1 text-[11px] font-semibold text-[#fbbf24]">
+                        {inspirationCount}/{maxInsp}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
+
+              {/* Zero-Noise Active Conditions & Exhaustion (only visible when active!) */}
+              {isDnd && dnd && (dnd.conditions.length > 0 || dnd.exhaustion > 0) ? (
+                <div className="space-y-1.5 border-t border-[var(--border-subtle)] pt-2.5">
+                  {dnd.exhaustion > 0 ? (
+                    <div className="flex items-center justify-between rounded-lg border border-rose-500/40 bg-rose-500/12 px-2.5 py-1.5 text-[10px] font-semibold text-rose-300">
+                      <span className="inline-flex items-center gap-1">
+                        <Skull className="h-3 w-3" />
+                        Exaustão Nv.{dnd.exhaustion}/6
+                      </span>
+                      <span className="font-mono-tech">
+                        −{dnd.exhaustion * 2} em d20 · −{Math.round(dnd.exhaustion * 1.5 * 2) / 2}m
+                      </span>
+                    </div>
+                  ) : null}
+                  {dnd.conditions.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {dnd.conditions.map((condId) => {
+                        const meta = DND_CONDITIONS[condId];
+                        if (!meta) return null;
+                        return (
+                          <span
+                            key={condId}
+                            title={meta.summary}
+                            className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
+                          >
+                            <span>{meta.icon}</span>
+                            <span>{meta.label}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
+
+            {/* 1-Row Spell Slots & Class Resources Strip (D&D 5.2) */}
+            {isDnd && dnd && (
+              Object.keys(dnd.spellSlots.tiers ?? {}).length > 0 ||
+              (dnd.spellSlots.pactMax ?? 0) > 0 ||
+              dnd.classResources.length > 0 ||
+              dnd.concentrationSpellId
+            ) ? (
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <span>Recursos & Espaços de Magia</span>
+                  {spellcastingInfo ? (
+                    <span className="font-mono-tech text-[var(--accent)]">
+                      CD {spellcastingInfo.saveDc} · Atq {formatModifier(spellcastingInfo.attackBonus)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(dnd.spellSlots.tiers ?? {}).map(([circle, tier]) => (
+                    <span
+                      key={`slot_${circle}`}
+                      title={`Espaços de ${circle}º Círculo: ${tier.current}/${tier.max}`}
+                      className="font-mono-tech inline-flex items-center gap-1 rounded-lg border border-violet-400/35 bg-violet-500/12 px-2 py-1 text-[10px] font-semibold text-violet-200"
+                    >
+                      <span>{circle}º</span>
+                      <span className="tracking-tight text-violet-300">
+                        {'●'.repeat(Math.max(0, tier.current))}
+                        {'○'.repeat(Math.max(0, tier.max - tier.current))}
+                      </span>
+                    </span>
+                  ))}
+                  {(dnd.spellSlots.pactMax ?? 0) > 0 ? (
+                    <span
+                      title={`Magia de Pacto (${dnd.spellSlots.pactSlotLevel ?? 1}º Círculo — recarrega em Descanso Curto)`}
+                      className="font-mono-tech inline-flex items-center gap-1 rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/15 px-2 py-1 text-[10px] font-semibold text-fuchsia-200"
+                    >
+                      <span>Pacto {dnd.spellSlots.pactSlotLevel ?? 1}º</span>
+                      <span>
+                        {'●'.repeat(Math.max(0, dnd.spellSlots.pactCurrent ?? 0))}
+                        {'○'.repeat(
+                          Math.max(0, (dnd.spellSlots.pactMax ?? 0) - (dnd.spellSlots.pactCurrent ?? 0)),
+                        )}
+                      </span>
+                    </span>
+                  ) : null}
+                  {dnd.classResources.map((res) => (
+                    <span
+                      key={res.id}
+                      title={`${res.name}: ${res.current}/${res.max}`}
+                      className="font-mono-tech inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/12 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                    >
+                      <span>{res.shortName}</span>
+                      <span>
+                        {res.max <= 6
+                          ? `${'●'.repeat(Math.max(0, res.current))}${'○'.repeat(Math.max(0, res.max - res.current))}`
+                          : `${res.current}/${res.max}`}
+                      </span>
+                    </span>
+                  ))}
+                  {dnd.concentrationSpellId ? (
+                    <span className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/45 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+                      <span>◎</span>
+                      <span>
+                        {getThemedSpellLabel(
+                          dnd.concentrationSpellId,
+                          world.primaryTheme,
+                          useClassicDndNames,
+                          true,
+                        )}
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             {/* Active Party Companions Strip */}
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
@@ -608,7 +953,7 @@ export function ContextHud({
                             <img
                               src={member.portraitUrl}
                               alt={member.name}
-                              className="h-7 w-7 shrink-0 rounded-lg object-cover border border-[var(--border-strong)]"
+                              className="h-7 w-7 shrink-0 rounded-lg border border-[var(--border-strong)] object-cover"
                             />
                           ) : (
                             <span className="font-display flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[10px] font-bold text-[var(--accent)]">
@@ -620,14 +965,9 @@ export function ContextHud({
                               <span className="truncate text-xs font-semibold text-[var(--text-primary)]">
                                 {member.name}
                               </span>
-                              {member.height || member.age ? (
-                                <span className="truncate text-[9px] text-[var(--text-muted)]">
-                                  {[
-                                    member.age ? `${member.age}a` : '',
-                                    member.height ?? '',
-                                  ]
-                                    .filter(Boolean)
-                                    .join(' · ')}
+                              {isDnd && member.vigor !== undefined && member.maxVigor !== undefined ? (
+                                <span className="font-mono-tech text-[9px] text-[var(--success)]">
+                                  {member.vigor}/{member.maxVigor} PV
                                 </span>
                               ) : null}
                             </div>
@@ -673,6 +1013,254 @@ export function ContextHud({
               </div>
             </div>
 
+            {/* D&D 5.2 Proficient Skills + Collapsible 18 Skills (replaces duplicate legacy skillLevels!) */}
+            {isDnd && dnd ? (
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    Perícias D&amp;D 5.2 ({dnd.skillProficiencies.length} prof.)
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowAll18Skills((v) => !v)}
+                    className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-[var(--accent)] hover:underline"
+                  >
+                    <span>{showAll18Skills ? 'Recolher' : 'Ver todas as 18'}</span>
+                    {showAll18Skills ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                  </button>
+                </div>
+
+                {!showAll18Skills ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {dnd.skillProficiencies.map((skillId) => {
+                      const isExp = dnd.skillExpertise.includes(skillId);
+                      const mod = computeSkillModifier(player, skillId);
+                      return (
+                        <span
+                          key={skillId}
+                          title={`${DND_SKILLS[skillId]?.label} (${ATTRIBUTE_META[DND_SKILLS[skillId]?.attribute ?? 'wis'].short[language]})${isExp ? ' · Especialização (2× BP)' : ' · Proficiente'}`}
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium ${
+                            isExp
+                              ? 'border-amber-400/50 bg-amber-500/15 text-amber-200'
+                              : 'border-[var(--border-strong)] bg-[var(--accent-soft)]/50 text-[var(--text-primary)]'
+                          }`}
+                        >
+                          <span className="text-[9px] text-[var(--accent)]">
+                            {isExp ? '◈' : '●'}
+                          </span>
+                          <span>
+                            {getThemedSkillLabel(skillId, world.primaryTheme, useClassicDndNames)}
+                          </span>
+                          <span className="font-mono-tech text-[10px] font-bold text-[var(--accent)]">
+                            {formatModifier(mod)}
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {(Object.keys(DND_SKILLS) as DndSkillId[]).map((skillId) => {
+                      const sk = DND_SKILLS[skillId];
+                      const isExp = dnd.skillExpertise.includes(skillId);
+                      const isProf = isExp || dnd.skillProficiencies.includes(skillId);
+                      const mod = computeSkillModifier(player, skillId);
+                      return (
+                        <div
+                          key={skillId}
+                          className={`flex items-center justify-between rounded-lg border px-2 py-1 text-[11px] ${
+                            isProf
+                              ? 'border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                              : 'border-transparent bg-[var(--bg-canvas)]/45 text-[var(--text-secondary)]'
+                          }`}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5 truncate">
+                            <span
+                              className={
+                                isExp
+                                  ? 'text-amber-400'
+                                  : isProf
+                                    ? 'text-[var(--accent)]'
+                                    : 'text-[var(--text-muted)]'
+                              }
+                            >
+                              {isExp ? '◈' : isProf ? '●' : '○'}
+                            </span>
+                            <span className="truncate">
+                              {getThemedSkillLabel(skillId, world.primaryTheme, useClassicDndNames)}
+                            </span>
+                            <span className="text-[9px] text-[var(--text-muted)]">
+                              {ATTRIBUTE_META[sk.attribute].short[language]}
+                            </span>
+                          </span>
+                          <span className="font-mono-tech shrink-0 text-[11px] font-bold text-[var(--accent)]">
+                            {formatModifier(mod)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Legacy Leveled Skills */
+              <div>
+                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Habilidades Evoluíveis
+                </h4>
+                <div className="space-y-1.5">
+                  {player.skillLevels.length > 0 ? (
+                    player.skillLevels.map((sk) => (
+                      <div
+                        key={sk.name}
+                        className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="truncate font-medium text-[var(--text-primary)]">
+                            {sk.name}
+                          </span>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <span className="font-mono-tech rounded bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[9px] text-[var(--text-muted)]">
+                              {ATTRIBUTE_META[sk.attribute].short[language]}
+                            </span>
+                            <span className="font-mono-tech rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                              Nv.{sk.level} (+{sk.level})
+                            </span>
+                          </div>
+                        </div>
+                        {sk.level < 5 ? (
+                          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+                            <div
+                              className="h-full rounded-full bg-[var(--accent)]/80 transition-all duration-500"
+                              style={{ width: `${Math.max(4, Math.min(100, sk.xp))}%` }}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  ) : (
+                    <span className="text-xs text-[var(--text-muted)]">
+                      Treine ou pratique na história para desenvolver habilidades.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Collapsible D&D Grimoire, Weapon Masteries & Feats */}
+            {isDnd && dnd ? (
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3">
+                <button
+                  type="button"
+                  onClick={() => setShowGrimoireSection((v) => !v)}
+                  className="flex w-full items-center justify-between text-left"
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    Grimório, Maestrias &amp; Talentos ({dnd.featIds.length + dnd.weaponMasteries.length + dnd.cantripIds.length + dnd.preparedSpellIds.length})
+                  </span>
+                  {showGrimoireSection ? (
+                    <ChevronUp className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  )}
+                </button>
+
+                {showGrimoireSection ? (
+                  <div className="mt-3 space-y-3 border-t border-[var(--border-subtle)] pt-2.5 text-xs">
+                    {dnd.weaponMasteries.length > 0 ? (
+                      <div>
+                        <div className="mb-1 text-[10px] font-bold uppercase text-amber-300">
+                          Maestrias de Arma (2024)
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {dnd.weaponMasteries.map((mId) => {
+                            const m = DND_WEAPON_MASTERIES[mId];
+                            if (!m) return null;
+                            return (
+                              <span
+                                key={mId}
+                                title={m.summary}
+                                className="rounded-md border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
+                              >
+                                {m.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {(dnd.cantripIds.length > 0 || dnd.preparedSpellIds.length > 0) ? (
+                      <div>
+                        <div className="mb-1 text-[10px] font-bold uppercase text-violet-300">
+                          Truques &amp; Magias Preparadas
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {dnd.cantripIds.map((spId) => (
+                            <span
+                              key={spId}
+                              title={DND_SPELLS[spId]?.summary}
+                              className="rounded-md border border-cyan-400/30 bg-cyan-500/12 px-2 py-0.5 text-[10px] text-cyan-200"
+                            >
+                              ✦ {getThemedSpellLabel(spId, world.primaryTheme, useClassicDndNames)}
+                            </span>
+                          ))}
+                          {dnd.preparedSpellIds.map((spId) => {
+                            const sp = DND_SPELLS[spId];
+                            return (
+                              <span
+                                key={spId}
+                                title={sp?.summary}
+                                className="rounded-md border border-violet-400/35 bg-violet-500/12 px-2 py-0.5 text-[10px] text-violet-200"
+                              >
+                                {sp ? `${sp.level}º ` : ''}
+                                {getThemedSpellLabel(spId, world.primaryTheme, useClassicDndNames)}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <div className="mb-1 text-[10px] font-bold uppercase text-[var(--accent)]">
+                        Talentos D&amp;D 5.2 &amp; Traços de Espécie
+                      </div>
+                      <div className="space-y-1.5">
+                        {dnd.featIds.map((fId) => {
+                          const f = DND_FEATS[fId];
+                          if (!f) return null;
+                          return (
+                            <div
+                              key={fId}
+                              className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5"
+                            >
+                              <div className="text-[11px] font-semibold text-[var(--text-primary)]">
+                                {f.label}
+                              </div>
+                              <p className="text-[10px] text-[var(--text-muted)]">{f.summary}</p>
+                            </div>
+                          );
+                        })}
+                        {(DND_SPECIES[dnd.speciesId]?.traits ?? []).map((tr) => (
+                          <div
+                            key={tr}
+                            className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 px-2.5 py-1 text-[10px] text-[var(--text-secondary)]"
+                          >
+                            • {tr}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {/* Traits */}
             <div>
               <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -694,53 +1282,10 @@ export function ContextHud({
               </div>
             </div>
 
-            {/* Leveled Skills */}
+            {/* Story Talents / Passives */}
             <div>
               <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Habilidades Evoluíveis
-              </h4>
-              <div className="space-y-1.5">
-                {player.skillLevels.length > 0 ? (
-                  player.skillLevels.map((sk) => (
-                    <div
-                      key={sk.name}
-                      className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="truncate font-medium text-[var(--text-primary)]">
-                          {sk.name}
-                        </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <span className="font-mono-tech rounded bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[9px] text-[var(--text-muted)]">
-                            {ATTRIBUTE_META[sk.attribute].short[language]}
-                          </span>
-                          <span className="font-mono-tech rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
-                            Nv.{sk.level} (+{sk.level})
-                          </span>
-                        </div>
-                      </div>
-                      {sk.level < 5 ? (
-                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-canvas)]">
-                          <div
-                            className="h-full rounded-full bg-[var(--accent)]/80 transition-all duration-500"
-                            style={{ width: `${Math.max(4, Math.min(100, sk.xp))}%` }}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ))
-                ) : (
-                  <span className="text-xs text-[var(--text-muted)]">
-                    Treine ou pratique na história para desenvolver habilidades.
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Talents / Feats */}
-            <div>
-              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Talentos & Passivas ({player.talents.length})
+                Talentos Narrativos ({player.talents.length})
               </h4>
               {player.talents.length > 0 ? (
                 <div className="space-y-2">
@@ -761,7 +1306,7 @@ export function ContextHud({
                 </div>
               ) : (
                 <p className="text-xs text-[var(--text-muted)]">
-                  Novos talentos despertam conforme você treina e supera marcos.
+                  Novos talentos narrativos despertam conforme você supera marcos da crônica.
                 </p>
               )}
             </div>

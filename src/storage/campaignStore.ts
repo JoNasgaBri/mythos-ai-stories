@@ -1,6 +1,13 @@
 import { DEFAULT_SETTINGS } from '../data/presets';
 import {
-  computeMaxVigor,
+  computeMaxHpForRuleset,
+  computeNpcArmorClass,
+  computeNpcMaxHpForRuleset,
+  getMaxInspirationForRuleset,
+  getXpDeltaForRuleset,
+  hydrateDnd5eSheetFromLegacy,
+} from '../engine/dnd52Rules';
+import {
   DEFAULT_ATTRIBUTES,
   defaultAffinityFromStance,
   defaultBaseSuppliesForTheme,
@@ -11,17 +18,15 @@ import {
   defaultWorldClockForTheme,
   derivePeriodFromHour,
   deriveRelationshipFromAffinity,
-  getEquippedGearBonuses,
   inferEquipSlotFromCategory,
   inferNpcAssistAttribute,
   inferWeatherTypeFromText,
-  MAX_INSPIRATION,
   syncSkillLevels,
-  xpRequiredForLevel,
 } from '../engine/rpgSystem';
 import type {
   AppSettings,
   Campaign,
+  RulesetId,
   SaveSlot,
   TimelineSnapshotRecord,
 } from '../types/game';
@@ -67,6 +72,9 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
 
   const theme = raw.world?.primaryTheme || 'fantasy';
   const language = raw.language || 'pt-BR';
+  const ruleset: RulesetId =
+    raw.ruleset === 'dnd5e_2024' ? 'dnd5e_2024' : 'mythos_legacy';
+  const maxInsp = getMaxInspirationForRuleset(ruleset);
 
   const normalizedNpcs = existingNpcs.map((n) => {
     const affinity =
@@ -89,10 +97,11 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       typeof n.level === 'number' && n.level >= 1
         ? Math.min(20, Math.round(n.level))
         : Math.max(1, raw.player?.level ?? 1);
+    const minNpcFloor = ruleset === 'dnd5e_2024' ? 4 : 50;
     const npcMaxVigor =
-      typeof n.maxVigor === 'number' && n.maxVigor >= 50
+      typeof n.maxVigor === 'number' && n.maxVigor >= minNpcFloor
         ? n.maxVigor
-        : computeMaxVigor(npcLevel, attrs.con, 0);
+        : computeNpcMaxHpForRuleset(ruleset, { level: npcLevel, attributes: attrs, role: n.role });
 
     return {
       ...n,
@@ -109,6 +118,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
           ? Math.max(0, Math.min(npcMaxVigor, n.vigor))
           : npcMaxVigor,
       maxVigor: npcMaxVigor,
+      armorClass: ruleset === 'dnd5e_2024' ? computeNpcArmorClass({ ...n, attributes: attrs }) : n.armorClass,
       attributes: attrs,
       skills: Array.isArray(n.skills) ? n.skills : [],
       traits: Array.isArray(n.traits) ? n.traits : [],
@@ -146,14 +156,15 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
           item.equipSlot ?? inferEquipSlotFromCategory(item.category, item.name),
       }))
     : [];
-  const gearBonuses = getEquippedGearBonuses(inventory);
-  const computedMaxVigor = computeMaxVigor(
+  const computedMaxVigor = computeMaxHpForRuleset(ruleset, {
     level,
-    attributes.con + (gearBonuses.con ?? 0),
-    gearBonuses.maxVigor ?? 0,
-  );
+    attributes,
+    inventory,
+    dnd: rawPlayer?.dnd,
+  });
+  const minPlayerFloor = ruleset === 'dnd5e_2024' ? 4 : 60;
   const maxVigor =
-    typeof rawPlayer?.maxVigor === 'number' && rawPlayer.maxVigor >= 60
+    typeof rawPlayer?.maxVigor === 'number' && rawPlayer.maxVigor >= minPlayerFloor
       ? rawPlayer.maxVigor
       : computedMaxVigor;
   const rawSkills = Array.isArray(rawPlayer?.skills) ? rawPlayer.skills : [];
@@ -218,9 +229,12 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     vehicles: Array.isArray(rawBase?.vehicles) ? rawBase.vehicles : [],
   };
 
-  return {
+  const normalizedCampaign: Campaign = {
     ...(raw as Campaign),
     id,
+    ruleset,
+    progressionMode: raw.progressionMode ?? 'xp',
+    pendingSavingThrow: raw.pendingSavingThrow ?? null,
     world: {
       title: raw.world?.title || 'Crônica Sem Título',
       primaryTheme: theme,
@@ -235,9 +249,13 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       matureMode: raw.world?.matureMode ?? true,
     },
     player: {
+      ...(rawPlayer ?? {}),
       name: rawPlayer?.name || 'Viajante',
       age: rawPlayer?.age ?? 28,
       occupation: rawPlayer?.occupation || 'Aventureiro',
+      height: rawPlayer?.height,
+      physique: rawPlayer?.physique,
+      appearance: rawPlayer?.appearance,
       portraitUrl: rawPlayer?.portraitUrl,
       portraitEngine: rawPlayer?.portraitEngine,
       level,
@@ -245,7 +263,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       xpToNextLevel:
         typeof rawPlayer?.xpToNextLevel === 'number' && rawPlayer.xpToNextLevel > 0
           ? rawPlayer.xpToNextLevel
-          : xpRequiredForLevel(level),
+          : getXpDeltaForRuleset(level, ruleset),
       attributePoints:
         typeof rawPlayer?.attributePoints === 'number'
           ? Math.max(0, rawPlayer.attributePoints)
@@ -262,7 +280,7 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
           : 20,
       inspiration:
         typeof rawPlayer?.inspiration === 'number'
-          ? Math.max(0, Math.min(MAX_INSPIRATION, Math.round(rawPlayer.inspiration)))
+          ? Math.max(0, Math.min(maxInsp, Math.round(rawPlayer.inspiration)))
           : 1,
       traits: Array.isArray(rawPlayer?.traits) ? rawPlayer.traits : [],
       skills: syncedSkills,
@@ -275,6 +293,36 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
       inventory,
       quests: Array.isArray(rawPlayer?.quests) ? rawPlayer.quests : [],
       journal: Array.isArray(rawPlayer?.journal) ? rawPlayer.journal : [],
+      dnd: rawPlayer?.dnd
+        ? {
+            ...rawPlayer.dnd,
+            exhaustion: Math.max(0, Math.min(6, Math.round(rawPlayer.dnd.exhaustion || 0))),
+            tempHp: Math.max(0, Math.round(rawPlayer.dnd.tempHp || 0)),
+            hitDiceRemaining: Math.max(0, Math.min(level, Math.round(rawPlayer.dnd.hitDiceRemaining ?? level))),
+            conditions: Array.isArray(rawPlayer.dnd.conditions) ? rawPlayer.dnd.conditions : [],
+            featIds: Array.isArray(rawPlayer.dnd.featIds) ? rawPlayer.dnd.featIds : [],
+            skillProficiencies: Array.isArray(rawPlayer.dnd.skillProficiencies)
+              ? rawPlayer.dnd.skillProficiencies
+              : [],
+            skillExpertise: Array.isArray(rawPlayer.dnd.skillExpertise)
+              ? rawPlayer.dnd.skillExpertise
+              : [],
+            savingThrowProficiencies: Array.isArray(rawPlayer.dnd.savingThrowProficiencies)
+              ? rawPlayer.dnd.savingThrowProficiencies
+              : [],
+            weaponMasteries: Array.isArray(rawPlayer.dnd.weaponMasteries)
+              ? rawPlayer.dnd.weaponMasteries
+              : [],
+            cantripIds: Array.isArray(rawPlayer.dnd.cantripIds) ? rawPlayer.dnd.cantripIds : [],
+            preparedSpellIds: Array.isArray(rawPlayer.dnd.preparedSpellIds)
+              ? rawPlayer.dnd.preparedSpellIds
+              : [],
+            classResources: Array.isArray(rawPlayer.dnd.classResources)
+              ? rawPlayer.dnd.classResources
+              : [],
+            deathSaves: rawPlayer.dnd.deathSaves ?? { successes: 0, failures: 0, stabilized: false },
+          }
+        : undefined,
     },
     codex: {
       npcs: normalizedNpcs,
@@ -289,7 +337,42 @@ export function normalizeCampaign(raw: Partial<Campaign>): Campaign {
     stronghold: normalizedStronghold,
     entries: Array.isArray(raw.entries) ? raw.entries : [],
     actions: Array.isArray(raw.actions) ? raw.actions : [],
+    activeClash:
+      raw.activeClash &&
+      typeof raw.activeClash === 'object' &&
+      Array.isArray(raw.activeClash.enemies)
+        ? {
+            ...raw.activeClash,
+            round:
+              typeof raw.activeClash.round === 'number' && raw.activeClash.round >= 1
+                ? Math.round(raw.activeClash.round)
+                : 1,
+            synergy:
+              typeof raw.activeClash.synergy === 'number'
+                ? Math.max(0, Math.min(100, Math.round(raw.activeClash.synergy)))
+                : 0,
+            playerShield:
+              typeof raw.activeClash.playerShield === 'number'
+                ? Math.max(0, Math.round(raw.activeClash.playerShield))
+                : 0,
+            allies: Array.isArray(raw.activeClash.allies)
+              ? raw.activeClash.allies
+              : [],
+            terrain: Array.isArray(raw.activeClash.terrain)
+              ? raw.activeClash.terrain
+              : [],
+            roundLog: Array.isArray(raw.activeClash.roundLog)
+              ? raw.activeClash.roundLog.slice(-24)
+              : [],
+          }
+        : null,
   };
+
+  // Self-healing guard: if marked dnd5e_2024 (e.g. from QR sync / JSON import) without dnd sheet, hydrate it!
+  if (normalizedCampaign.ruleset === 'dnd5e_2024' && !normalizedCampaign.player.dnd) {
+    return hydrateDnd5eSheetFromLegacy(normalizedCampaign);
+  }
+  return normalizedCampaign;
 }
 
 function openMythosDb(): Promise<IDBDatabase> {
@@ -521,7 +604,9 @@ export async function loadSaveSlotsAsync(campaignId?: string): Promise<SaveSlot[
     const filtered = campaignId
       ? all.filter((s) => s.campaignId === campaignId)
       : all;
-    return filtered.sort((a, b) => b.savedAt - a.savedAt);
+    return filtered
+      .map((s) => ({ ...s, snapshot: normalizeCampaign(s.snapshot) }))
+      .sort((a, b) => b.savedAt - a.savedAt);
   }
 }
 
@@ -542,6 +627,7 @@ export async function createSaveSlotAsync(
     chapter: campaign.currentChapter,
     location: campaign.currentLocation,
     vigor: campaign.player.vigor,
+    maxVigor: campaign.player.maxVigor,
     snapshot: cleanSnapshot,
   };
 

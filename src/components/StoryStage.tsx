@@ -42,22 +42,29 @@ import {
   formatModifier,
   getEffectiveAttributes,
 } from '../engine/rpgSystem';
+import {
+  computeSavingThrowModifier,
+  isDndRuleset,
+} from '../engine/dnd52Rules';
 import type {
   ActionIntent,
   ActionRisk,
   AppSettings,
   AttributeId,
   Campaign,
+  ClashArchetype,
   CommandInputMode,
   DiceRollPolicy,
   InventoryItem,
   LanguageId,
   LocationRecord,
   NpcRecord,
+  SuggestedClashCue,
   TacticalAction,
   WorldConfig,
   WorldEventChoice,
 } from '../types/game';
+import { ClashSuggestionCard } from './ClashBannerTrigger';
 import { ContextHud } from './ContextHud';
 import { EpiloguePanel } from './EpiloguePanel';
 import { MobileChoicesSheet } from './MobileChoicesSheet';
@@ -113,6 +120,11 @@ interface StoryStageProps {
   onOpenWorldMap?: () => void;
   onOpenTimeline?: () => void;
   timelineBranchCount?: number;
+  suggestedClash?: SuggestedClashCue | null;
+  isStartingClash?: boolean;
+  onOpenClashLauncher?: () => void;
+  onAcceptSuggestedClash?: (archetype: ClashArchetype) => void;
+  onDismissSuggestedClash?: () => void;
   onOpenCharacterInventory?: () => void;
   onOpenBaseBlueprint?: () => void;
   onOpenRelationships?: (npcId?: string) => void;
@@ -121,6 +133,10 @@ interface StoryStageProps {
   onOpenWorkbench?: () => void;
   onOpenRest?: () => void;
   onOpenEditProtagonist?: () => void;
+  onOpenLevelUpModal?: () => void;
+  onMigrateToDnd52?: () => void;
+  onResolvePendingSavingThrow?: () => void;
+  onRollStoryDeathSave?: () => void;
   onOpenOrTriggerWorldEvent?: () => void;
   onSelectWorldEventChoice?: (choice: WorldEventChoice) => void;
   focusEventNonce?: number;
@@ -207,6 +223,11 @@ export function StoryStage({
   onOpenWorldMap,
   onOpenTimeline,
   timelineBranchCount,
+  suggestedClash,
+  isStartingClash = false,
+  onOpenClashLauncher,
+  onAcceptSuggestedClash,
+  onDismissSuggestedClash,
   onOpenCharacterInventory,
   onOpenBaseBlueprint,
   onOpenRelationships,
@@ -215,6 +236,10 @@ export function StoryStage({
   onOpenWorkbench,
   onOpenRest,
   onOpenEditProtagonist,
+  onOpenLevelUpModal,
+  onMigrateToDnd52,
+  onResolvePendingSavingThrow,
+  onRollStoryDeathSave,
   onOpenOrTriggerWorldEvent,
   onSelectWorldEventChoice,
   focusEventNonce,
@@ -242,6 +267,7 @@ export function StoryStage({
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [rightHudPeek, setRightHudPeek] = useState(false);
   const [mobileChoicesOpen, setMobileChoicesOpen] = useState(false);
+  const hasActiveClash = campaign.activeClash?.status === 'active';
   const [lightboxImage, setLightboxImage] = useState<{
     url: string;
     caption?: string;
@@ -261,7 +287,9 @@ export function StoryStage({
   };
 
   useEffect(() => {
-    if (isBusy) setMobileChoicesOpen(false);
+    if (isBusy) {
+      setMobileChoicesOpen(false);
+    }
   }, [isBusy]);
 
   useEffect(() => {
@@ -269,6 +297,7 @@ export function StoryStage({
   }, [
     campaign.entries.length,
     campaign.activeWorldEvent?.id,
+    suggestedClash?.title,
     focusEventNonce,
     isBusy,
     campaign.status,
@@ -501,6 +530,7 @@ export function StoryStage({
         onOpenMap={() => onOpenWorldMap?.()}
         onOpenTimeline={onOpenTimeline}
         timelineBranchCount={timelineBranchCount}
+        onOpenClashLauncher={onOpenClashLauncher}
         onOpenRest={() => onOpenRest?.()}
         onOpenSaves={onOpenSaves}
         onOpenOrTriggerWorldEvent={onOpenOrTriggerWorldEvent}
@@ -672,7 +702,8 @@ export function StoryStage({
                               <strong className="text-[var(--text-primary)]">
                                 {entry.diceRoll.total}
                               </strong>{' '}
-                              vs DC {entry.diceRoll.dc}
+                              {entry.diceRoll.testKind === 'attack_roll' ? 'vs CA' : 'vs CD'}{' '}
+                              {entry.diceRoll.dc}
                             </span>
                             <span
                               className="font-semibold"
@@ -743,7 +774,9 @@ export function StoryStage({
                               : !entry.diceRoll.attribute && entry.diceRoll.bonus !== 0
                                 ? ` ${formatModifier(entry.diceRoll.bonus)}${entry.diceRoll.bonusSource ? ` (${entry.diceRoll.bonusSource})` : ''}`
                                 : ''}{' '}
-                            = <strong className="text-[var(--text-primary)]">{entry.diceRoll.total}</strong> vs DC {entry.diceRoll.dc}
+                            = <strong className="text-[var(--text-primary)]">{entry.diceRoll.total}</strong>{' '}
+                            {entry.diceRoll.testKind === 'attack_roll' ? 'vs CA' : 'vs CD'}{' '}
+                            {entry.diceRoll.dc}
                           </span>
                           {entry.diceRoll.opposedLabel ? (
                             <span className="rounded bg-[var(--warning)]/12 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]">
@@ -1030,6 +1063,56 @@ export function StoryStage({
               />
             ) : null}
 
+            {/* D&D 5.2 Pending Saving Throw Card (Zero-Extra-AI-Call Deterministic Resolution) */}
+            {campaign.pendingSavingThrow && !isEnded && onResolvePendingSavingThrow ? (
+              <div className="animate-modal-spring rounded-2xl border-2 border-amber-400/70 bg-gradient-to-br from-amber-500/15 via-[var(--bg-surface)] to-rose-500/10 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.4)]">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-400/60 bg-amber-500/20 text-amber-300">
+                      <Shield className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                        <span>Salvaguarda Exigida · D&amp;D 5.2</span>
+                        <span>·</span>
+                        <span className="font-mono-tech">
+                          {ATTRIBUTE_META[campaign.pendingSavingThrow.ability].short[language]} vs CD {campaign.pendingSavingThrow.dc}
+                        </span>
+                      </div>
+                      <h3 className="font-display mt-0.5 text-sm font-bold text-[var(--text-primary)] sm:text-base">
+                        {campaign.pendingSavingThrow.reason}
+                      </h3>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        {campaign.pendingSavingThrow.failDamageDice
+                          ? `Em falha: ${campaign.pendingSavingThrow.failDamageDice} de dano${campaign.pendingSavingThrow.halfOnSuccess ? ' (metade no sucesso)' : ''}.`
+                          : 'Resista ao efeito antes de agir.'}{' '}
+                        Seu bônus de Salvaguarda:{' '}
+                        <strong className="font-mono-tech text-[var(--accent)]">
+                          {formatModifier(
+                            computeSavingThrowModifier(
+                              campaign.player,
+                              campaign.pendingSavingThrow.ability,
+                            ),
+                          )}
+                        </strong>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={onResolvePendingSavingThrow}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-extrabold text-slate-950 shadow-md transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    <Dices className="h-4 w-4" />
+                    <span>
+                      Rolar Salvaguarda ({ATTRIBUTE_META[campaign.pendingSavingThrow.ability].short[language]} CD {campaign.pendingSavingThrow.dc})
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {isBusy ? (
               <div className="flex items-center gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]/60 px-5 py-4 text-sm text-[var(--text-secondary)]">
                 <span className="h-2.5 w-2.5 animate-ping rounded-full bg-[var(--accent)]" />
@@ -1037,6 +1120,7 @@ export function StoryStage({
               </div>
             ) : !isEnded &&
               !isVigorCrisis &&
+              !campaign.pendingSavingThrow &&
               !campaign.activeWorldEvent &&
               campaign.actions.length > 0 ? (
               <div className="pt-1 pb-2 md:hidden">
@@ -1063,6 +1147,22 @@ export function StoryStage({
               </div>
             ) : null}
 
+            {suggestedClash &&
+            !hasActiveClash &&
+            !isEnded &&
+            !isVigorCrisis &&
+            !campaign.pendingSavingThrow &&
+            !campaign.activeWorldEvent &&
+            onAcceptSuggestedClash &&
+            onDismissSuggestedClash ? (
+              <ClashSuggestionCard
+                suggestion={suggestedClash}
+                isStarting={isStartingClash}
+                onAccept={onAcceptSuggestedClash}
+                onDismiss={onDismissSuggestedClash}
+              />
+            ) : null}
+
             <div ref={bottomRef} />
           </div>
         </div>
@@ -1070,7 +1170,34 @@ export function StoryStage({
         {/* Bottom Command Dock */}
         {!isEnded ? (
           <div className="mx-auto w-full max-w-[960px] shrink-0 pt-0 md:pt-2 2xl:max-w-[1060px]">
-            {campaign.activeWorldEvent ? (
+            {campaign.pendingSavingThrow && onResolvePendingSavingThrow ? (
+              <div
+                className="animate-beat-enter mx-2.5 mb-2 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-amber-400/60 bg-amber-500/12 px-3.5 py-2.5 text-xs text-amber-200 shadow-md sm:mx-0 sm:mb-0 sm:px-4 sm:py-3"
+                style={{
+                  marginBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Shield className="h-4 w-4 shrink-0 animate-pulse text-amber-400" />
+                  <span>
+                    <strong>Salvaguarda Pendente:</strong> resista a{' '}
+                    <strong className="text-[var(--text-primary)]">
+                      “{campaign.pendingSavingThrow.reason}”
+                    </strong>{' '}
+                    ({ATTRIBUTE_META[campaign.pendingSavingThrow.ability].short[language]} vs CD {campaign.pendingSavingThrow.dc}) para continuar.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={onResolvePendingSavingThrow}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber-400 px-3.5 py-1.5 text-[11px] font-bold text-slate-950 transition hover:brightness-110"
+                >
+                  <Dices className="h-3.5 w-3.5" />
+                  Rolar Salvaguarda
+                </button>
+              </div>
+            ) : campaign.activeWorldEvent ? (
               <div
                 className="animate-beat-enter mx-2.5 mb-2 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-[#fbbf24]/55 bg-[#fbbf24]/10 px-3.5 py-2.5 text-xs text-[#fbbf24] shadow-md sm:mx-0 sm:mb-0 sm:px-4 sm:py-3"
                 style={{
@@ -1107,56 +1234,125 @@ export function StoryStage({
                   marginBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
                 }}
               >
-                <div className="flex items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--danger)]/15 text-[var(--danger)]">
-                    <AlertTriangle className="h-5 w-5" />
-                  </span>
-                  <div className="flex-1">
-                    <h3 className="font-display text-base font-semibold text-[var(--danger)]">
-                      À Beira do Colapso · Vigor 0
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
-                      Seu personagem atingiu o limite físico. Role um Teste de Sobrevivência (d20 vs DC {DIFFICULTY_DC[campaign.difficulty]}), consuma um suprimento de emergência ou aceite o desfecho trágico.
-                    </p>
+                {isDndRuleset(campaign) && campaign.player.dnd ? (
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/20 text-rose-400">
+                      <Skull className="h-5 w-5" />
+                    </span>
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-display text-base font-semibold text-rose-400">
+                          0 PV · Salvaguardas Contra a Morte (D&amp;D 5.2)
+                        </h3>
+                        <div className="font-mono-tech flex items-center gap-3 text-xs font-bold">
+                          <span className="text-emerald-400">
+                            Sucessos: {'●'.repeat(campaign.player.dnd.deathSaves.successes)}
+                            {'○'.repeat(Math.max(0, 3 - campaign.player.dnd.deathSaves.successes))}
+                          </span>
+                          <span className="text-rose-400">
+                            Falhas: {'✕'.repeat(campaign.player.dnd.deathSaves.failures)}
+                            {'○'.repeat(Math.max(0, 3 - campaign.player.dnd.deathSaves.failures))}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
+                        Role <strong>1d20 puro (CD 10)</strong>: <strong>3 sucessos</strong> estabilizam você (retoma com 1 PV), <strong>Nat 20</strong> levanta com 1 PV imediatamente, <strong>Nat 1</strong> conta 2 falhas e <strong>3 falhas</strong> selam sua queda.
+                      </p>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => onResolveVigorCrisis('survival_roll')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-xs font-semibold text-[var(--accent-contrast)] transition hover:brightness-110 disabled:opacity-50"
-                      >
-                        <Dices className="h-4 w-4" />
-                        <span>Rolar Teste de Sobrevivência (d20)</span>
-                      </button>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {onRollStoryDeathSave ? (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={onRollStoryDeathSave}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-500 px-4 py-2.5 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                          >
+                            <Dices className="h-4 w-4" />
+                            <span>Rolar Salvaguarda contra Morte (1d20 vs CD 10)</span>
+                          </button>
+                        ) : null}
 
-                      {consumables.map((item) => (
+                        {consumables.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() =>
+                              onResolveVigorCrisis('use_consumable', item)
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--success)]/50 bg-[var(--success)]/15 px-3.5 py-2.5 text-xs font-semibold text-[var(--success)] transition hover:brightness-110 disabled:opacity-50"
+                          >
+                            <Flame className="h-3.5 w-3.5" />
+                            <span>
+                              Usar {item.name} ({item.dndStats?.healDice ?? '2d4+2'} PV)
+                            </span>
+                          </button>
+                        ))}
+
                         <button
-                          key={item.id}
                           type="button"
                           disabled={isBusy}
-                          onClick={() =>
-                            onResolveVigorCrisis('use_consumable', item)
-                          }
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--success)]/50 bg-[var(--success)]/15 px-3.5 py-2.5 text-xs font-semibold text-[var(--success)] transition hover:brightness-110 disabled:opacity-50"
+                          onClick={() => onResolveVigorCrisis('accept_end')}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger)]/50 bg-[var(--danger)]/10 px-3.5 py-2.5 text-xs font-medium text-[var(--danger)] transition hover:bg-[var(--danger)]/20 disabled:opacity-50"
                         >
-                          <Flame className="h-3.5 w-3.5" />
-                          <span>Usar {item.name} (+30 Vigor)</span>
+                          <Skull className="h-3.5 w-3.5" />
+                          <span>Aceitar o Destino</span>
                         </button>
-                      ))}
-
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => onResolveVigorCrisis('accept_end')}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger)]/50 bg-[var(--danger)]/10 px-3.5 py-2.5 text-xs font-medium text-[var(--danger)] transition hover:bg-[var(--danger)]/20 disabled:opacity-50"
-                      >
-                        <Skull className="h-3.5 w-3.5" />
-                        <span>Aceitar o Destino</span>
-                      </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--danger)]/15 text-[var(--danger)]">
+                      <AlertTriangle className="h-5 w-5" />
+                    </span>
+                    <div className="flex-1">
+                      <h3 className="font-display text-base font-semibold text-[var(--danger)]">
+                        À Beira do Colapso · Vigor 0
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
+                        Seu personagem atingiu o limite físico. Role um Teste de Sobrevivência (d20 vs DC {DIFFICULTY_DC[campaign.difficulty]}), consuma um suprimento de emergência ou aceite o desfecho trágico.
+                      </p>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => onResolveVigorCrisis('survival_roll')}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-xs font-semibold text-[var(--accent-contrast)] transition hover:brightness-110 disabled:opacity-50"
+                        >
+                          <Dices className="h-4 w-4" />
+                          <span>Rolar Teste de Sobrevivência (d20)</span>
+                        </button>
+
+                        {consumables.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() =>
+                              onResolveVigorCrisis('use_consumable', item)
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--success)]/50 bg-[var(--success)]/15 px-3.5 py-2.5 text-xs font-semibold text-[var(--success)] transition hover:brightness-110 disabled:opacity-50"
+                          >
+                            <Flame className="h-3.5 w-3.5" />
+                            <span>Usar {item.name} (+30 Vigor)</span>
+                          </button>
+                        ))}
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => onResolveVigorCrisis('accept_end')}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--danger)]/50 bg-[var(--danger)]/10 px-3.5 py-2.5 text-xs font-medium text-[var(--danger)] transition hover:bg-[var(--danger)]/20 disabled:opacity-50"
+                        >
+                          <Skull className="h-3.5 w-3.5" />
+                          <span>Aceitar o Destino</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <>
@@ -1518,6 +1714,7 @@ export function StoryStage({
           <ContextHud
             campaign={campaign}
             language={language}
+            useClassicDndNames={settings.useClassicDndNames}
             isSummarizing={isSummarizing}
             isGeneratingPortrait={isGeneratingPortrait}
             generatingNpcPortraitId={generatingNpcPortraitId}
@@ -1532,6 +1729,8 @@ export function StoryStage({
             onOpenBaseBlueprint={onOpenBaseBlueprint}
             onOpenRelationships={onOpenRelationships}
             onOpenEditProtagonist={onOpenEditProtagonist}
+            onOpenLevelUpModal={onOpenLevelUpModal}
+            onMigrateToDnd52={onMigrateToDnd52}
             onMentionNpc={handleMentionNpcFromHud}
             onTravelLocation={handleTravelFromHud}
             onAddCanonFact={onAddCanonFact}
@@ -1584,6 +1783,7 @@ export function StoryStage({
                 <ContextHud
                   campaign={campaign}
                   language={language}
+                  useClassicDndNames={settings.useClassicDndNames}
                   isSummarizing={isSummarizing}
                   isGeneratingPortrait={isGeneratingPortrait}
                   generatingNpcPortraitId={generatingNpcPortraitId}
@@ -1612,6 +1812,14 @@ export function StoryStage({
                   onOpenEditProtagonist={() => {
                     setRightHudPeek(false);
                     onOpenEditProtagonist?.();
+                  }}
+                  onOpenLevelUpModal={() => {
+                    setRightHudPeek(false);
+                    onOpenLevelUpModal?.();
+                  }}
+                  onMigrateToDnd52={() => {
+                    setRightHudPeek(false);
+                    onMigrateToDnd52?.();
                   }}
                   onMentionNpc={handleMentionNpcFromHud}
                   onTravelLocation={handleTravelFromHud}
@@ -1662,6 +1870,7 @@ export function StoryStage({
               <ContextHud
                 campaign={campaign}
                 language={language}
+                useClassicDndNames={settings.useClassicDndNames}
                 isSummarizing={isSummarizing}
                 isGeneratingPortrait={isGeneratingPortrait}
                 generatingNpcPortraitId={generatingNpcPortraitId}
@@ -1690,6 +1899,14 @@ export function StoryStage({
                 onOpenEditProtagonist={() => {
                   onCloseMobileRightHud();
                   onOpenEditProtagonist?.();
+                }}
+                onOpenLevelUpModal={() => {
+                  onCloseMobileRightHud();
+                  onOpenLevelUpModal?.();
+                }}
+                onMigrateToDnd52={() => {
+                  onCloseMobileRightHud();
+                  onMigrateToDnd52?.();
                 }}
                 onMentionNpc={handleMentionNpcFromHud}
                 onTravelLocation={handleTravelFromHud}

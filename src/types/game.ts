@@ -1,5 +1,216 @@
 export type WorldThemeId = 'fantasy' | 'cyberpunk' | 'mystery' | 'zombies' | 'apocalyptic';
 
+export type RulesetId = 'dnd5e_2024' | 'mythos_legacy';
+
+export type ProgressionMode = 'xp' | 'milestone';
+
+export type DndClassId =
+  | 'barbarian'
+  | 'bard'
+  | 'cleric'
+  | 'druid'
+  | 'fighter'
+  | 'monk'
+  | 'paladin'
+  | 'ranger'
+  | 'rogue'
+  | 'sorcerer'
+  | 'warlock'
+  | 'wizard';
+
+export type DndSpeciesId =
+  | 'human'
+  | 'elf'
+  | 'dwarf'
+  | 'halfling'
+  | 'dragonborn'
+  | 'gnome'
+  | 'goliath'
+  | 'orc'
+  | 'tiefling';
+
+export type DndBackgroundId =
+  | 'acolyte'
+  | 'criminal'
+  | 'sage'
+  | 'soldier'
+  | 'wayfarer'
+  | 'medic'
+  | 'artisan'
+  | 'noble_envoy'
+  | 'operative'
+  | 'scavenger';
+
+export type DndSkillId =
+  | 'acrobatics'
+  | 'animal_handling'
+  | 'arcana'
+  | 'athletics'
+  | 'deception'
+  | 'history'
+  | 'insight'
+  | 'intimidation'
+  | 'investigation'
+  | 'medicine'
+  | 'nature'
+  | 'perception'
+  | 'performance'
+  | 'persuasion'
+  | 'religion'
+  | 'sleight_of_hand'
+  | 'stealth'
+  | 'survival';
+
+export type DndConditionId =
+  | 'blinded'
+  | 'charmed'
+  | 'deafened'
+  | 'frightened'
+  | 'grappled'
+  | 'incapacitated'
+  | 'invisible'
+  | 'paralyzed'
+  | 'petrified'
+  | 'poisoned'
+  | 'prone'
+  | 'restrained'
+  | 'stunned'
+  | 'unconscious';
+
+export type WeaponMasteryId =
+  | 'cleave'
+  | 'graze'
+  | 'nick'
+  | 'push'
+  | 'sap'
+  | 'slow'
+  | 'topple'
+  | 'vex';
+
+export type DndDamageType =
+  | 'slashing'
+  | 'piercing'
+  | 'bludgeoning'
+  | 'fire'
+  | 'cold'
+  | 'lightning'
+  | 'acid'
+  | 'poison'
+  | 'necrotic'
+  | 'radiant'
+  | 'force'
+  | 'psychic'
+  | 'thunder';
+
+export type ArmorCategory = 'none' | 'light' | 'medium' | 'heavy' | 'shield';
+
+export type DndWeaponProperty =
+  | 'finesse'
+  | 'light'
+  | 'heavy'
+  | 'two_handed'
+  | 'versatile'
+  | 'ranged'
+  | 'thrown'
+  | 'reach'
+  | 'loading'
+  | 'reload';
+
+export type DndTestKind =
+  | 'ability_check'
+  | 'attack_roll'
+  | 'saving_throw'
+  | 'death_save';
+
+export interface DndItemStats {
+  weaponDice?: string; // e.g. '1d8', '2d6', '1d10'
+  versatileDice?: string; // e.g. '1d10'
+  damageType?: DndDamageType;
+  properties?: DndWeaponProperty[];
+  mastery?: WeaponMasteryId;
+  attackBonus?: number; // magic weapon +1/+2/+3
+  damageBonus?: number;
+  armorCategory?: ArmorCategory;
+  armorBaseAc?: number; // e.g. 11, 14, 16, 18
+  acBonus?: number; // shield +2, ring +1, etc.
+  strReq?: number; // 13 or 15 for heavy armor
+  stealthDisadvantage?: boolean;
+  healDice?: string; // e.g. '2d4+2' for Potion of Healing
+  requiresAttunement?: boolean;
+  attuned?: boolean;
+}
+
+export interface DndClassResource {
+  id: string;
+  name: string;
+  shortName: string;
+  current: number;
+  max: number;
+  recharge: 'short_rest' | 'long_rest' | 'short_rest_one';
+}
+
+export interface DndSpellSlotTier {
+  max: number;
+  current: number;
+}
+
+export interface DndSpellSlotsState {
+  // Spell circles 1..9
+  tiers: Record<number, DndSpellSlotTier>;
+  pactMax?: number;
+  pactCurrent?: number;
+  pactSlotLevel?: number;
+}
+
+export interface DndDeathSaves {
+  successes: number; // 0..3
+  failures: number; // 0..3
+  stabilized?: boolean;
+}
+
+export interface Dnd5ePlayerSheet {
+  classId: DndClassId;
+  subclassId?: string;
+  speciesId: DndSpeciesId;
+  backgroundId: DndBackgroundId;
+  fightingStyleId?: string;
+  featIds: string[];
+  skillProficiencies: DndSkillId[];
+  skillExpertise: DndSkillId[];
+  savingThrowProficiencies: AttributeId[];
+  weaponMasteries: WeaponMasteryId[];
+  hitDie: 6 | 8 | 10 | 12;
+  hitDiceRemaining: number;
+  tempHp: number;
+  exhaustion: number; // 0..6 (2024: -2 per level on D20 Tests, -5 ft/level Speed)
+  conditions: DndConditionId[];
+  deathSaves: DndDeathSaves;
+  cantripIds: string[];
+  preparedSpellIds: string[];
+  spellSlots: DndSpellSlotsState;
+  concentrationSpellId?: string | null;
+  classResources: DndClassResource[];
+  relentlessEnduranceUsed?: boolean; // Orc trait 1/Long Rest
+  arcaneRecoveryUsed?: boolean; // Wizard/Land Druid 1/Long Rest
+  magicalCunningUsed?: boolean; // Warlock Lv.2 1/Long Rest
+  pendingSubclassChoice?: boolean; // Triggered at Level 3
+  pendingAsiOrFeat?: number; // Count of pending ASI/Feat choices (Lv 4/8/12/16/19...)
+  pendingEpicBoon?: boolean; // Triggered at Level 19
+}
+
+export interface PendingSavingThrow {
+  id: string;
+  ability: AttributeId;
+  dc: number;
+  reason: string;
+  failDamageDice?: string;
+  failDamageFlat?: number;
+  damageType?: DndDamageType;
+  halfOnSuccess?: boolean;
+  failCondition?: DndConditionId;
+  sourceTurn: number;
+}
+
 export type DifficultyId = 'easy' | 'normal' | 'hard' | 'insane' | 'good-luck';
 
 export type LanguageId = 'pt-BR' | 'en' | 'fr';
@@ -164,6 +375,10 @@ export interface TacticalAction {
   requiresRoll?: boolean;
   rollSkillHint?: string;
   attribute?: AttributeId;
+  checkType?: DndTestKind;
+  skillId?: DndSkillId;
+  saveAbility?: AttributeId;
+  suggestedDc?: number;
   effectTag?: string;
   unlockHint?: string;
 }
@@ -181,6 +396,7 @@ export interface InventoryItem {
   equipped?: boolean;
   storage?: ItemStorageLocation;
   bonuses?: ItemBonuses;
+  dndStats?: DndItemStats;
 }
 
 export interface Quest {
@@ -231,6 +447,9 @@ export interface NpcRecord {
   level?: number;
   vigor?: number;
   maxVigor?: number;
+  armorClass?: number;
+  attackBonus?: number;
+  damageDice?: string;
   attributes?: CharacterAttributes;
   skills?: string[];
   traits?: string[];
@@ -348,8 +567,16 @@ export interface DiceRollResult {
   rolls?: [number, number];
   rollMode?: RollMode;
   advantageSource?: string;
+  disadvantageSource?: string;
   opposedLabel?: string;
   rerolledWithInspiration?: boolean;
+  testKind?: DndTestKind;
+  skillId?: DndSkillId;
+  targetAc?: number;
+  proficiencyBonus?: number;
+  exhaustionPenalty?: number;
+  damageFormula?: string;
+  damageTotal?: number;
   bonus: number;
   bonusSource?: string;
   attribute?: AttributeId;
@@ -448,6 +675,7 @@ export interface PlayerState {
   inventory: InventoryItem[];
   quests: Quest[];
   journal: JournalEntry[];
+  dnd?: Dnd5ePlayerSheet;
 }
 
 export interface WorldConfig {
@@ -487,6 +715,7 @@ export interface TimelineBranchPoint {
   choiceSummary?: string;
   location: string;
   vigor: number;
+  maxVigor?: number;
   tension: number;
   mood: string;
   highlights: string[];
@@ -550,6 +779,10 @@ export interface Campaign {
     chosenSummary: string;
   }>;
   timeline?: CampaignTimelineMeta;
+  activeClash?: TacticalClashState | null;
+  ruleset?: RulesetId;
+  progressionMode?: ProgressionMode;
+  pendingSavingThrow?: PendingSavingThrow | null;
   engineUsed: 'gemini' | 'demo';
 }
 
@@ -562,6 +795,7 @@ export interface SaveSlot {
   chapter: number;
   location: string;
   vigor: number;
+  maxVigor?: number;
   snapshot: Campaign;
 }
 
@@ -588,13 +822,23 @@ export interface AppSettings {
   geminiApiKey: string;
   geminiModel: 'gemini-3.8-flash' | 'gemini-4-argon';
   forceDemoMode: boolean;
+  useClassicDndNames?: boolean;
 }
 
 export interface AiStateChanges {
   vigorDelta?: number;
+  tempHpGain?: number;
   tensionDelta?: number;
   xpGain?: number;
   inspirationGain?: number;
+  exhaustionDelta?: number;
+  conditionsAdd?: DndConditionId[];
+  conditionsRemove?: DndConditionId[];
+  spellSlotsDelta?: {
+    level: number;
+    delta: number;
+  };
+  pendingSavingThrow?: Omit<PendingSavingThrow, 'id' | 'sourceTurn'> | null;
   currencyDelta?: number;
   currencyLabel?: string;
   updateIdentity?: {
@@ -614,6 +858,7 @@ export interface AiStateChanges {
     equipSlot?: EquipSlot;
     storage?: ItemStorageLocation;
     bonuses?: ItemBonuses;
+    dndStats?: DndItemStats;
   }>;
   removeItems?: string[];
   supplyDeltas?: Partial<BaseSupplies>;
@@ -729,10 +974,15 @@ export interface StoryTurnResponse {
     requiresRoll?: boolean;
     rollSkillHint?: string;
     attribute?: AttributeId;
+    checkType?: DndTestKind;
+    skillId?: DndSkillId;
+    saveAbility?: AttributeId;
+    suggestedDc?: number;
     effectTag?: string;
     unlockHint?: string;
   }>;
   stateChanges: AiStateChanges;
+  suggestedClash?: SuggestedClashCue | null;
   waitingForResponse?: boolean;
   interactionId?: string;
   engineUsed: 'gemini' | 'demo';
@@ -890,6 +1140,7 @@ export interface CraftResponse {
     note: string;
     equipSlot?: EquipSlot;
     bonuses?: Partial<CharacterAttributes> & { maxVigor?: number };
+    dndStats?: DndItemStats;
   };
   upgradedVehicle?: {
     name: string;
@@ -1157,4 +1408,239 @@ export interface OrgOperationReportResponse {
   };
   canonFact?: string;
   engineUsed: 'gemini' | 'demo';
+}
+
+
+// ---------------------------------------------------------------------------
+// MYTHOS 11.0 — Polymorphic Tactical Clash Mode
+// ---------------------------------------------------------------------------
+
+export type ClashArchetype = 'combat' | 'chase' | 'social' | 'siege';
+
+export type ClashZone = 'close' | 'mid' | 'far';
+
+export type ClashEnemyIntentKind =
+  | 'heavy_attack'
+  | 'attack'
+  | 'defend'
+  | 'flank'
+  | 'debuff'
+  | 'special'
+  | 'pursue'
+  | 'pressure';
+
+export type ClashAllyDirective = 'strike' | 'guard' | 'flank' | 'support';
+
+export interface ClashEnemyIntent {
+  kind: ClashEnemyIntentKind;
+  label: string;
+  damage: number;
+  damageDice?: string;
+  damageType?: DndDamageType;
+  saveAbility?: AttributeId;
+  saveDc?: number;
+  inflictCondition?: DndConditionId;
+  target: 'player' | 'ally' | 'barricade' | 'all';
+  targetAllyId?: string;
+}
+
+export interface ClashEnemy {
+  id: string;
+  name: string;
+  role: string;
+  linkedNpcId?: string;
+  isBoss?: boolean;
+  hp: number;
+  maxHp: number;
+  ac?: number; // D&D 5.2 Armor Class (10..22)
+  cr?: number; // Challenge Rating (0.125, 0.25, 0.5, 1..20)
+  xpValue?: number; // Official SRD 5.2 CR XP reward
+  attackBonus?: number;
+  damageDice?: string;
+  damageType?: DndDamageType;
+  saveMods?: Partial<Record<AttributeId, number>>;
+  resistances?: DndDamageType[];
+  conditions?: DndConditionId[];
+  channeling?: boolean; // 5.2 Boss channeling/concentration (broken by CON save or Stunned/Prone)
+  sappedUntilRound?: number; // Sap mastery imposes Disadvantage on next attack
+  vexedUntilRound?: number; // Vex mastery grants player Advantage on next attack
+  slowedUntilRound?: number;
+  initiative?: number;
+  posture: number;
+  maxPosture: number;
+  staggered?: boolean;
+  zone: ClashZone;
+  armor: number; // 0 to 6 flat mitigation (legacy)
+  weaknesses: string[];
+  nextIntent: ClashEnemyIntent;
+  statusTags: string[];
+}
+
+export type ClashTerrainEffectKind =
+  | 'posture_break'
+  | 'damage_burst'
+  | 'cover_shield'
+  | 'escape_boost'
+  | 'social_leverage';
+
+export interface ClashTerrainFeature {
+  id: string;
+  name: string;
+  description: string;
+  zone: ClashZone;
+  attribute: AttributeId;
+  effectKind: ClashTerrainEffectKind;
+  effectLabel: string;
+  usesLeft: number;
+}
+
+export interface ClashAllyState {
+  npcId: string;
+  name: string;
+  role: string;
+  assistAttribute: AttributeId;
+  level: number;
+  vigor: number;
+  maxVigor: number;
+  ac?: number;
+  attackBonus?: number;
+  damageDice?: string;
+  conditions?: DndConditionId[];
+  initiative?: number;
+  downed?: boolean;
+  zone: ClashZone;
+  directive: ClashAllyDirective;
+  shield: number;
+}
+
+export interface ClashLogEntry {
+  id: string;
+  round: number;
+  summary: string;
+  tone: 'hero' | 'ally' | 'enemy' | 'terrain' | 'combo' | 'system';
+}
+
+export interface TacticalClashState {
+  id: string;
+  archetype: ClashArchetype;
+  title: string;
+  stakes: string;
+  objective: string;
+  round: number;
+  status: 'active' | 'victory' | 'escaped' | 'defeat';
+  playerZone: ClashZone;
+  playerShield: number;
+  /** Social duel defense bar (0-100); prevents social duels from triggering crisis_vigor death! */
+  playerComposure?: number;
+  synergy: number; // 0 to 100 (100 unlocks Party Combo / Solo Surge)
+  guildSupportUsed?: boolean;
+  bonusItemUsedRound?: number;
+  usedArgumentIds?: string[];
+  // D&D 5.2 Action Economy & Initiative state
+  heroInitiative?: number;
+  turnOrder?: Array<{ id: string; name: string; side: 'hero' | 'ally' | 'enemy'; initiative: number }>;
+  actionUsed?: boolean;
+  bonusActionUsed?: boolean;
+  reactionUsed?: boolean;
+  movementUsed?: boolean;
+  spellSlotUsedThisTurn?: boolean;
+  actionSurgeActive?: boolean;
+  rageActive?: boolean;
+  dodgeActive?: boolean;
+  shieldSpellBonusAc?: number; // +5 AC until start of next turn
+  preArmedReaction?: 'shield' | 'uncanny_dodge' | 'parry' | null;
+  playerConditions?: DndConditionId[];
+  selectedTargetId: string;
+  enemies: ClashEnemy[];
+  allies: ClashAllyState[];
+  terrain: ClashTerrainFeature[];
+  // Chase clocks (0-100)
+  chaseProgress?: number;
+  pursuerThreat?: number;
+  // Siege clocks
+  barricadeHp?: number;
+  barricadeMaxHp?: number;
+  waveCurrent?: number;
+  waveTotal?: number;
+  roundLog: ClashLogEntry[];
+  startedAtTurn: number;
+}
+
+export type ClashManeuverKind =
+  | 'primary'
+  | 'break_posture'
+  | 'reposition'
+  | 'defend'
+  | 'terrain'
+  | 'evidence'
+  | 'combo'
+  | 'guild_support'
+  | 'spell'
+  | 'class_feature'
+  | 'death_save'
+  | 'stabilize'
+  | 'freeform';
+
+export interface ClashActionPayload {
+  kind: ClashManeuverKind;
+  targetEnemyId?: string;
+  moveToZone?: ClashZone;
+  terrainId?: string;
+  evidenceId?: string;
+  evidenceLabel?: string;
+  spellId?: string;
+  spellSlotLevel?: number;
+  resourceId?: string;
+  isBonusAction?: boolean;
+  useSupplyBoost?: boolean;
+  attribute?: AttributeId;
+  label: string;
+}
+
+export interface ClashInitResponse {
+  archetype: ClashArchetype;
+  title: string;
+  stakes: string;
+  objective: string;
+  playerStartZone: ClashZone;
+  enemies: Array<{
+    name: string;
+    role: string;
+    isBoss?: boolean;
+    hp: number;
+    maxHp: number;
+    ac?: number;
+    cr?: number;
+    attackBonus?: number;
+    damageDice?: string;
+    damageType?: DndDamageType;
+    saveMods?: Partial<Record<AttributeId, number>>;
+    resistances?: DndDamageType[];
+    posture: number;
+    maxPosture: number;
+    zone: ClashZone;
+    armor: number;
+    weaknesses: string[];
+    nextIntent: {
+      kind: ClashEnemyIntentKind;
+      label: string;
+      damage: number;
+      damageDice?: string;
+      damageType?: DndDamageType;
+      saveAbility?: AttributeId;
+      saveDc?: number;
+      inflictCondition?: DndConditionId;
+      target: 'player' | 'ally' | 'barricade' | 'all';
+      targetAllyName?: string;
+    };
+  }>;
+  terrain: Array<Omit<ClashTerrainFeature, 'id'>>;
+  waveTotal?: number;
+  engineUsed: 'gemini' | 'demo';
+}
+
+export interface SuggestedClashCue {
+  archetype: ClashArchetype;
+  title: string;
+  reason: string;
 }

@@ -667,6 +667,11 @@ export function RelationshipsModal({
                                 {ATTRIBUTE_META[assistAttr].short[language]}
                               </strong>
                             </span>
+                            {campaign.ruleset === 'dnd5e_2024' ? (
+                              <span className="font-mono-tech inline-flex items-center gap-1 rounded-lg border border-sky-400/35 bg-sky-500/12 px-2.5 py-1 text-sky-300">
+                                {selectedNpc.vigor ?? 10}/{selectedNpc.maxVigor ?? 10} PV · CA {selectedNpc.armorClass ?? 12}
+                              </span>
+                            ) : null}
                             <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1 text-[var(--text-secondary)]">
                               <MapPin className="h-3 w-3 text-[var(--accent)]" />
                               {selectedNpc.lastSeenLocation}

@@ -110,8 +110,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Hashed Vite assets (/assets/*): Cache-First for instant cold start & offline reliability
-  if (url.pathname.startsWith('/assets/')) {
+  // Hashed Vite assets (/assets/*) & Battle HD-2D stages/sprites: Cache-First for instant cold start & offline reliability
+  if (
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.startsWith('/battle-stages/') ||
+    url.pathname.startsWith('/battle-sprites/')
+  ) {
     event.respondWith(
       caches.open(RUNTIME_CACHE).then(async (cache) => {
         const cached = await cache.match(req);

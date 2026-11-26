@@ -1,4 +1,9 @@
 import { generateDemoPortraitArt, generateDemoSceneArt } from '../engine/demoArtwork';
+import {
+  buildDnd5eSheetFromConfig,
+  computeMaxHpForRuleset,
+  getXpDeltaForRuleset,
+} from '../engine/dnd52Rules';
 import type {
   ActionIntent,
   AppSettings,
@@ -1448,6 +1453,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   geminiApiKey: '',
   geminiModel: 'gemini-3.8-flash',
   forceDemoMode: false,
+  useClassicDndNames: false,
 };
 
 export const READER_FONT_OPTIONS = [
@@ -1547,6 +1553,92 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       'James of Larion',
       'Sworn Knight',
     );
+    const demoAttrsEn = { str: 16, dex: 12, con: 14, int: 10, wis: 12, cha: 12 };
+    const demoDndEn = buildDnd5eSheetFromConfig({
+      classId: 'fighter',
+      speciesId: 'human',
+      backgroundId: 'soldier',
+      level: 1,
+      attributes: demoAttrsEn,
+      chosenSkills: ['athletics', 'intimidation', 'perception', 'insight', 'persuasion'],
+      fightingStyleId: 'style_dueling',
+    });
+    const demoInventoryEn = [
+      {
+        id: 'item_sword',
+        name: 'Larion Steel Longsword',
+        category: 'weapon' as const,
+        quantity: 1,
+        note: 'Engraved with the royal sigil · 1d8 slashing · Mastery: Sap (disadvantage on foe next attack).',
+        rarity: 'uncommon' as const,
+        equipSlot: 'weapon' as const,
+        equipped: true,
+        storage: 'carry' as const,
+        bonuses: { str: 1 },
+        dndStats: {
+          weaponDice: '1d8',
+          versatileDice: '1d10',
+          damageType: 'slashing' as const,
+          properties: ['versatile' as const],
+          mastery: 'sap' as const,
+        },
+      },
+      {
+        id: 'item_chainmail',
+        name: 'Larion Chain Mail',
+        category: 'tool' as const,
+        quantity: 1,
+        note: 'Heavy Armor · Base AC 16 (requires STR 13, Disadvantage on Stealth).',
+        rarity: 'common' as const,
+        equipSlot: 'armor' as const,
+        equipped: true,
+        storage: 'carry' as const,
+        dndStats: {
+          armorCategory: 'heavy' as const,
+          armorBaseAc: 16,
+          strReq: 13,
+          stealthDisadvantage: true,
+        },
+      },
+      {
+        id: 'item_shield',
+        name: 'Crested Heater Shield',
+        category: 'tool' as const,
+        quantity: 1,
+        note: 'Steel kite shield (+2 AC).',
+        rarity: 'common' as const,
+        equipSlot: 'offhand' as const,
+        equipped: true,
+        storage: 'carry' as const,
+        dndStats: {
+          armorCategory: 'shield' as const,
+          acBonus: 2,
+        },
+      },
+      {
+        id: 'item_seal',
+        name: 'Wax-Sealed Royal Writ',
+        category: 'clue' as const,
+        quantity: 1,
+        storage: 'carry' as const,
+        note: 'Grants authority — or paints a target on your back.',
+      },
+      {
+        id: 'item_tonic',
+        name: 'Potion of Healing (Bitterroot)',
+        category: 'consumable' as const,
+        quantity: 2,
+        storage: 'carry' as const,
+        note: 'Bonus Action (2024): restores 2d4+2 HP immediately.',
+        dndStats: { healDice: '2d4+2' },
+      },
+    ];
+    const demoMaxHpEn = computeMaxHpForRuleset('dnd5e_2024', {
+      level: 1,
+      attributes: demoAttrsEn,
+      inventory: demoInventoryEn,
+      dnd: demoDndEn,
+    });
     const player = {
       name: 'James of Larion',
       age: 28,
@@ -1554,18 +1646,19 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       portraitUrl: portraitArt,
       portraitEngine: 'demo' as const,
       level: 1,
-      xp: 25,
-      xpToNextLevel: 100,
+      xp: 45,
+      xpToNextLevel: getXpDeltaForRuleset(1, 'dnd5e_2024'),
       attributePoints: 0,
-      attributes: { str: 15, dex: 12, con: 14, int: 10, wis: 12, cha: 12 },
-      vigor: 108,
-      maxVigor: 116,
+      attributes: demoAttrsEn,
+      vigor: demoMaxHpEn,
+      maxVigor: demoMaxHpEn,
+      inspiration: 1,
       tension: 28,
       traits: ['Honorable', 'Unbroken Oath'],
-      skills: ['Tactical Swordplay', 'Iron Resolve'],
+      skills: ['Athletics', 'Intimidation', 'Perception', 'Insight', 'Persuasion'],
       skillLevels: [
-        { name: 'Tactical Swordplay', level: 2, attribute: 'str' as const, xp: 35 },
-        { name: 'Iron Resolve', level: 1, attribute: 'wis' as const, xp: 15 },
+        { name: 'Athletics', level: 2, attribute: 'str' as const, xp: 35 },
+        { name: 'Insight', level: 1, attribute: 'wis' as const, xp: 15 },
       ],
       talents: [
         {
@@ -1576,33 +1669,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         },
       ],
       currency: { amount: 120, label: 'Gold' },
-      inventory: [
-        {
-          id: 'item_sword',
-          name: 'Larion Steel Longsword',
-          category: 'weapon' as const,
-          quantity: 1,
-          note: 'Engraved with the old royal sigil.',
-          rarity: 'uncommon' as const,
-          equipSlot: 'weapon' as const,
-          equipped: true,
-          bonuses: { str: 1 },
-        },
-        {
-          id: 'item_seal',
-          name: 'Wax-Sealed Royal Writ',
-          category: 'clue' as const,
-          quantity: 1,
-          note: 'Grants authority — or paints a target on your back.',
-        },
-        {
-          id: 'item_tonic',
-          name: 'Bitterroot Field Tonic',
-          category: 'consumable' as const,
-          quantity: 1,
-          note: 'Restores vigor when bruised or bleeding.',
-        },
-      ],
+      inventory: demoInventoryEn,
       quests: [
         {
           id: 'q_princess',
@@ -1613,6 +1680,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         },
       ],
       journal: [],
+      dnd: demoDndEn,
     };
     const codex = {
       npcs: [
@@ -1624,6 +1692,9 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
           status: 'alive' as const,
           affinity: -10,
           relationship: 'stranger' as const,
+          vigor: 14,
+          maxVigor: 14,
+          armorClass: 13,
           lastSeenLocation: 'Briarhollow Village',
           notes: 'Grips a hot poker near the well while keeping eyes fixed on Vespera Woods.',
           firstMetTurn: 0,
@@ -1668,6 +1739,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         risk: 'safe' as const,
         requiresRoll: false,
         attribute: 'cha' as const,
+        skillId: 'persuasion' as const,
         effectTag: 'Bond',
       },
       {
@@ -1677,6 +1749,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         risk: 'safe' as const,
         requiresRoll: false,
         attribute: 'int' as const,
+        skillId: 'investigation' as const,
         effectTag: 'Clue',
       },
       {
@@ -1686,6 +1759,8 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         risk: 'medium' as const,
         requiresRoll: true,
         rollSkillHint: 'Stealth',
+        skillId: 'stealth' as const,
+        dcOverride: 15,
         attribute: 'dex' as const,
         effectTag: 'Explore',
       },
@@ -1695,6 +1770,8 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       id: `camp_demo_larion_${now}`,
       createdAt: now,
       updatedAt: now,
+      ruleset: 'dnd5e_2024',
+      progressionMode: 'xp',
       world: {
         title: 'The Ashes of Larion',
         primaryTheme: 'fantasy',
@@ -1766,6 +1843,93 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
     'Cavaleiro Juramentado',
   );
 
+  const demoAttrsPt = { str: 16, dex: 12, con: 14, int: 10, wis: 12, cha: 12 };
+  const demoDndPt = buildDnd5eSheetFromConfig({
+    classId: 'fighter',
+    speciesId: 'human',
+    backgroundId: 'soldier',
+    level: 1,
+    attributes: demoAttrsPt,
+    chosenSkills: ['athletics', 'intimidation', 'perception', 'insight', 'persuasion'],
+    fightingStyleId: 'style_dueling',
+  });
+  const demoInventoryPt = [
+    {
+      id: 'item_sword',
+      name: 'Espada Longa de Aço de Larion',
+      category: 'weapon' as const,
+      quantity: 1,
+      note: 'Gravada com o selo real · 1d8 cortante · Maestria Minar (desvantagem no próximo ataque inimigo).',
+      rarity: 'uncommon' as const,
+      equipSlot: 'weapon' as const,
+      equipped: true,
+      storage: 'carry' as const,
+      bonuses: { str: 1 },
+      dndStats: {
+        weaponDice: '1d8',
+        versatileDice: '1d10',
+        damageType: 'slashing' as const,
+        properties: ['versatile' as const],
+        mastery: 'sap' as const,
+      },
+    },
+    {
+      id: 'item_chainmail',
+      name: 'Cota de Malha de Larion',
+      category: 'tool' as const,
+      quantity: 1,
+      note: 'Armadura Pesada · CA base 16 (requer FOR 13, Desvantagem em Furtividade).',
+      rarity: 'common' as const,
+      equipSlot: 'armor' as const,
+      equipped: true,
+      storage: 'carry' as const,
+      dndStats: {
+        armorCategory: 'heavy' as const,
+        armorBaseAc: 16,
+        strReq: 13,
+        stealthDisadvantage: true,
+      },
+    },
+    {
+      id: 'item_shield',
+      name: 'Escudo Brasonado de Larion',
+      category: 'tool' as const,
+      quantity: 1,
+      note: 'Escudo de aço temperado (+2 CA).',
+      rarity: 'common' as const,
+      equipSlot: 'offhand' as const,
+      equipped: true,
+      storage: 'carry' as const,
+      dndStats: {
+        armorCategory: 'shield' as const,
+        acBonus: 2,
+      },
+    },
+    {
+      id: 'item_seal',
+      name: 'Salvo-Conduto Real Lacrado',
+      category: 'clue' as const,
+      quantity: 1,
+      storage: 'carry' as const,
+      note: 'Impõe autoridade — ou revela quem você serve.',
+    },
+    {
+      id: 'item_tonic',
+      name: 'Poção de Cura (Raiz Amarga)',
+      category: 'consumable' as const,
+      quantity: 2,
+      storage: 'carry' as const,
+      note: 'Ação Bônus (2024): recupera 2d4+2 PV imediatamente.',
+      dndStats: { healDice: '2d4+2' },
+    },
+  ];
+  const demoMaxHpPt = computeMaxHpForRuleset('dnd5e_2024', {
+    level: 1,
+    attributes: demoAttrsPt,
+    inventory: demoInventoryPt,
+    dnd: demoDndPt,
+  });
+
   const player = {
     name: 'James de Larion',
     age: 28,
@@ -1773,18 +1937,19 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
     portraitUrl: portraitArtPt,
     portraitEngine: 'demo' as const,
     level: 1,
-    xp: 25,
-    xpToNextLevel: 100,
+    xp: 45,
+    xpToNextLevel: getXpDeltaForRuleset(1, 'dnd5e_2024'),
     attributePoints: 0,
-    attributes: { str: 15, dex: 12, con: 14, int: 10, wis: 12, cha: 12 },
-    vigor: 108,
-    maxVigor: 116,
+    attributes: demoAttrsPt,
+    vigor: demoMaxHpPt,
+    maxVigor: demoMaxHpPt,
+    inspiration: 1,
     tension: 28,
     traits: ['Honrado', 'Juramento Inabalável'],
-    skills: ['Esgrima Tática', 'Vontade Inabalável'],
+    skills: ['Atletismo', 'Intimidação', 'Percepção', 'Intuição', 'Persuasão'],
     skillLevels: [
-      { name: 'Esgrima Tática', level: 2, attribute: 'str' as const, xp: 35 },
-      { name: 'Vontade Inabalável', level: 1, attribute: 'wis' as const, xp: 15 },
+      { name: 'Atletismo', level: 2, attribute: 'str' as const, xp: 35 },
+      { name: 'Intuição', level: 1, attribute: 'wis' as const, xp: 15 },
     ],
     talents: [
       {
@@ -1795,33 +1960,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       },
     ],
     currency: { amount: 120, label: 'Ouro' },
-    inventory: [
-      {
-        id: 'item_sword',
-        name: 'Espada de Aço de Larion',
-        category: 'weapon' as const,
-        quantity: 1,
-        note: 'Gravada com o antigo selo real.',
-        rarity: 'uncommon' as const,
-        equipSlot: 'weapon' as const,
-        equipped: true,
-        bonuses: { str: 1 },
-      },
-      {
-        id: 'item_seal',
-        name: 'Salvo-Conduto Real Lacrado',
-        category: 'clue' as const,
-        quantity: 1,
-        note: 'Impõe autoridade — ou revela quem você serve.',
-      },
-      {
-        id: 'item_tonic',
-        name: 'Tônico de Raiz Amarga',
-        category: 'consumable' as const,
-        quantity: 1,
-        note: 'Recupera vigor após confrontos ou veneno leve.',
-      },
-    ],
+    inventory: demoInventoryPt,
     quests: [
       {
         id: 'q_princess',
@@ -1832,6 +1971,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       },
     ],
     journal: [],
+    dnd: demoDndPt,
   };
   const codex = {
     npcs: [
@@ -1843,6 +1983,9 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
         status: 'alive' as const,
         affinity: -10,
         relationship: 'stranger' as const,
+        vigor: 14,
+        maxVigor: 14,
+        armorClass: 13,
         lastSeenLocation: 'Aldeia de Briarhollow',
         notes: 'Segura um ferro em brasa perto do poço sem tirar os olhos da Floresta de Vespera.',
         firstMetTurn: 0,
@@ -1887,6 +2030,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       risk: 'safe' as const,
       requiresRoll: false,
       attribute: 'cha' as const,
+      skillId: 'persuasion' as const,
       effectTag: 'Vínculo',
     },
     {
@@ -1896,6 +2040,7 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       risk: 'safe' as const,
       requiresRoll: false,
       attribute: 'int' as const,
+      skillId: 'investigation' as const,
       effectTag: 'Pista',
     },
     {
@@ -1905,6 +2050,8 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
       risk: 'medium' as const,
       requiresRoll: true,
       rollSkillHint: 'Furtividade',
+      skillId: 'stealth' as const,
+      dcOverride: 15,
       attribute: 'dex' as const,
       effectTag: 'Explorar',
     },
@@ -1914,6 +2061,8 @@ export function createInstantDemoCampaign(language: LanguageId = 'pt-BR'): Campa
     id: `camp_demo_larion_${now}`,
     createdAt: now,
     updatedAt: now,
+    ruleset: 'dnd5e_2024',
+    progressionMode: 'xp',
     world: {
       title: 'As Cinzas de Larion',
       primaryTheme: 'fantasy',

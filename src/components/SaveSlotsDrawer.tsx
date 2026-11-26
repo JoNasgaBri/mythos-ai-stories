@@ -168,7 +168,9 @@ export function SaveSlotsDrawer({
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <Heart className="h-3 w-3 text-[var(--danger)]" />
-                          {slot.vigor}%
+                          {slot.snapshot?.ruleset === 'dnd5e_2024'
+                            ? `${slot.vigor}/${slot.maxVigor ?? slot.snapshot.player.maxVigor} PV`
+                            : `${Math.round((slot.vigor / Math.max(1, slot.maxVigor ?? slot.snapshot?.player?.maxVigor ?? 100)) * 100)}%`}
                         </span>
                       </div>
                     </div>

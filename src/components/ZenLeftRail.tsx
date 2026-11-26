@@ -16,6 +16,7 @@ import {
   Radio,
   Save,
   Shield,
+  Swords,
   X,
   Zap,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ interface ZenLeftRailProps {
   onOpenMap: () => void;
   onOpenTimeline?: () => void;
   timelineBranchCount?: number;
+  onOpenClashLauncher?: () => void;
   onOpenRest: () => void;
   onOpenSaves: () => void;
   onOpenOrTriggerWorldEvent?: () => void;
@@ -86,6 +88,7 @@ export function ZenLeftRail({
   onOpenMap,
   onOpenTimeline,
   timelineBranchCount = 1,
+  onOpenClashLauncher,
   onOpenRest,
   onOpenSaves,
   onOpenOrTriggerWorldEvent,
@@ -187,16 +190,45 @@ export function ZenLeftRail({
             label: campaign.activeWorldEvent
               ? 'Evento Pendente!'
               : 'Evento do Mundo',
-            subtitle: isGeneratingEvent
-              ? 'Gerando dilema...'
-              : campaign.activeWorldEvent
-                ? campaign.activeWorldEvent.title
-                : 'Disparar dilema vivo',
+            subtitle:
+              campaign.activeClash?.status === 'active'
+                ? 'Pausado no confronto'
+                : isGeneratingEvent
+                  ? 'Gerando dilema...'
+                  : campaign.activeWorldEvent
+                    ? campaign.activeWorldEvent.title
+                    : 'Disparar dilema vivo',
             icon: Zap,
             accent: '#fbbf24',
             badge: campaign.activeWorldEvent ? 1 : undefined,
-            disabled: isBusy || isGeneratingEvent,
+            disabled:
+              isBusy ||
+              isGeneratingEvent ||
+              campaign.activeClash?.status === 'active',
             onClick: onOpenOrTriggerWorldEvent,
+          },
+        ]
+      : []),
+    ...(campaign.status === 'active' && onOpenClashLauncher
+      ? [
+          {
+            id: 'clash',
+            label:
+              campaign.activeClash?.status === 'active'
+                ? 'Confronto Ativo!'
+                : 'Confronto Tático',
+            subtitle:
+              campaign.activeClash?.status === 'active'
+                ? `Rodada ${campaign.activeClash.round} · ${campaign.activeClash.title}`
+                : 'Combate · Fuga · Social · Cerco',
+            icon: Swords,
+            accent: '#f87171',
+            badge:
+              campaign.activeClash?.status === 'active'
+                ? campaign.activeClash.round
+                : undefined,
+            disabled: isBusy,
+            onClick: onOpenClashLauncher,
           },
         ]
       : []),
@@ -249,10 +281,13 @@ export function ZenLeftRail({
           {
             id: 'rest',
             label: 'Descansar',
-            subtitle: 'Pausa curta / longa',
+            subtitle:
+              campaign.activeClash?.status === 'active'
+                ? 'Indisponível em confronto'
+                : 'Pausa curta / longa',
             icon: Flame,
             accent: '#f59e0b',
-            disabled: isBusy,
+            disabled: isBusy || campaign.activeClash?.status === 'active',
             onClick: onOpenRest,
           },
         ]

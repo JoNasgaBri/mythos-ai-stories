@@ -727,20 +727,130 @@ export function demoTurnStory(
   diceRoll: DiceRollResult | undefined,
   length: ResponseLength,
   crisisMode?: 'survival_test' | 'breaking_point',
+  clashRoundContext?: string,
 ): StoryTurnResponse {
   const pack = THEME_PACKS[campaign.world.primaryTheme];
   const lang = campaign.language;
   const locations = pack.locations[lang];
-  const movedLocation = campaign.turnCount % 3 === 2;
+  const inClash = Boolean(clashRoundContext || campaign.activeClash?.status === 'active');
+  const movedLocation = !inClash && campaign.turnCount % 3 === 2;
   const locObj = movedLocation
     ? locations[(campaign.turnCount + 1) % locations.length]
     : undefined;
   const nextLocation = locObj?.name ?? campaign.currentLocation;
 
+  // Dedicated rich tactical narration when inside an active Tactical Clash (no teleport, no duplicate damage!)
+  if (inClash) {
+    const clash = campaign.activeClash;
+    const roundEventsMatch = clashRoundContext?.match(/Round Events:\s*(.+)/);
+    const roundSummary = roundEventsMatch
+      ? roundEventsMatch[1].trim()
+      : `${campaign.player.name} executa "${playerAction}" no calor do confronto.`;
+    const endedMatch = clashRoundContext?.match(/Status after round:\s*(\w+)/);
+    const statusAfter = endedMatch?.[1] ?? 'ACTIVE';
+    const isEnded = statusAfter !== 'ACTIVE';
+    const arch = clash?.archetype ?? 'combat';
+
+    const flavor =
+      arch === 'social'
+        ? lang === 'en'
+          ? `The room goes razor-quiet in ${nextLocation}. Every phrase lands like a blade on the table.`
+          : `O ambiente em ${nextLocation} fica tenso como vidro prestes a trincar. Cada palavra pesa na sala.`
+        : arch === 'chase'
+          ? lang === 'en'
+            ? `Footsteps echo through ${nextLocation} as every turn and bottleneck tests your reflexes.`
+            : `O ritmo acelera por ${nextLocation} enquanto cada esquina e obstáculo testa seus reflexos ao limite.`
+          : arch === 'siege'
+            ? lang === 'en'
+              ? `The perimeter in ${nextLocation} shudders under relentless pressure as the line holds.`
+              : `O perímetro em ${nextLocation} treme sob a pressão da onda enquanto vocês seguram a posição.`
+            : lang === 'en'
+              ? `Steel, grit, and split-second timing collide across ${nextLocation}.`
+              : `Impacto, reflexos e leitura tática colidem em ${nextLocation}.`;
+
+    const closing = isEnded
+      ? statusAfter === 'VICTORY' || statusAfter === 'ESCAPED'
+        ? lang === 'en'
+          ? `The tide breaks decisively in your favor — the immediate threat collapses and you catch your breath.`
+          : `A maré vira de vez a seu favor! A ameaça cede terreno e o silêncio volta a tomar conta do local enquanto você recupera o fôlego.`
+        : lang === 'en'
+          ? `The pressure overwhelms your position, forcing a costly turning point.`
+          : `A pressão rompe sua linha defensiva, forçando uma virada custosa na cena.`
+      : lang === 'en'
+        ? `Your opponents brace for their next telegraphed move — the initiative is back in your hands.`
+        : `Os adversários ajustam a postura para a próxima intenção telegrafada — a iniciativa volta para suas mãos.`;
+
+    return {
+      sceneTitle: isEnded
+        ? statusAfter === 'ESCAPED'
+          ? 'Fuga Concluída'
+          : statusAfter === 'VICTORY'
+            ? 'Confronto Vencido'
+            : 'Revés no Confronto'
+        : clash?.title || `Confronto em ${nextLocation}`,
+      location: nextLocation,
+      mood: isEnded ? 'Pós-Confronto' : 'Adrenalina Tática',
+      narration: [
+        `${flavor} ${campaign.player.name}: *${playerAction}*.`,
+        roundSummary,
+        closing,
+      ].join('\n\n'),
+      actions: isEnded
+        ? buildFollowupActions(campaign.world.primaryTheme, lang)
+        : [
+            {
+              label:
+                arch === 'social'
+                  ? 'Pressionar a brecha no argumento do oponente'
+                  : arch === 'chase'
+                    ? 'Forçar uma arrancada pelo próximo atalho'
+                    : 'Avançar para explorar a abertura na guarda',
+              intent: arch === 'social' ? 'diplomatic' : 'bold',
+              risk: 'medium',
+              requiresRoll: true,
+              attribute: arch === 'social' ? 'cha' : 'dex',
+              effectTag: 'Confronto',
+            },
+            {
+              label:
+                arch === 'social'
+                  ? 'Ler as microexpressões e expor uma contradição'
+                  : 'Usar o cenário ao redor para quebrar o ritmo inimigo',
+              intent: 'investigate',
+              risk: 'medium',
+              requiresRoll: true,
+              attribute: arch === 'social' ? 'int' : 'wis',
+              effectTag: 'Postura',
+            },
+            {
+              label: 'Recuar para cobertura e reorganizar a equipe',
+              intent: 'survival',
+              risk: 'safe',
+              requiresRoll: false,
+              attribute: 'con',
+              effectTag: 'Defesa',
+            },
+          ],
+      stateChanges: {
+        vigorDelta: 0,
+        tensionDelta: 0,
+        xpGain: isEnded && (statusAfter === 'VICTORY' || statusAfter === 'ESCAPED') ? 20 : 10,
+      },
+      waitingForResponse: true,
+      engineUsed: 'demo',
+    };
+  }
+
   const normalized = playerAction.toLowerCase();
   const usedItem = campaign.player.inventory.find((item) =>
     normalized.includes(item.name.toLowerCase()),
   );
+
+  const isDnd = campaign.ruleset === 'dnd5e_2024';
+  const dmgPartial = isDnd ? -Math.max(1, Math.min(3, Math.ceil(campaign.player.maxVigor * 0.16))) : -8;
+  const dmgFailure = isDnd ? -Math.max(2, Math.min(5, Math.ceil(campaign.player.maxVigor * 0.25))) : -15;
+  const dmgCritFail = isDnd ? -Math.max(3, Math.min(6, Math.ceil(campaign.player.maxVigor * 0.35))) : -24;
+  const potionHeal = isDnd ? Math.floor(Math.random() * 4) + 1 + Math.floor(Math.random() * 4) + 1 + 2 : 22;
 
   const outcome = diceRoll?.outcome ?? 'success';
   const stateChanges: AiStateChanges = {
@@ -748,11 +858,11 @@ export function demoTurnStory(
     tensionDelta: 0,
     xpGain: diceRoll
       ? outcome === 'critical_success'
-        ? 45
+        ? (isDnd ? 75 : 45)
         : outcome === 'success'
-          ? 30
-          : 15
-      : 20,
+          ? (isDnd ? 50 : 30)
+          : (isDnd ? 25 : 15)
+      : (isDnd ? 35 : 20),
   };
 
   if (/\b(trein|pratic|estud|exercit|train|practice|study)\b/i.test(normalized)) {
@@ -848,15 +958,15 @@ export function demoTurnStory(
       stateChanges.tensionDelta = 4;
     } else if (outcome === 'partial') {
       outcomeLine = `Você consegue o que queria pela metade, mas o preço é imediato: um ruído denuncia sua posição ou um aliado relutante passa a cobrar um favor caro.`;
-      stateChanges.vigorDelta = -8;
+      stateChanges.vigorDelta = dmgPartial;
       stateChanges.tensionDelta = 12;
     } else if (outcome === 'failure') {
       outcomeLine = `A tentativa tropeça na resistência do local. A resposta vem rápida e áspera, forçando ${campaign.player.name} a absorver o impacto e repensar a rota.`;
-      stateChanges.vigorDelta = -15;
+      stateChanges.vigorDelta = dmgFailure;
       stateChanges.tensionDelta = 16;
     } else {
       outcomeLine = `Tudo desmorona no pior segundo possível — o risco se volta contra você com brutalidade, deixando cicatriz na cena e elevando o perigo ao limite.`;
-      stateChanges.vigorDelta = -24;
+      stateChanges.vigorDelta = dmgCritFail;
       stateChanges.tensionDelta = 22;
     }
   } else if (lang === 'fr') {
@@ -864,7 +974,7 @@ export function demoTurnStory(
       outcome === 'failure' || outcome === 'critical_failure'
         ? `Votre manœuvre se heurte à une riposte brutale, mettant ${campaign.player.name} sous pression immédiate.`
         : `Votre geste porte ses fruits avec précision, révélant une nouvelle faille dans la situation.`;
-    stateChanges.vigorDelta = outcome === 'failure' ? -14 : outcome === 'critical_failure' ? -22 : 0;
+    stateChanges.vigorDelta = outcome === 'failure' ? dmgFailure : outcome === 'critical_failure' ? dmgCritFail : 0;
     stateChanges.tensionDelta = outcome === 'critical_success' ? -8 : 10;
   } else {
     if (outcome === 'critical_success') {
@@ -875,15 +985,15 @@ export function demoTurnStory(
       stateChanges.tensionDelta = 4;
     } else if (outcome === 'partial') {
       outcomeLine = `You secure half of what you wanted at an immediate cost—your margin narrows and someone nearby catches your scent.`;
-      stateChanges.vigorDelta = -8;
+      stateChanges.vigorDelta = dmgPartial;
       stateChanges.tensionDelta = 12;
     } else if (outcome === 'failure') {
       outcomeLine = `The attempt runs straight into hard resistance. The backlash forces ${campaign.player.name} back a step, bruised and exposed.`;
-      stateChanges.vigorDelta = -15;
+      stateChanges.vigorDelta = dmgFailure;
       stateChanges.tensionDelta = 16;
     } else {
       outcomeLine = `Everything snaps in the worst possible second—the gamble backfires hard and turns the room sharply hostile.`;
-      stateChanges.vigorDelta = -24;
+      stateChanges.vigorDelta = dmgCritFail;
       stateChanges.tensionDelta = 22;
     }
   }
@@ -892,13 +1002,14 @@ export function demoTurnStory(
   if (usedItem) {
     if (usedItem.category === 'consumable') {
       stateChanges.removeItems = [usedItem.name];
-      stateChanges.vigorDelta = (stateChanges.vigorDelta ?? 0) + 22;
+      stateChanges.vigorDelta = (stateChanges.vigorDelta ?? 0) + potionHeal;
+      const hpUnit = isDnd ? 'PV' : 'Vigor';
       itemParagraph =
         lang === 'en'
-          ? `Using **${usedItem.name}** steadies your pulse right when you need it most (+22 Vigor).`
+          ? `Using **${usedItem.name}** steadies your pulse right when you need it most (+${potionHeal} ${isDnd ? 'HP' : 'Vigor'}).`
           : lang === 'fr'
-            ? `Utiliser **${usedItem.name}** stabilise votre souffle au moment critique.`
-            : `Ao usar **${usedItem.name}**, você sente o fôlego retornar e a visão clarear no instante decisivo (+22 Vigor).`;
+            ? `Utiliser **${usedItem.name}** stabilise votre souffle au moment critique (+${potionHeal} PV).`
+            : `Ao usar **${usedItem.name}**, você sente o fôlego retornar e a visão clarear no instante decisivo (+${potionHeal} ${hpUnit}).`;
     } else {
       itemParagraph =
         lang === 'en'
@@ -1050,6 +1161,23 @@ export function demoTurnStory(
     );
   }
 
+  const shouldSuggestClash =
+    !inClash &&
+    campaign.turnCount >= 1 &&
+    (crisisMode === 'breaking_point' ||
+      /\b(atac|lut|enfrent|dispar|embosc|fugir|perseg|interrog|duelo|horda|cerco|attack|fight|chase|duel)\b/i.test(
+        normalized,
+      ));
+
+  const suggestedClashArchetype =
+    /\b(fugir|correr|perseg|escap|chase)\b/i.test(normalized)
+      ? ('chase' as const)
+      : /\b(interrog|acus|tribunal|negoci|duelo\s+verbal|blef)\b/i.test(normalized)
+        ? ('social' as const)
+        : /\b(horda|cerco|onda|barricada|siege)\b/i.test(normalized)
+          ? ('siege' as const)
+          : ('combat' as const);
+
   return {
     sceneTitle:
       crisisMode === 'breaking_point'
@@ -1083,6 +1211,14 @@ export function demoTurnStory(
     narration: paragraphs.join('\n\n'),
     actions: buildFollowupActions(campaign.world.primaryTheme, lang),
     stateChanges,
+    suggestedClash: shouldSuggestClash
+      ? {
+          archetype: suggestedClashArchetype,
+          title: `Confronto em ${nextLocation}`,
+          reason:
+            'A cena escalou! Ative o Modo Confronto Tático para controlar postura, zonas, terreno e sua equipe.',
+        }
+      : null,
     waitingForResponse: true,
     engineUsed: 'demo',
   };

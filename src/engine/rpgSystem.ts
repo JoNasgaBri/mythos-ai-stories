@@ -85,18 +85,18 @@ export const ATTRIBUTE_META: Record<
     short: { 'pt-BR': 'INT', en: 'INT', fr: 'INT' },
     full: { 'pt-BR': 'Inteligência', en: 'Intelligence', fr: 'Intelligence' },
     hint: {
-      'pt-BR': 'Investigação, hacking, medicina, ciência, arcano e finanças.',
-      en: 'Investigation, hacking, medicine, lore, science, and finance.',
-      fr: 'Enquête, piratage, médecine, savoir et finance.',
+      'pt-BR': 'Investigação, arcanismo, história, natureza, religião, hacking e ciência.',
+      en: 'Investigation, arcana, history, nature, religion, hacking, and science.',
+      fr: 'Enquête, arcanes, histoire, nature, piratage et science.',
     },
   },
   wis: {
     short: { 'pt-BR': 'SAB', en: 'WIS', fr: 'SAG' },
     full: { 'pt-BR': 'Sabedoria', en: 'Wisdom', fr: 'Sagesse' },
     hint: {
-      'pt-BR': 'Percepção, intuição (ler mentiras), sobrevivência e força de vontade.',
-      en: 'Perception, insight, survival instincts, and willpower.',
-      fr: 'Perception, intuition, survie et volonté.',
+      'pt-BR': 'Percepção, intuição, medicina, sobrevivência, trato animal e força de vontade.',
+      en: 'Perception, insight, medicine, survival, animal handling, and willpower.',
+      fr: 'Perception, intuition, médecine, survie et volonté.',
     },
   },
   cha: {
@@ -112,8 +112,9 @@ export const ATTRIBUTE_META: Record<
 
 export const MAX_LEVEL = 20;
 export const NATURAL_ATTRIBUTE_CAP = 20;
+export const EPIC_BOON_ATTRIBUTE_CAP = 30;
 export const EQUIPMENT_ATTRIBUTE_CAP = 24;
-export const ASI_LEVELS = [4, 8, 12, 16, 20] as const;
+export const ASI_LEVELS = [4, 8, 12, 16, 19] as const;
 
 export const POINT_BUY_BUDGET = 27;
 export const POINT_BUY_MIN = 8;
@@ -366,7 +367,7 @@ export function getPresetAttributesForArchetype(
     return { str: 10, dex: 15, con: 12, int: 14, wis: 12, cha: 10 };
   }
   if (/(wizard|witch|scientist|doctor|mage|scholar|detective)/.test(id)) {
-    return { str: 8, dex: 12, con: 12, int: 15, wis: 14, cha: 12 };
+    return { str: 8, dex: 12, con: 12, int: 15, wis: 13, cha: 12 };
   }
   if (/(noble|princess|diplomat|bard|broker|cop)/.test(id)) {
     return { str: 10, dex: 12, con: 12, int: 12, wis: 12, cha: 15 };
@@ -885,9 +886,9 @@ export const STRONGHOLD_UPGRADE_CATALOG: StrongholdBlueprintUpgrade[] = [
       fr: 'Kits médicaux et vivres pour une récupération complète.',
     },
     bonusLabel: {
-      'pt-BR': '+25 Vigor extra em todo Descanso Longo',
-      en: '+25 extra Vigor on every Long Rest',
-      fr: '+25 Vigueur bonus à chaque Repos Long',
+      'pt-BR': '+Nível+PB de PV Temp após Descanso Longo (ou +25 Vigor no legado)',
+      en: '+Level+PB Temp HP after Long Rest (+25 Vigor in legacy)',
+      fr: '+Niveau+PB PV Temp après Repos Long',
     },
     cost: 150,
     defenseGain: 10,

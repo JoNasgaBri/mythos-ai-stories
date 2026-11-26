@@ -2,7 +2,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  Camera,
   Check,
   Compass,
   Dices,
@@ -10,16 +9,19 @@ import {
   Flame,
   KeyRound,
   Loader2,
-  Minus,
   Plus,
   Scale,
   Shield,
   Sparkles,
-  User,
   Wand2,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import {
+  DND_BACKGROUNDS,
+  DND_CLASSES,
+  STANDARD_ARRAY,
+} from '../data/dnd52Catalog';
 import {
   DIFFICULTIES,
   RANDOM_PROTAGONISTS,
@@ -29,20 +31,27 @@ import {
   type FactionSeed,
 } from '../data/presets';
 import {
+  buildDefaultDndStarterGear,
+  buildDnd5eSheetFromConfig,
+  computeArmorClass,
+  computeMaxHpForRuleset,
+  getThemedClassLabel,
+  getThemedSkillLabel,
+  getThemedSpeciesLabel,
+  getXpDeltaForRuleset,
+  inferDndClassFromLegacy,
+  roll4d6AbilityArray,
+} from '../engine/dnd52Rules';
+import {
   ATTRIBUTE_KEYS,
-  ATTRIBUTE_META,
-  computeMaxVigor,
   computePointBuySpent,
   defaultCurrencyForTheme,
-  formatModifier,
-  getAttributeModifier,
   getPresetAttributesForArchetype,
   inferEquipSlotFromCategory,
   POINT_BUY_BUDGET,
   POINT_BUY_MAX,
   POINT_BUY_MIN,
   syncSkillLevels,
-  xpRequiredForLevel,
 } from '../engine/rpgSystem';
 import {
   requestForgeWorld,
@@ -56,13 +65,95 @@ import type {
   Campaign,
   CharacterAttributes,
   DifficultyId,
+  DndBackgroundId,
+  DndClassId,
+  DndSkillId,
+  DndSpeciesId,
   ForgeArchitectMode,
   InventoryItem,
   LanguageId,
+  PlayerState,
   ResponseLength,
   StoryPace,
+  WeaponMasteryId,
   WorldThemeId,
 } from '../types/game';
+import { PixelHeroSprite, type HeroSpriteId } from './PixelBattleSprites';
+import { WorldForgeDndStep2 } from './WorldForgeDndStep2';
+
+interface ArchetypeDndPreset {
+  classId: DndClassId;
+  speciesId: DndSpeciesId;
+  backgroundId: DndBackgroundId;
+  spriteId: HeroSpriteId;
+}
+
+const ARCHETYPE_DND_MAP: Record<string, ArchetypeDndPreset> = {
+  knight: { classId: 'fighter', speciesId: 'human', backgroundId: 'soldier', spriteId: 'knight' },
+  witch: { classId: 'warlock', speciesId: 'tiefling', backgroundId: 'sage', spriteId: 'mage' },
+  rogue: { classId: 'rogue', speciesId: 'elf', backgroundId: 'criminal', spriteId: 'rogue' },
+  ranger: { classId: 'ranger', speciesId: 'elf', backgroundId: 'wayfarer', spriteId: 'ranger' },
+  cyborg: { classId: 'fighter', speciesId: 'goliath', backgroundId: 'soldier', spriteId: 'cyber_ronin' },
+  punk: { classId: 'wizard', speciesId: 'human', backgroundId: 'operative', spriteId: 'netrunner' },
+  cop: { classId: 'paladin', speciesId: 'human', backgroundId: 'operative', spriteId: 'detective' },
+  android: { classId: 'monk', speciesId: 'gnome', backgroundId: 'sage', spriteId: 'netrunner' },
+  detective: { classId: 'rogue', speciesId: 'human', backgroundId: 'operative', spriteId: 'detective' },
+  spy: { classId: 'bard', speciesId: 'elf', backgroundId: 'criminal', spriteId: 'rogue' },
+  doctor: { classId: 'cleric', speciesId: 'human', backgroundId: 'medic', spriteId: 'detective' },
+  socialite: { classId: 'bard', speciesId: 'human', backgroundId: 'noble_envoy', spriteId: 'detective' },
+  survivor: { classId: 'ranger', speciesId: 'human', backgroundId: 'scavenger', spriteId: 'survivor' },
+  medic: { classId: 'cleric', speciesId: 'human', backgroundId: 'medic', spriteId: 'survivor' },
+  scavenger: { classId: 'rogue', speciesId: 'halfling', backgroundId: 'scavenger', spriteId: 'rogue' },
+  soldier: { classId: 'fighter', speciesId: 'human', backgroundId: 'soldier', spriteId: 'survivor' },
+  nomad: { classId: 'ranger', speciesId: 'orc', backgroundId: 'wayfarer', spriteId: 'survivor' },
+  engineer: { classId: 'wizard', speciesId: 'dwarf', backgroundId: 'artisan', spriteId: 'survivor' },
+  raider: { classId: 'barbarian', speciesId: 'orc', backgroundId: 'soldier', spriteId: 'survivor' },
+  oracle: { classId: 'sorcerer', speciesId: 'tiefling', backgroundId: 'acolyte', spriteId: 'mage' },
+};
+
+function resolveArchetypeDnd(archId: string, theme: WorldThemeId): ArchetypeDndPreset {
+  if (ARCHETYPE_DND_MAP[archId]) return ARCHETYPE_DND_MAP[archId];
+  const fallbackSprite: HeroSpriteId =
+    theme === 'cyberpunk'
+      ? 'cyber_ronin'
+      : theme === 'mystery'
+        ? 'detective'
+        : theme === 'zombies' || theme === 'apocalyptic'
+          ? 'survivor'
+          : 'knight';
+  return {
+    classId: 'fighter',
+    speciesId: 'human',
+    backgroundId: theme === 'cyberpunk' ? 'operative' : theme === 'mystery' ? 'operative' : 'soldier',
+    spriteId: fallbackSprite,
+  };
+}
+
+function getSpriteForDndClass(classId: DndClassId, theme: WorldThemeId): HeroSpriteId {
+  if (theme === 'cyberpunk') {
+    return classId === 'wizard' || classId === 'sorcerer' || classId === 'warlock' || classId === 'cleric'
+      ? 'netrunner'
+      : 'cyber_ronin';
+  }
+  if (theme === 'mystery') {
+    return classId === 'wizard' || classId === 'sorcerer' || classId === 'warlock'
+      ? 'mage'
+      : 'detective';
+  }
+  if (theme === 'zombies' || theme === 'apocalyptic') {
+    if (classId === 'rogue') return 'rogue';
+    if (classId === 'barbarian') return 'barbarian';
+    return 'survivor';
+  }
+  if (classId === 'barbarian') return 'barbarian';
+  if (classId === 'paladin') return 'paladin';
+  if (classId === 'cleric') return 'cleric';
+  if (classId === 'bard') return 'bard';
+  if (classId === 'rogue' || classId === 'monk') return 'rogue';
+  if (classId === 'ranger' || classId === 'druid') return 'ranger';
+  if (classId === 'wizard' || classId === 'sorcerer' || classId === 'warlock') return 'mage';
+  return 'knight';
+}
 
 const ARCHITECT_SPARKS: Record<
   LanguageId,
@@ -177,14 +268,39 @@ export function WorldForge({
   const [newFactionDesc, setNewFactionDesc] = useState('');
   const [matureMode, setMatureMode] = useState(true);
 
-  // Step 2 — Protagonist state
+  // Step 2 — Protagonist & D&D 5.2 (2024) state
   const initialArch = WORLD_THEMES.fantasy.archetypes[0];
+  const initialDndPreset = resolveArchetypeDnd(initialArch.id, 'fantasy');
+  const [forgeMode, setForgeMode] = useState<'quick' | 'custom'>('quick');
+  const [customSubTab, setCustomSubTab] = useState<'class' | 'stats' | 'skills' | 'magic'>('class');
   const [selectedArchetypeId, setSelectedArchetypeId] = useState(initialArch.id);
+  const [dndClassId, setDndClassId] = useState<DndClassId>(initialDndPreset.classId);
+  const [dndSpeciesId, setDndSpeciesId] = useState<DndSpeciesId>(initialDndPreset.speciesId);
+  const [dndBackgroundId, setDndBackgroundId] = useState<DndBackgroundId>(initialDndPreset.backgroundId);
+  const [statMethod, setStatMethod] = useState<'standard' | 'pointbuy' | 'roll4d6'>('pointbuy');
+  const [bgPlusTwo, setBgPlusTwo] = useState<AttributeId>(
+    DND_BACKGROUNDS[initialDndPreset.backgroundId].abilityOptions[0] ?? 'str',
+  );
+  const [bgPlusOne, setBgPlusOne] = useState<AttributeId>(
+    DND_BACKGROUNDS[initialDndPreset.backgroundId].abilityOptions[1] ?? 'con',
+  );
+  const [chosenClassSkills, setChosenClassSkills] = useState<DndSkillId[]>(
+    () => [...DND_CLASSES[initialDndPreset.classId].defaultSkills],
+  );
+  const [chosenExpertise, setChosenExpertise] = useState<DndSkillId[]>([]);
+  const [chosenCantrips, setChosenCantrips] = useState<string[]>(
+    () => [...DND_CLASSES[initialDndPreset.classId].defaultCantrips],
+  );
+  const [chosenSpells, setChosenSpells] = useState<string[]>(
+    () => [...DND_CLASSES[initialDndPreset.classId].defaultSpells],
+  );
+  const [chosenFightingStyle, setChosenFightingStyle] = useState<string>('style_dueling');
+  const [chosenMasteries, setChosenMasteries] = useState<WeaponMasteryId[]>(['sap', 'push', 'topple']);
   const [playerName, setPlayerName] = useState('Theron Vale');
   const [playerAge, setPlayerAge] = useState(29);
   const [occupation, setOccupation] = useState(initialArch.label[lang]);
   const [traits, setTraits] = useState<string[]>(initialArch.traits[lang]);
-  const [skills, setSkills] = useState<string[]>(initialArch.skills[lang]);
+  const [, setSkills] = useState<string[]>(initialArch.skills[lang]);
   const [attributes, setAttributes] = useState<CharacterAttributes>(() =>
     getPresetAttributesForArchetype(initialArch.id, 'fantasy'),
   );
@@ -203,7 +319,6 @@ export function WorldForge({
     equipped: initialArch.starterItem.category === 'weapon',
   });
   const [customTrait, setCustomTrait] = useState('');
-  const [customSkill, setCustomSkill] = useState('');
   const [portraitUrl, setPortraitUrl] = useState<string | undefined>(undefined);
   const [portraitEngine, setPortraitEngine] = useState<'gemini' | 'demo' | undefined>(undefined);
   const [isGeneratingPortrait, setIsGeneratingPortrait] = useState(false);
@@ -244,16 +359,127 @@ export function WorldForge({
 
   const themePreset = WORLD_THEMES[primaryTheme];
   const geminiConnected = shouldUseGemini(settings, apiHealth);
+  const useClassicDnd = Boolean(settings.useClassicDndNames);
 
   const pointsSpent = computePointBuySpent(attributes);
   const pointsRemaining = POINT_BUY_BUDGET - pointsSpent;
+
+  const selectedDndClass = DND_CLASSES[dndClassId];
+  const selectedDndBg = DND_BACKGROUNDS[dndBackgroundId];
+
+  // Final Level 1 attributes including 2024 Background +2 / +1 bonuses
+  const finalAttributes: CharacterAttributes = ATTRIBUTE_KEYS.reduce((acc, k) => {
+    const bonus = (k === bgPlusTwo ? 2 : 0) + (k === bgPlusOne ? 1 : 0);
+    acc[k] = Math.min(18, Math.max(8, (attributes[k] ?? 10) + bonus));
+    return acc;
+  }, {} as CharacterAttributes);
+
+  const previewDnd = buildDnd5eSheetFromConfig({
+    classId: dndClassId,
+    speciesId: dndSpeciesId,
+    backgroundId: dndBackgroundId,
+    level: 1,
+    attributes: finalAttributes,
+    chosenSkills: chosenClassSkills,
+    chosenExpertise: chosenExpertise.length > 0 ? chosenExpertise : undefined,
+    chosenCantrips: chosenCantrips.length > 0 ? chosenCantrips : undefined,
+    chosenSpells: chosenSpells.length > 0 ? chosenSpells : undefined,
+    fightingStyleId: dndClassId === 'fighter' ? chosenFightingStyle : undefined,
+  });
+  if (selectedDndClass.weaponMasteryCount > 0 && chosenMasteries.length > 0) {
+    previewDnd.weaponMasteries = chosenMasteries.slice(0, selectedDndClass.weaponMasteryCount);
+  }
+  const previewGear = buildDefaultDndStarterGear(dndClassId, primaryTheme, useClassicDnd);
+  const previewPlayerStub = {
+    level: 1,
+    attributes: finalAttributes,
+    inventory: previewGear,
+    dnd: previewDnd,
+  } as PlayerState;
+  const previewMaxHp = computeMaxHpForRuleset('dnd5e_2024', previewPlayerStub);
+  const previewAc = computeArmorClass(previewPlayerStub).ac;
+  const previewSpriteId: HeroSpriteId =
+    forgeMode === 'quick'
+      ? resolveArchetypeDnd(selectedArchetypeId, primaryTheme).spriteId
+      : getSpriteForDndClass(dndClassId, primaryTheme);
+
+  const selectDndClass = (nextClassId: DndClassId) => {
+    const cls = DND_CLASSES[nextClassId];
+    setDndClassId(nextClassId);
+    setChosenClassSkills([...cls.defaultSkills]);
+    setChosenExpertise([]);
+    setChosenCantrips([...cls.defaultCantrips]);
+    setChosenSpells([...cls.defaultSpells]);
+    setChosenMasteries(
+      cls.weaponMasteryCount <= 0
+        ? []
+        : nextClassId === 'fighter'
+          ? ['sap', 'push', 'topple']
+          : nextClassId === 'barbarian'
+            ? ['cleave', 'graze']
+            : nextClassId === 'rogue'
+              ? ['vex', 'nick']
+              : nextClassId === 'ranger'
+                ? ['slow', 'vex']
+                : ['sap', 'topple'],
+    );
+    setOccupation(getThemedClassLabel(nextClassId, primaryTheme, useClassicDnd));
+    // Auto-place Standard Array or Point Buy aligned to class primary stats
+    if (statMethod === 'standard') {
+      const order: AttributeId[] = [
+        ...cls.primaryAbilities,
+        ...(['con', 'dex', 'wis', 'cha', 'int', 'str'] as AttributeId[]).filter(
+          (k) => !cls.primaryAbilities.includes(k),
+        ),
+      ];
+      const nextAttrs = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+      order.slice(0, 6).forEach((k, idx) => {
+        nextAttrs[k] = STANDARD_ARRAY[idx] ?? 10;
+      });
+      setAttributes(nextAttrs);
+    }
+  };
+
+  const selectDndBackground = (nextBgId: DndBackgroundId) => {
+    const bg = DND_BACKGROUNDS[nextBgId];
+    setDndBackgroundId(nextBgId);
+    setBgPlusTwo(bg.abilityOptions[0] ?? 'str');
+    setBgPlusOne(bg.abilityOptions[1] ?? 'con');
+  };
+
+  const applyStatMethod = (method: 'standard' | 'pointbuy' | 'roll4d6') => {
+    setStatMethod(method);
+    const cls = DND_CLASSES[dndClassId];
+    const order: AttributeId[] = [
+      ...cls.primaryAbilities,
+      ...(['con', 'dex', 'wis', 'cha', 'int', 'str'] as AttributeId[]).filter(
+        (k) => !cls.primaryAbilities.includes(k),
+      ),
+    ];
+    if (method === 'standard') {
+      const nextAttrs = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+      order.slice(0, 6).forEach((k, idx) => {
+        nextAttrs[k] = STANDARD_ARRAY[idx] ?? 10;
+      });
+      setAttributes(nextAttrs);
+    } else if (method === 'roll4d6') {
+      const rolled = roll4d6AbilityArray();
+      const nextAttrs = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+      order.slice(0, 6).forEach((k, idx) => {
+        nextAttrs[k] = rolled[idx] ?? 10;
+      });
+      setAttributes(nextAttrs);
+    } else {
+      setAttributes(getPresetAttributesForArchetype(selectedArchetypeId, primaryTheme));
+    }
+  };
 
   const adjustAttribute = (key: AttributeId, delta: 1 | -1) => {
     setAttributes((prev) => {
       const nextVal = prev[key] + delta;
       if (nextVal < POINT_BUY_MIN || nextVal > POINT_BUY_MAX) return prev;
       const candidate = { ...prev, [key]: nextVal };
-      if (delta > 0 && computePointBuySpent(candidate) > POINT_BUY_BUDGET) {
+      if (statMethod === 'pointbuy' && delta > 0 && computePointBuySpent(candidate) > POINT_BUY_BUDGET) {
         return prev;
       }
       return candidate;
@@ -269,16 +495,24 @@ export function WorldForge({
     setOccupation(protag.occupation);
     setTraits(protag.traits);
     setSkills(protag.skills);
+    const forgedAttrs: CharacterAttributes = protag.attributes
+      ? {
+          str: Math.max(8, Math.min(15, Math.round(protag.attributes.str ?? 10))),
+          dex: Math.max(8, Math.min(15, Math.round(protag.attributes.dex ?? 10))),
+          con: Math.max(8, Math.min(15, Math.round(protag.attributes.con ?? 10))),
+          int: Math.max(8, Math.min(15, Math.round(protag.attributes.int ?? 10))),
+          wis: Math.max(8, Math.min(15, Math.round(protag.attributes.wis ?? 10))),
+          cha: Math.max(8, Math.min(15, Math.round(protag.attributes.cha ?? 10))),
+        }
+      : attributes;
     if (protag.attributes) {
-      setAttributes({
-        str: Math.max(8, Math.min(15, Math.round(protag.attributes.str ?? 10))),
-        dex: Math.max(8, Math.min(15, Math.round(protag.attributes.dex ?? 10))),
-        con: Math.max(8, Math.min(15, Math.round(protag.attributes.con ?? 10))),
-        int: Math.max(8, Math.min(15, Math.round(protag.attributes.int ?? 10))),
-        wis: Math.max(8, Math.min(15, Math.round(protag.attributes.wis ?? 10))),
-        cha: Math.max(8, Math.min(15, Math.round(protag.attributes.cha ?? 10))),
-      });
+      setAttributes(forgedAttrs);
     }
+    const inferredCls = inferDndClassFromLegacy(protag.occupation, forgedAttrs, []);
+    setDndClassId(inferredCls);
+    setChosenClassSkills([...DND_CLASSES[inferredCls].defaultSkills]);
+    setChosenCantrips([...DND_CLASSES[inferredCls].defaultCantrips]);
+    setChosenSpells([...DND_CLASSES[inferredCls].defaultSpells]);
     if (protag.startingCurrency) {
       setStartingCurrency(protag.startingCurrency);
     }
@@ -424,7 +658,33 @@ export function WorldForge({
 
   const applyArchetype = (arch: ArchetypePreset, themeOverride?: WorldThemeId) => {
     const activeTheme = themeOverride ?? primaryTheme;
+    const mapped = resolveArchetypeDnd(arch.id, activeTheme);
+    const cls = DND_CLASSES[mapped.classId];
+    const bg = DND_BACKGROUNDS[mapped.backgroundId];
+
     setSelectedArchetypeId(arch.id);
+    setDndClassId(mapped.classId);
+    setDndSpeciesId(mapped.speciesId);
+    setDndBackgroundId(mapped.backgroundId);
+    setBgPlusTwo(bg.abilityOptions[0] ?? 'str');
+    setBgPlusOne(bg.abilityOptions[1] ?? 'con');
+    setChosenClassSkills([...cls.defaultSkills]);
+    setChosenExpertise([]);
+    setChosenCantrips([...cls.defaultCantrips]);
+    setChosenSpells([...cls.defaultSpells]);
+    setChosenMasteries(
+      cls.weaponMasteryCount <= 0
+        ? []
+        : mapped.classId === 'fighter'
+          ? ['sap', 'push', 'topple']
+          : mapped.classId === 'barbarian'
+            ? ['cleave', 'graze']
+            : mapped.classId === 'rogue'
+              ? ['vex', 'nick']
+              : mapped.classId === 'ranger'
+                ? ['slow', 'vex']
+                : ['sap', 'topple'],
+    );
     setOccupation(arch.label[language]);
     setTraits([...arch.traits[language]]);
     setSkills([...arch.skills[language]]);
@@ -496,10 +756,69 @@ export function WorldForge({
       livingWorldEnabled: livingWorld,
     });
 
+    const finalDnd = buildDnd5eSheetFromConfig({
+      classId: dndClassId,
+      speciesId: dndSpeciesId,
+      backgroundId: dndBackgroundId,
+      level: 1,
+      attributes: finalAttributes,
+      chosenSkills: chosenClassSkills,
+      chosenExpertise: chosenExpertise.length > 0 ? chosenExpertise : undefined,
+      chosenCantrips: chosenCantrips.length > 0 ? chosenCantrips : undefined,
+      chosenSpells: chosenSpells.length > 0 ? chosenSpells : undefined,
+      fightingStyleId: dndClassId === 'fighter' ? chosenFightingStyle : undefined,
+    });
+    if (selectedDndClass.weaponMasteryCount > 0 && chosenMasteries.length > 0) {
+      finalDnd.weaponMasteries = chosenMasteries.slice(0, selectedDndClass.weaponMasteryCount);
+    }
+
+    const baseGear = buildDefaultDndStarterGear(dndClassId, primaryTheme, useClassicDnd);
+    // Merge starterItem cleanly without duplicating the primary equipped weapon
+    const finalInventory: InventoryItem[] = [];
+    if (starterItem.category === 'weapon') {
+      const classWeapon = baseGear.find((g) => g.category === 'weapon');
+      finalInventory.push({
+        ...starterItem,
+        equipped: true,
+        equipSlot: 'weapon',
+        storage: 'carry',
+        dndStats: starterItem.dndStats ?? classWeapon?.dndStats ?? { ...selectedDndClass.defaultWeapon.stats },
+      });
+      for (const item of baseGear) {
+        if (item.category !== 'weapon') finalInventory.push(item);
+      }
+    } else {
+      finalInventory.push(...baseGear);
+      const alreadyHas = baseGear.some(
+        (g) => g.name.toLowerCase() === starterItem.name.toLowerCase(),
+      );
+      if (!alreadyHas) {
+        finalInventory.push({
+          ...starterItem,
+          storage: 'carry',
+          dndStats:
+            starterItem.dndStats ??
+            (starterItem.category === 'consumable' ? { healDice: '2d4+2' } : undefined),
+        });
+      }
+    }
+
+    const finalMaxHp = computeMaxHpForRuleset('dnd5e_2024', {
+      level: 1,
+      attributes: finalAttributes,
+      inventory: finalInventory,
+      dnd: finalDnd,
+    });
+    const finalSkillLabels = finalDnd.skillProficiencies.map((skId) =>
+      getThemedSkillLabel(skId, primaryTheme, useClassicDnd),
+    );
+
     const campaign: Campaign = {
       id: `camp_${now}_${Math.random().toString(36).slice(2, 6)}`,
       createdAt: now,
       updatedAt: now,
+      ruleset: 'dnd5e_2024',
+      progressionMode: 'xp',
       world: {
         title: worldTitle.trim() || themePreset.name[language],
         primaryTheme,
@@ -517,26 +836,30 @@ export function WorldForge({
       player: {
         name: playerName.trim() || 'Viajante',
         age: Math.max(16, Math.min(999, playerAge || 28)),
-        occupation: occupation.trim() || themePreset.archetypes[0].label[language],
+        occupation:
+          occupation.trim() ||
+          getThemedClassLabel(dndClassId, primaryTheme, useClassicDnd),
         portraitUrl,
         portraitEngine,
         level: 1,
         xp: 0,
-        xpToNextLevel: xpRequiredForLevel(1),
+        xpToNextLevel: getXpDeltaForRuleset(1, 'dnd5e_2024'),
         attributePoints: 0,
-        attributes: { ...attributes },
-        vigor: computeMaxVigor(1, attributes.con),
-        maxVigor: computeMaxVigor(1, attributes.con),
+        attributes: { ...finalAttributes },
+        vigor: finalMaxHp,
+        maxVigor: finalMaxHp,
+        inspiration: 1,
         tension: 20,
         traits,
-        skills,
-        skillLevels: syncSkillLevels(skills),
+        skills: finalSkillLabels,
+        skillLevels: syncSkillLevels(finalSkillLabels),
         talents: [],
         currency:
           startingCurrency ?? defaultCurrencyForTheme(primaryTheme, language),
-        inventory: [starterItem],
+        inventory: finalInventory,
         quests: [],
         journal: [],
+        dnd: finalDnd,
       },
       codex: {
         npcs: [],
@@ -1091,325 +1414,78 @@ export function WorldForge({
             </div>
           ) : null}
 
-          {/* STEP 2: PROTAGONIST */}
+          {/* STEP 2: PROTAGONIST (D&D 5.2 2-Layer Creator) */}
           {step === 2 ? (
-            <div className="space-y-6 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-card)] sm:p-7">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                  Arquétipo Inicial
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isGeneratingPortrait}
-                    onClick={() => void handleGeneratePreviewPortrait()}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] hover:brightness-110 disabled:opacity-50"
-                  >
-                    <Camera className={`h-3.5 w-3.5 ${isGeneratingPortrait ? 'animate-spin' : ''}`} />
-                    <span>{isGeneratingPortrait ? 'Gerando...' : portraitUrl ? 'Novo Retrato' : 'Gerar Retrato'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={randomizeCharacter}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] hover:border-[var(--accent)]"
-                  >
-                    <Dices className="h-3.5 w-3.5" />
-                    Sortear Protagonista
-                  </button>
-                </div>
-              </div>
-
-              {portraitUrl ? (
-                <div className="flex items-center gap-4 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3">
-                  <img
-                    src={portraitUrl}
-                    alt={playerName}
-                    className="h-20 w-20 shrink-0 rounded-xl border border-[var(--border-strong)] object-cover"
-                  />
-                  <div className="text-xs">
-                    <div className="font-semibold text-[var(--text-primary)]">
-                      Retrato pronto ({portraitEngine === 'gemini' ? 'Nano Banana 2.1' : 'Arte Demo'})
-                    </div>
-                    <p className="mt-1 text-[var(--text-muted)]">
-                      Ficará visível na Ficha e nos cartões do Santuário.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Criar Protagonista sob medida com IA */}
-              <div className="flex flex-col gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]/80 p-3 sm:flex-row sm:items-center">
-                <input
-                  type="text"
-                  value={characterIdeaInput}
-                  onChange={(e) => setCharacterIdeaInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void runAiArchitect('protagonist_only');
-                    }
-                  }}
-                  placeholder="Descreva o personagem que imagina (opcional, ex: ex-cartógrafo cego que lê mapas pelo tato)..."
-                  className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                />
-                <button
-                  type="button"
-                  disabled={isForgingWithAi}
-                  onClick={() => void runAiArchitect('protagonist_only')}
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--accent)]/60 bg-[var(--accent-soft)] px-3.5 py-2 text-xs font-semibold text-[var(--accent)] transition hover:brightness-110 disabled:opacity-50"
-                >
-                  {isForgingWithAi && activeForgeAction === 'protagonist_only' ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  <span>
-                    {isForgingWithAi && activeForgeAction === 'protagonist_only'
-                      ? 'Criando...'
-                      : 'Criar Protagonista com IA'}
-                  </span>
-                </button>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                {themePreset.archetypes.map((arch) => {
-                  const active = selectedArchetypeId === arch.id;
-                  return (
-                    <button
-                      key={arch.id}
-                      type="button"
-                      onClick={() => applyArchetype(arch)}
-                      className={`rounded-xl border p-3.5 text-left transition ${
-                        active
-                          ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold text-[var(--text-primary)]">
-                          {arch.label[language]}
-                        </span>
-                        {active ? <Check className="h-4 w-4 text-[var(--accent)]" /> : null}
-                      </div>
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        {arch.summary[language]}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-12">
-                <div className="sm:col-span-5">
-                  <label className="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">
-                    Nome
-                  </label>
-                  <input
-                    type="text"
-                    value={playerName}
-                    onChange={(e) => setPlayerName(e.target.value)}
-                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">
-                    Idade
-                  </label>
-                  <input
-                    type="number"
-                    min={16}
-                    max={999}
-                    value={playerAge}
-                    onChange={(e) => setPlayerAge(Number(e.target.value))}
-                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                  />
-                </div>
-                <div className="sm:col-span-5">
-                  <label className="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">
-                    Ocupação / Origem
-                  </label>
-                  <input
-                    type="text"
-                    value={occupation}
-                    onChange={(e) => setOccupation(e.target.value)}
-                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                  />
-                </div>
-              </div>
-
-              {/* BG3 Point Buy Attributes */}
-              <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)]/70 p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-primary)]">
-                      Atributos do Personagem (Estilo Baldur’s Gate 3)
-                    </label>
-                    <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
-                      Distribua seus pontos entre 8 e 15. Você ganhará mais pontos ao subir de nível na história.
-                    </p>
-                  </div>
-                  <span
-                    className={`font-mono-tech rounded-full border px-3 py-1 text-xs font-semibold ${
-                      pointsRemaining > 0
-                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
-                    }`}
-                  >
-                    Pontos restantes: {pointsRemaining} / {POINT_BUY_BUDGET}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-                  {ATTRIBUTE_KEYS.map((key) => {
-                    const meta = ATTRIBUTE_META[key];
-                    const score = attributes[key];
-                    const mod = getAttributeModifier(score);
-                    const canDec = score > POINT_BUY_MIN;
-                    const nextCandidate = { ...attributes, [key]: score + 1 };
-                    const canInc =
-                      score < POINT_BUY_MAX &&
-                      computePointBuySpent(nextCandidate) <= POINT_BUY_BUDGET;
-
-                    return (
-                      <div
-                        key={key}
-                        title={meta.hint[language]}
-                        className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-center"
-                      >
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--accent)]">
-                          {meta.short[language]} · {meta.full[language]}
-                        </div>
-                        <div className="font-display mt-1 text-2xl font-bold text-[var(--text-primary)]">
-                          {formatModifier(mod)}
-                        </div>
-                        <div className="mt-2 flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            disabled={!canDec}
-                            onClick={() => adjustAttribute(key, -1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:opacity-35"
-                          >
-                            <Minus className="h-3.5 w-3.5" />
-                          </button>
-                          <span className="font-mono-tech w-7 text-sm font-bold text-[var(--text-primary)]">
-                            {score}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={!canInc}
-                            onClick={() => adjustAttribute(key, 1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:opacity-35"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Traits */}
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                  Traços de Personalidade
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {traits.map((t) => (
-                    <span
-                      key={t}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--accent-soft)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-                    >
-                      {t}
-                      <button
-                        type="button"
-                        onClick={() => setTraits((prev) => prev.filter((x) => x !== t))}
-                        className="text-[var(--text-muted)] hover:text-[var(--danger)]"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-2.5 flex max-w-xs gap-2">
-                  <input
-                    type="text"
-                    value={customTrait}
-                    onChange={(e) => setCustomTrait(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && customTrait.trim()) {
-                        setTraits((p) => [...p, customTrait.trim()]);
-                        setCustomTrait('');
-                      }
-                    }}
-                    placeholder="Adicionar traço..."
-                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!customTrait.trim()) return;
-                      setTraits((p) => [...p, customTrait.trim()]);
-                      setCustomTrait('');
-                    }}
-                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 text-xs hover:border-[var(--accent)]"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* Skills */}
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                  Perícias (concedem bônus +2 em testes compatíveis)
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {skills.map((s) => (
-                    <span
-                      key={s}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-                    >
-                      <span className="font-mono-tech text-[10px] text-[var(--accent)]">+2</span>
-                      {s}
-                      <button
-                        type="button"
-                        onClick={() => setSkills((prev) => prev.filter((x) => x !== s))}
-                        className="text-[var(--text-muted)] hover:text-[var(--danger)]"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-2.5 flex max-w-xs gap-2">
-                  <input
-                    type="text"
-                    value={customSkill}
-                    onChange={(e) => setCustomSkill(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && customSkill.trim()) {
-                        setSkills((p) => [...p, customSkill.trim()]);
-                        setCustomSkill('');
-                      }
-                    }}
-                    placeholder="Adicionar perícia..."
-                    className="w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!customSkill.trim()) return;
-                      setSkills((p) => [...p, customSkill.trim()]);
-                      setCustomSkill('');
-                    }}
-                    className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 text-xs hover:border-[var(--accent)]"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            </div>
+            <WorldForgeDndStep2
+              primaryTheme={primaryTheme}
+              language={language}
+              useClassicDnd={useClassicDnd}
+              archetypes={themePreset.archetypes}
+              resolveSpriteForArchetype={(archId) =>
+                resolveArchetypeDnd(archId, primaryTheme).spriteId
+              }
+              resolveClassForArchetype={(archId) =>
+                resolveArchetypeDnd(archId, primaryTheme).classId
+              }
+              forgeMode={forgeMode}
+              setForgeMode={setForgeMode}
+              customSubTab={customSubTab}
+              setCustomSubTab={setCustomSubTab}
+              selectedArchetypeId={selectedArchetypeId}
+              onApplyArchetype={(arch) => applyArchetype(arch)}
+              dndClassId={dndClassId}
+              onSelectDndClass={selectDndClass}
+              dndSpeciesId={dndSpeciesId}
+              onSelectDndSpecies={setDndSpeciesId}
+              dndBackgroundId={dndBackgroundId}
+              onSelectDndBackground={selectDndBackground}
+              statMethod={statMethod}
+              onApplyStatMethod={applyStatMethod}
+              attributes={attributes}
+              finalAttributes={finalAttributes}
+              pointsRemaining={pointsRemaining}
+              onAdjustAttribute={adjustAttribute}
+              bgPlusTwo={bgPlusTwo}
+              setBgPlusTwo={setBgPlusTwo}
+              bgPlusOne={bgPlusOne}
+              setBgPlusOne={setBgPlusOne}
+              chosenClassSkills={chosenClassSkills}
+              setChosenClassSkills={setChosenClassSkills}
+              chosenExpertise={chosenExpertise}
+              setChosenExpertise={setChosenExpertise}
+              chosenCantrips={chosenCantrips}
+              setChosenCantrips={setChosenCantrips}
+              chosenSpells={chosenSpells}
+              setChosenSpells={setChosenSpells}
+              chosenFightingStyle={chosenFightingStyle}
+              setChosenFightingStyle={setChosenFightingStyle}
+              chosenMasteries={chosenMasteries}
+              setChosenMasteries={setChosenMasteries}
+              previewDnd={previewDnd}
+              previewMaxHp={previewMaxHp}
+              previewAc={previewAc}
+              previewSpriteId={previewSpriteId}
+              playerName={playerName}
+              setPlayerName={setPlayerName}
+              playerAge={playerAge}
+              setPlayerAge={setPlayerAge}
+              occupation={occupation}
+              setOccupation={setOccupation}
+              traits={traits}
+              setTraits={setTraits}
+              customTrait={customTrait}
+              setCustomTrait={setCustomTrait}
+              portraitUrl={portraitUrl}
+              portraitEngine={portraitEngine}
+              isGeneratingPortrait={isGeneratingPortrait}
+              onGeneratePreviewPortrait={() => void handleGeneratePreviewPortrait()}
+              onRandomizeCharacter={randomizeCharacter}
+              characterIdeaInput={characterIdeaInput}
+              setCharacterIdeaInput={setCharacterIdeaInput}
+              isForgingWithAi={isForgingWithAi}
+              activeForgeAction={activeForgeAction}
+              onRunAiProtagonist={() => void runAiArchitect('protagonist_only')}
+            />
           ) : null}
 
           {/* STEP 3: FATE & DIFFICULTY */}
@@ -1647,31 +1723,48 @@ export function WorldForge({
                       className="h-11 w-11 shrink-0 rounded-xl border border-[var(--border-strong)] object-cover"
                     />
                   ) : (
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] text-[var(--accent)]">
-                      <User className="h-5 w-5" />
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--accent-soft)] p-0.5">
+                      <PixelHeroSprite spriteId={previewSpriteId} className="h-9 w-9" />
                     </div>
                   )}
-                  <div>
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
                       {playerName || 'Protagonista'} · {playerAge}
                     </div>
-                    <div className="text-xs text-[var(--text-muted)]">{occupation}</div>
+                    <div className="truncate text-xs text-[var(--accent)]">
+                      {getThemedClassLabel(dndClassId, primaryTheme, useClassicDnd)} · {getThemedSpeciesLabel(dndSpeciesId, primaryTheme, useClassicDnd)}
+                    </div>
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
+                      {selectedDndBg.label} · {occupation}
+                    </div>
                   </div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {skills.map((s) => (
+                <div className="font-mono-tech mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                  <span className="rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 font-semibold text-emerald-300">
+                    ❤ {previewMaxHp} PV
+                  </span>
+                  <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 font-semibold text-sky-300">
+                    🛡 CA {previewAc}
+                  </span>
+                  <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[var(--text-secondary)]">
+                    D&D 5.2 · Nv.1
+                  </span>
+                </div>
+
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {previewDnd.skillProficiencies.slice(0, 6).map((sk) => (
                     <span
-                      key={s}
+                      key={sk}
                       className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]"
                     >
-                      +2 {s}
+                      ● {getThemedSkillLabel(sk, primaryTheme, useClassicDnd)}
                     </span>
                   ))}
                 </div>
 
                 <div className="mt-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--text-secondary)]">
-                  <span className="font-medium text-[var(--text-primary)]">Relíquia Inicial:</span>{' '}
+                  <span className="font-medium text-[var(--text-primary)]">Equipamento Inicial:</span>{' '}
                   {starterItem.name}
                 </div>
               </div>

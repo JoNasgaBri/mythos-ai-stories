@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AiNarrationPreferences,
   Campaign,
+  ClashArchetype,
   CraftRequest,
   DiceRollResult,
   ForgeWorldRequest,
@@ -14,6 +15,7 @@ import type {
 } from '../src/types/game.js';
 import {
   generateCampaignEpilogue,
+  generateClashInit,
   generateCraftUpgrade,
   generateForgedWorld,
   generateJournalSummary,
@@ -156,6 +158,7 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           narrationPrefs?: Partial<AiNarrationPreferences>;
           model?: string;
           crisisMode?: 'survival_test' | 'breaking_point';
+          clashRoundContext?: string;
         }>(req);
         const result = await generateStoryTurn(
           apiKey,
@@ -166,7 +169,22 @@ export function createAiMiddleware(env: MiddlewareEnv) {
           body.responseLength ?? body.narrationPrefs?.responseLength ?? 'literary',
           body.crisisMode,
           body.narrationPrefs,
+          body.clashRoundContext,
         );
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (url === '/api/story/clash-init') {
+        const body = await readJsonBody<{
+          campaign: Campaign;
+          requestedArchetype?: ClashArchetype;
+          customPremise?: string;
+        }>(req);
+        const result = await generateClashInit(apiKey, body.campaign, {
+          requestedArchetype: body.requestedArchetype,
+          customPremise: body.customPremise,
+        });
         sendJson(res, 200, result);
         return;
       }

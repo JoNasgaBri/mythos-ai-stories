@@ -1,6 +1,14 @@
+import { DND_CONDITIONS, DND_SKILLS } from '../data/dnd52Catalog';
+import {
+  computeArmorClass,
+  computeSavingThrowModifier,
+  computeSkillModifier,
+  getThemedSkillLabel,
+} from './dnd52Rules';
 import {
   defaultNpcAttributes,
   getAttributeModifier,
+  getProficiencyBonus,
   getWeatherRollModifier,
 } from './rpgSystem';
 import type {
@@ -13,13 +21,17 @@ import type {
   DiceRollPolicy,
   DiceRollResult,
   DifficultyId,
+  DndSkillId,
+  DndTestKind,
   LanguageId,
   NpcRecord,
   PlayerState,
   RollMode,
+  RulesetId,
   SkillProgress,
   TacticalAction,
   WeatherType,
+  WorldThemeId,
 } from '../types/game';
 
 export function findPartyAdvantage(
@@ -656,6 +668,144 @@ export function assessSuggestedAction(
   };
 }
 
+export function inferDndSkill(
+  actionText: string,
+  intent: ActionIntent,
+  explicitSkill?: DndSkillId,
+): DndSkillId {
+  if (explicitSkill && DND_SKILLS[explicitSkill]) return explicitSkill;
+  const t = actionText.toLowerCase();
+  if (/\b(furtiv|esgueir|escond|silencios|desperceb|sneak|stealth|hide)\b/.test(t)) return 'stealth';
+  if (/\b(destranc|gazua|roub|bater\s+carteira|pickpocket|lockpick|prestidigit)\b/.test(t)) return 'sleight_of_hand';
+  if (/\b(acrobac|equil[ií]br|salt|esquiv|pirueta|acrobat|dodge|leap)\b/.test(t)) return 'acrobatics';
+  if (/\b(atlet|escal|nad|arromb|empurr|erguer|agarr|luta|wrestle|climb|swim|shove)\b/.test(t)) return 'athletics';
+  if (/\b(mentir|blef|engan|disfar[cç]|bluff|lie|deceive|deception)\b/.test(t)) return 'deception';
+  if (/\b(intimid|amea[cç]|coag|intimidate|threaten)\b/.test(t)) return 'intimidation';
+  if (/\b(persuad|convenc|negoci|barganh|diplom|seduz|persuade|negotiate|charm)\b/.test(t)) return 'persuasion';
+  if (/\b(atuar|cantar|tocar|discurs|distrair\s+plat|perform)\b/.test(t)) return 'performance';
+  if (/\b(arcan|magia|feiti[cç]|runa|hack|sistema|terminal|net|cript|ocult|arcana|spell|decrypt)\b/.test(t)) return 'arcana';
+  if (/\b(investig|pista|deduz|examin|forens|vasculh|analis|inspect|clue|investigate)\b/.test(t)) return 'investigation';
+  if (/\b(hist[oó]r|arquivo|lenda|antig|linhagem|history|lore)\b/.test(t)) return 'history';
+  if (/\b(religi|deus|templo|culto|seita|sagrado|ritual|religion)\b/.test(t)) return 'religion';
+  if (/\b(naturez|planta|veneno|clima|floresta|fauna|flora|nature)\b/.test(t)) return 'nature';
+  if (/\b(medicin|curar|estanc|ferid|socorr|sutura|diagn[oó]st|medicine|heal|treat)\b/.test(t)) return 'medicine';
+  if (/\b(intui|ler\s+mentir|desconfi|motiva[cç]|express[aã]o|insight|sense)\b/.test(t)) return 'insight';
+  if (/\b(perceb|escut|ouv|avist|observar|vigil|armadilha|perception|spot|listen)\b/.test(t)) return 'perception';
+  if (/\b(animal|cavalo|lobo|drone|ve[ií]cul|pilot|dirig|animal|mount|drive)\b/.test(t)) return 'animal_handling';
+  if (/\b(sobreviv|rastre|acamp|trilha|abrigo|ca[cç]a|survival|track)\b/.test(t)) return 'survival';
+
+  switch (intent) {
+    case 'stealth':
+      return 'stealth';
+    case 'diplomatic':
+      return 'persuasion';
+    case 'investigate':
+      return 'investigation';
+    case 'survival':
+      return 'survival';
+    case 'item':
+      return 'arcana';
+    default:
+      return 'athletics';
+  }
+}
+
+export function resolveDndSavingThrow(
+  player: PlayerState,
+  ability: AttributeId,
+  dc: number,
+  reason: string,
+  opts?: {
+    rollMode?: RollMode;
+    advantageSource?: string;
+    disadvantageSource?: string;
+    rerolledWithInspiration?: boolean;
+  },
+): DiceRollResult {
+  const dnd = player.dnd;
+  const conditions = dnd?.conditions ?? [];
+  const autoFail =
+    (ability === 'str' || ability === 'dex') &&
+    conditions.some((c) => DND_CONDITIONS[c]?.autoFailStrDexSaves);
+
+  const hasAdv = opts?.rollMode === 'advantage';
+  const hasDisadv =
+    opts?.rollMode === 'disadvantage' ||
+    (ability === 'dex' && conditions.includes('restrained'));
+  const finalMode: RollMode =
+    hasAdv && hasDisadv ? 'normal' : hasAdv ? 'advantage' : hasDisadv ? 'disadvantage' : 'normal';
+
+  const mod = computeSavingThrowModifier(player, ability);
+  const pb = getProficiencyBonus(player.level);
+  const isProf = dnd?.savingThrowProficiencies.includes(ability) ?? false;
+  const exhaustionPenalty = (dnd?.exhaustion ?? 0) * 2;
+  const attrMod = getAttributeModifier(player.attributes?.[ability] ?? 10);
+
+  const r1 = autoFail ? 1 : Math.floor(Math.random() * 20) + 1;
+  const r2 = !autoFail && finalMode !== 'normal' ? Math.floor(Math.random() * 20) + 1 : undefined;
+  const roll =
+    r2 !== undefined
+      ? finalMode === 'advantage'
+        ? Math.max(r1, r2)
+        : Math.min(r1, r2)
+      : r1;
+  const total = autoFail ? 0 : roll + mod;
+  // SRD 5.2: Saving Throws are binary pass/fail (no Nat 1/20 auto-fail/auto-succeed)
+  const outcome: DiceOutcome = !autoFail && total >= dc ? 'success' : 'failure';
+
+  return {
+    roll,
+    rolls: r2 !== undefined ? [r1, r2] : undefined,
+    rollMode: finalMode,
+    advantageSource: finalMode === 'advantage' ? opts?.advantageSource : undefined,
+    disadvantageSource:
+      finalMode === 'disadvantage'
+        ? opts?.disadvantageSource ?? (ability === 'dex' && conditions.includes('restrained') ? 'Imobilizado' : undefined)
+        : undefined,
+    opposedLabel: reason,
+    rerolledWithInspiration: opts?.rerolledWithInspiration,
+    testKind: 'saving_throw',
+    proficiencyBonus: isProf ? pb : 0,
+    exhaustionPenalty: exhaustionPenalty > 0 ? exhaustionPenalty : undefined,
+    bonus: mod,
+    bonusSource: isProf ? `Salvaguarda (+${pb} PB)` : 'Salvaguarda',
+    attribute: ability,
+    attributeMod: attrMod,
+    total,
+    dc,
+    outcome,
+  };
+}
+
+export function resolveDndDeathSave(
+  rerolledWithInspiration = false,
+): DiceRollResult {
+  // SRD 5.2 Death Saving Throw: flat 1d20 vs DC 10 (exempt from Exhaustion).
+  // Nat 20 = regain 1 HP immediately; Nat 1 = 2 failures; >= 10 = 1 success.
+  const roll = Math.floor(Math.random() * 20) + 1;
+  const outcome: DiceOutcome =
+    roll === 20
+      ? 'critical_success'
+      : roll === 1
+        ? 'critical_failure'
+        : roll >= 10
+          ? 'success'
+          : 'failure';
+
+  return {
+    roll,
+    rollMode: 'normal',
+    opposedLabel: 'Teste Contra a Morte (0 PV)',
+    rerolledWithInspiration,
+    testKind: 'death_save',
+    bonus: 0,
+    bonusSource: 'd20 Puro',
+    total: roll,
+    dc: 10,
+    outcome,
+  };
+}
+
 export function resolveFateCheck(
   actionText: string,
   intent: ActionIntent,
@@ -670,10 +820,19 @@ export function resolveFateCheck(
     forcedAttribute?: AttributeId;
     rollMode?: RollMode;
     advantageSource?: string;
+    disadvantageSource?: string;
     opposedLabel?: string;
     dcOverride?: number;
     rerolledWithInspiration?: boolean;
     weatherType?: WeatherType;
+    // MYTHOS 12.0 — D&D 5e (2024 / SRD 5.2) context
+    ruleset?: RulesetId;
+    player?: PlayerState;
+    testKind?: DndTestKind;
+    skillId?: DndSkillId;
+    targetAc?: number;
+    worldTheme?: WorldThemeId;
+    useClassicDndNames?: boolean;
   },
 ): DiceRollResult | undefined {
   if (requiresRoll === false) {
@@ -692,13 +851,224 @@ export function resolveFateCheck(
     }
   }
 
+  // === D&D 5e Revised (2024 / SRD 5.2) D20 Test Engine ===
+  if (rpgContext?.ruleset === 'dnd5e_2024' && rpgContext.player?.dnd) {
+    const player = rpgContext.player;
+    const dnd = player.dnd!;
+    const testKind: DndTestKind = rpgContext.testKind ?? 'ability_check';
+    const theme = rpgContext.worldTheme ?? 'fantasy';
+
+    if (testKind === 'death_save') {
+      return resolveDndDeathSave(Boolean(rpgContext.rerolledWithInspiration));
+    }
+
+    if (testKind === 'saving_throw') {
+      const saveAttr = rpgContext.forcedAttribute ?? inferActionAttribute(actionText, intent);
+      const saveDc =
+        typeof rpgContext.dcOverride === 'number'
+          ? Math.max(5, Math.min(30, rpgContext.dcOverride))
+          : difficulty === 'easy'
+            ? 10
+            : difficulty === 'normal'
+              ? 13
+              : difficulty === 'hard'
+                ? 15
+                : difficulty === 'insane'
+                  ? 17
+                  : 20;
+      return resolveDndSavingThrow(
+        player,
+        saveAttr,
+        saveDc,
+        rpgContext.opposedLabel ?? 'Salvaguarda',
+        {
+          rollMode: rpgContext.rollMode,
+          advantageSource: rpgContext.advantageSource,
+          disadvantageSource: rpgContext.disadvantageSource,
+          rerolledWithInspiration: rpgContext.rerolledWithInspiration,
+        },
+      );
+    }
+
+    // Determine Skill & Attribute
+    const skillId = inferDndSkill(actionText, intent, rpgContext.skillId);
+    const attribute: AttributeId =
+      testKind === 'attack_roll'
+        ? rpgContext.forcedAttribute ?? inferActionAttribute(actionText, intent)
+        : rpgContext.forcedAttribute ?? DND_SKILLS[skillId].attribute;
+
+    const acBreakdown = computeArmorClass(player);
+    const conds = dnd.conditions ?? [];
+
+    // Official 5e Advantage / Disadvantage with Mutual Cancellation!
+    let hasAdv = rpgContext.rollMode === 'advantage';
+    let hasDisadv = rpgContext.rollMode === 'disadvantage';
+    const advReasons: string[] = [];
+    const disadvReasons: string[] = [];
+    if (hasAdv && rpgContext.advantageSource) advReasons.push(rpgContext.advantageSource);
+    if (hasDisadv && rpgContext.disadvantageSource) disadvReasons.push(rpgContext.disadvantageSource);
+    else if (hasDisadv && rpgContext.advantageSource) disadvReasons.push(rpgContext.advantageSource);
+
+    if (testKind === 'ability_check') {
+      if (skillId === 'stealth' && acBreakdown.stealthDisadvantage) {
+        hasDisadv = true;
+        disadvReasons.push('Armadura Pesada');
+      }
+      if ((attribute === 'str' || attribute === 'dex') && acBreakdown.nonProficientArmor) {
+        hasDisadv = true;
+        disadvReasons.push('Armadura s/ Proficiência');
+      }
+      if (conds.some((c) => DND_CONDITIONS[c]?.abilityCheckDisadvantage)) {
+        hasDisadv = true;
+        const cId = conds.find((c) => DND_CONDITIONS[c]?.abilityCheckDisadvantage)!;
+        disadvReasons.push(DND_CONDITIONS[cId].label);
+      }
+    } else if (testKind === 'attack_roll') {
+      if (conds.includes('invisible')) {
+        hasAdv = true;
+        advReasons.push('Invisível');
+      }
+      if (conds.some((c) => DND_CONDITIONS[c]?.attackDisadvantage)) {
+        hasDisadv = true;
+        const cId = conds.find((c) => DND_CONDITIONS[c]?.attackDisadvantage)!;
+        disadvReasons.push(DND_CONDITIONS[cId].label);
+      }
+      if ((attribute === 'str' || attribute === 'dex') && acBreakdown.nonProficientArmor) {
+        hasDisadv = true;
+        disadvReasons.push('Armadura s/ Proficiência');
+      }
+    }
+
+    const finalRollMode: RollMode =
+      hasAdv && hasDisadv
+        ? 'normal'
+        : hasAdv
+          ? 'advantage'
+          : hasDisadv
+            ? 'disadvantage'
+            : 'normal';
+
+    // Official SRD 5.2 DC Ladder (5 / 10 / 15 / 20 / 25 / 30) — dcOverride respected in BOTH directions!
+    const officialBaseDc =
+      difficulty === 'easy'
+        ? 10
+        : difficulty === 'normal'
+          ? 12
+          : difficulty === 'hard'
+            ? 15
+            : difficulty === 'insane'
+              ? 18
+              : 20;
+    const riskShift = risk === 'safe' ? -5 : risk === 'low' ? -2 : risk === 'high' ? 3 : 0;
+    const dc =
+      testKind === 'attack_roll' && typeof rpgContext.targetAc === 'number'
+        ? rpgContext.targetAc
+        : typeof rpgContext.dcOverride === 'number'
+          ? Math.max(5, Math.min(30, rpgContext.dcOverride))
+          : Math.max(5, Math.min(30, officialBaseDc + riskShift));
+
+    const pb = getProficiencyBonus(player.level);
+    const exhaustionPenalty = (dnd.exhaustion ?? 0) * 2;
+    const attrMod = getAttributeModifier(
+      (rpgContext.attributes ?? player.attributes)[attribute] ?? 10,
+    );
+
+    let bonus = 0;
+    let profApplied = 0;
+    let bonusSource: string | undefined;
+
+    if (testKind === 'attack_roll') {
+      profApplied = pb;
+      bonus = attrMod + pb - exhaustionPenalty;
+      bonusSource = `Prof. +${pb}`;
+    } else {
+      bonus = computeSkillModifier(player, skillId);
+      const isExp = dnd.skillExpertise.includes(skillId);
+      const isProf = isExp || dnd.skillProficiencies.includes(skillId);
+      profApplied = isExp ? pb * 2 : isProf ? pb : 0;
+      const skillName = getThemedSkillLabel(
+        skillId,
+        theme,
+        Boolean(rpgContext.useClassicDndNames),
+      );
+      bonusSource = isExp
+        ? `${skillName} (Esp. +${pb * 2})`
+        : isProf
+          ? `${skillName} (+${pb})`
+          : skillName;
+    }
+
+    // Halfling Lucky: automatically rerolls a 1 on d20 tests!
+    const rollOne = () => {
+      let n = Math.floor(Math.random() * 20) + 1;
+      if (n === 1 && dnd.speciesId === 'halfling') {
+        n = Math.floor(Math.random() * 20) + 1;
+      }
+      return n;
+    };
+
+    const r1 = rollOne();
+    const r2 = finalRollMode !== 'normal' ? rollOne() : undefined;
+    const roll =
+      r2 !== undefined
+        ? finalRollMode === 'advantage'
+          ? Math.max(r1, r2)
+          : Math.min(r1, r2)
+        : r1;
+    const total = roll + bonus;
+
+    // SRD 5.2 RAW: Nat 1 / Nat 20 auto-miss/crit applies ONLY to Attack Rolls!
+    let outcome: DiceOutcome;
+    if (testKind === 'attack_roll') {
+      const critThreshold =
+        dnd.classId === 'fighter' && dnd.subclassId === 'champion' ? 19 : 20;
+      if (roll === 1) outcome = 'critical_failure';
+      else if (roll >= critThreshold) outcome = 'critical_success';
+      else if (total >= dc) outcome = 'success';
+      else outcome = 'failure';
+    } else {
+      // Ability Check: pure total vs DC (no Nat 1/20 auto-outcomes, no partial)
+      outcome = total >= dc ? 'success' : 'failure';
+    }
+
+    return {
+      roll,
+      rolls: r2 !== undefined ? [r1, r2] : undefined,
+      rollMode: finalRollMode,
+      advantageSource:
+        finalRollMode === 'advantage' && advReasons.length > 0
+          ? advReasons.join(' · ')
+          : undefined,
+      disadvantageSource:
+        finalRollMode === 'disadvantage' && disadvReasons.length > 0
+          ? disadvReasons.join(' · ')
+          : undefined,
+      opposedLabel: rpgContext.opposedLabel,
+      rerolledWithInspiration: rpgContext.rerolledWithInspiration,
+      testKind,
+      skillId: testKind === 'ability_check' ? skillId : undefined,
+      targetAc: testKind === 'attack_roll' ? dc : undefined,
+      proficiencyBonus: profApplied,
+      exhaustionPenalty: exhaustionPenalty > 0 ? exhaustionPenalty : undefined,
+      bonus,
+      bonusSource,
+      attribute,
+      attributeMod: attrMod,
+      skillLevelBonus: profApplied - exhaustionPenalty,
+      total,
+      dc,
+      outcome,
+    };
+  }
+
+  // === Legacy MYTHOS BG3 Fate Check (preserved 100% for 'mythos_legacy' saves) ===
   const baseDc = DIFFICULTY_DC[difficulty];
   const riskAdjustment =
     risk === 'safe' ? -3 : risk === 'low' ? -2 : risk === 'high' ? 2 : 0;
   const standardDc = Math.max(4, Math.min(22, baseDc + riskAdjustment));
   const dc =
     typeof rpgContext?.dcOverride === 'number'
-      ? Math.max(standardDc, Math.min(24, rpgContext.dcOverride))
+      ? Math.max(4, Math.min(24, rpgContext.dcOverride))
       : standardDc;
 
   const attribute =

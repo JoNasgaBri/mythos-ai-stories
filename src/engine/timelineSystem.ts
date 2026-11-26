@@ -112,6 +112,7 @@ export function reconstructLegacyTimeline(campaign: Campaign): CampaignTimelineM
         : summarizeText(lastPlayerText, 96),
       location: entry.location || campaign.currentLocation,
       vigor: campaign.player.vigor,
+      maxVigor: campaign.player.maxVigor,
       tension: campaign.player.tension,
       mood: entry.mood || campaign.currentMood,
       highlights: extractHighlights(entry.deltas),
@@ -137,6 +138,7 @@ export function reconstructLegacyTimeline(campaign: Campaign): CampaignTimelineM
       choiceSummary: summarizeText(campaign.world.premise, 96),
       location: campaign.currentLocation,
       vigor: campaign.player.vigor,
+      maxVigor: campaign.player.maxVigor,
       tension: campaign.player.tension,
       mood: campaign.currentMood,
       highlights: [],
@@ -268,6 +270,7 @@ export function appendTimelineNode(
     choiceSummary: summarizeText(opts.choiceSummary, 110),
     location: ensured.currentLocation,
     vigor: ensured.player.vigor,
+    maxVigor: ensured.player.maxVigor,
     tension: ensured.player.tension,
     mood: ensured.currentMood,
     highlights: extractHighlights(opts.deltas),
@@ -337,6 +340,7 @@ export function createBranchedCampaign(params: {
     base.currentMood = targetNode.mood;
     base.status = 'active';
     base.epilogue = undefined;
+    base.activeClash = null;
   }
 
   // Always detach Gemini server interactionId so the new timeline never bleeds into the original thread
@@ -364,6 +368,7 @@ export function createBranchedCampaign(params: {
       : `Ramificação retroativa a partir de "${targetNode.title}" (Turno ${targetNode.turn})`,
     location: base.currentLocation,
     vigor: base.player.vigor,
+    maxVigor: base.player.maxVigor,
     tension: base.player.tension,
     mood: base.currentMood,
     highlights: [`Nova Linha: ${cleanBranchName}`],

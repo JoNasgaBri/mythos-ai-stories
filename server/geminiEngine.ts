@@ -1,5 +1,21 @@
 import { GoogleGenAI } from '@google/genai';
 import {
+  DND_BACKGROUNDS,
+  DND_CLASSES,
+  DND_SPECIES,
+} from '../src/data/dnd52Catalog.js';
+import {
+  computeArmorClass,
+  computeInitiativeBonus,
+  computePassiveScore,
+  computeSpellcastingInfo,
+  getThemedClassLabel,
+  getThemedSkillLabel,
+  getThemedSpeciesLabel,
+  getThemedSpellLabel,
+  isDndRuleset,
+} from '../src/engine/dnd52Rules.js';
+import {
   formatModifier,
   getAttributeModifier,
   getEffectiveAttributes,
@@ -11,6 +27,11 @@ import type {
   AiNarrationPreferences,
   AttributeId,
   Campaign,
+  ClashArchetype,
+  ClashEnemyIntentKind,
+  ClashInitResponse,
+  ClashTerrainEffectKind,
+  ClashZone,
   CraftRequest,
   CraftResponse,
   DiceRollResult,
@@ -142,10 +163,20 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
             description:
               'Optional 1-2 word label for what is being tested when requiresRoll is true (e.g. Combate, Furtividade, Blefe, Sobrevivência).',
           },
+          skillId: {
+            type: 'string',
+            description:
+              'Optional official D&D 5.2 skill ID when requiresRoll is true (athletics, acrobatics, sleight_of_hand, stealth, arcana, history, investigation, nature, religion, animal_handling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion).',
+          },
+          dcOverride: {
+            type: 'integer',
+            description:
+              'Optional explicit D&D 5e Difficulty Class (5 Very Easy, 10 Easy, 15 Medium, 20 Hard, 25 Very Hard, 30 Nearly Impossible).',
+          },
           attribute: {
             type: 'string',
             enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
-            description: 'BG3 primary attribute most relevant to this choice.',
+            description: 'D&D 5e primary attribute most relevant to this choice.',
           },
           effectTag: {
             type: 'string',
@@ -164,7 +195,44 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
     stateChanges: {
       type: 'object',
       properties: {
-        vigorDelta: { type: 'integer', description: 'Change to vigor (-30 to +25, 0 if unchanged).' },
+        vigorDelta: { type: 'integer', description: 'Change to HP/PV (D&D 5.2: proportional to maxVigor, e.g. -2 to -6 at Lv.1; Legacy: -30 to +25; 0 if unchanged).' },
+        tempHpGain: { type: 'integer', description: 'D&D 5.2 Temporary HP gained (never stacks, keeps highest).' },
+        conditionsAdd: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'D&D 5.2 conditions applied to the protagonist (e.g. poisoned, prone, frightened, blinded, charmed, restrained, grappled, stunned, invisible, incapacitated, deafened, paralyzed, petrified, unconscious).',
+        },
+        conditionsRemove: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'D&D 5.2 conditions cured/removed from the protagonist.',
+        },
+        exhaustionDelta: {
+          type: 'integer',
+          description: 'D&D 2024 Exhaustion shift (-1 to +2, scale 0..6, each level imposes -2 to d20 tests).',
+        },
+        spellSlotsDelta: {
+          type: 'object',
+          description: 'Spend (negative) or restore (positive) a D&D 5.2 spell slot in narrative play.',
+          properties: {
+            level: { type: 'integer' },
+            delta: { type: 'integer' },
+          },
+          required: ['level', 'delta'],
+        },
+        pendingSavingThrow: {
+          type: 'object',
+          description: 'OPTIONAL D&D 5.2 reactive hazard/trap/spell Saving Throw the player must roll next (set vigorDelta=0 this turn when emitting this).',
+          properties: {
+            ability: { type: 'string', enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'] },
+            dc: { type: 'integer' },
+            reason: { type: 'string' },
+            failDamageDice: { type: 'string' },
+            halfOnSuccess: { type: 'boolean' },
+            failCondition: { type: 'string' },
+          },
+          required: ['ability', 'dc', 'reason'],
+        },
         tensionDelta: { type: 'integer', description: 'Change to tension (-60 to +25, 0 if unchanged).' },
         xpGain: {
           type: 'integer',
@@ -229,6 +297,22 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
                   wis: { type: 'integer' },
                   cha: { type: 'integer' },
                   maxVigor: { type: 'integer' },
+                },
+              },
+              dndStats: {
+                type: 'object',
+                description:
+                  'Optional D&D 5.2 (2024) mechanical stats for weapons, armor, shields, or healing consumables.',
+                properties: {
+                  weaponDice: { type: 'string', description: 'e.g. "1d8", "1d6", "2d6".' },
+                  damageType: { type: 'string', description: 'e.g. slashing, piercing, bludgeoning, fire.' },
+                  mastery: { type: 'string', description: 'sap, vex, topple, push, graze, cleave, slow, or nick.' },
+                  magicBonus: { type: 'integer', description: 'Magical/masterwork bonus (+1 to +3).' },
+                  armorCategory: { type: 'string', enum: ['light', 'medium', 'heavy', 'shield'] },
+                  armorBaseAc: { type: 'integer', description: 'Base AC (e.g. 12 light, 14 medium, 16 heavy).' },
+                  acBonus: { type: 'integer', description: 'Flat AC bonus (e.g. +2 for shield, +1 for cloak/ring).' },
+                  healDice: { type: 'string', description: 'Healing dice for consumables (e.g. "2d4+2", "4d4+4").' },
+                  requiresAttunement: { type: 'boolean' },
                 },
               },
             },
@@ -529,6 +613,20 @@ const TURN_RESPONSE_SCHEMA: Record<string, unknown> = {
     waitingForResponse: {
       type: 'boolean',
       description: 'True when the scene stops on a cliffhanger waiting for the player.',
+    },
+    suggestedClash: {
+      type: 'object',
+      description:
+        'OPTIONAL: Emit ONLY when a serious combat/boss fight, urgent chase/escape, high-stakes social duel/interrogation, or horde siege just erupted AND no tactical clash is already active. Omit during calm, everyday, or pre-crisis scenes.',
+      properties: {
+        archetype: {
+          type: 'string',
+          enum: ['combat', 'chase', 'social', 'siege'],
+        },
+        title: { type: 'string', description: 'Short dramatic title (3-6 words).' },
+        reason: { type: 'string', description: 'One concise sentence explaining what is at stake.' },
+      },
+      required: ['archetype', 'title', 'reason'],
     },
   },
   required: ['sceneTitle', 'location', 'mood', 'narration', 'actions', 'stateChanges'],
@@ -902,7 +1000,20 @@ function buildSystemInstruction(
     PACE_DIRECTIVE[campaign.world.storyPace || 'epic'],
     `Current Arc / Book: ${campaign.arcNumber ?? 1}`,
     `Difficulty Mode: ${campaign.difficulty}. CREATIVE & FAITHFUL DIFFICULTY: Match the chosen difficulty faithfully AND creatively within the current scene’s genre/timeline. On easy, offer forgiving openings; on hard/insane/good-luck, make NPCs sharper, finances/supplies tighter, rivals cleverer, and mistakes truly costly — without breaking timeline logic or forcing arbitrary combat.`,
-    'BG3 PROGRESSION & INFINITE SANDBOX: Read the protagonist’s BG3 attributes (STR/DEX/CON/INT/WIS/CHA), level, leveled skills, talents, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain (15-80), training/practice with skillTraining (growing or creating skills!), breakthroughs with addTalents, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
+    'BG3 / D&D 5e (2024) PROGRESSION & INFINITE SANDBOX: Read the protagonist’s attributes (STR/DEX/CON/INT/WIS/CHA), level, skills, talents/feats, equipped gear, currency, NPC bonds/romance, active party companions, stronghold upgrades, world clock/countdown, and discovered dungeons/locations. Reward progress with xpGain, standout roleplay with inspirationGain: 1, money/trades with currencyDelta, meaningful loot with rarity/equipSlot/bonuses/dndStats, friendships/romance/rivalry with affinityDelta & relationship, party companion approval/disapproval with companionReactions, time/countdown progression with advanceTime, refuge fortifications with addBaseUpgrade, and new dungeons/markets/safehouses/secrets with discoverLocation.kind & status.',
+    isDndRuleset(campaign)
+      ? [
+          '=== OFFICIAL D&D 5e REVISED (2024 / SRD 5.2) RULES ENGINE (ACTIVE) ===',
+          `- HP / PV SCALE (CRITICAL): The protagonist has ${campaign.player.vigor}/${campaign.player.maxVigor} PV (NOT 100 HP!). Scale ALL narrative damage/healing strictly to D&D 5e hit points (at Lv.1–3, minor scratch = -1 to -3 PV, serious hazard = -3 to -6 PV; NEVER deal -25 HP to a 12 PV Lv.1 hero).`,
+          '- OFFICIAL DC LADDER: When setting actions[].requiresRoll=true, populate actions[].skillId (from the 18 official skills) and optional dcOverride using the 2024 DC ladder: 5 Very Easy, 10 Easy, 15 Medium, 20 Hard, 25 Very Hard, 30 Nearly Impossible.',
+          '- PASSIVE PERCEPTION: Compare hidden clues/ambushes against protagonist.dnd5e.passivePerception before asking for a roll; reveal details automatically if Passive Perception beats the hidden DC.',
+          '- REACTIVE SAVING THROWS: For traps, poison, spells, explosions, or collapsing terrain, emit stateChanges.pendingSavingThrow ({ attribute, dc, source, failDamageDice, halfOnSuccess, failCondition }) and keep vigorDelta = 0 on this turn so the player rolls their Saving Throw interactively!',
+          '- CONDITIONS & 2024 EXHAUSTION: Use stateChanges.conditionsAdd / conditionsRemove for standard 5e conditions (poisoned, prone, frightened, blinded, charmed, restrained, grappled, stunned, etc.) and exhaustionDelta (-1/+1 on 0..6 scale where each level is -2 to d20 tests).',
+          '- HEROIC INSPIRATION: Binary 0 or 1 (max 1). Grant inspirationGain: 1 on heroic/clever roleplay.',
+          '- LOOT STATS: When awarding weapons, armor, shields, or potions via addItems, include realistic dndStats (weaponDice e.g. "1d8", mastery e.g. "sap"/"vex"/"topple", magicBonus +1/+2, armorCategory + armorBaseAc, or healDice "2d4+2").',
+          '- THEMATIC VOCABULARY: Always describe mechanics in the genre vocabulary of this world (e.g. Cyberpunk Netrunner/Quickhacks, Noir Investigator, Fantasy Wizard/Paladin) while obeying the exact D&D 5.2 math underneath.',
+        ].join('\n')
+      : '',
     'SCENE BEATS & DIALOGUE BUBBLES (IMPORTANT): Always compose the scene inside the ordered "beats" array (and leave "narration" as "" to avoid duplicating text). Alternate atmospheric "narration" blocks (prose/descriptions/body language) with "dialogue" blocks whenever any character speaks aloud — put the exact character name in "speaker", an evocative 1-2 word "emotion" (e.g. "Sorrindo", "Sussurrando", "Séria"), and ONLY their spoken words in "text" (no outer quotes, no "ela diz:"). Whenever a character sends or receives a phone message, WhatsApp, SMS, radio call, email, or note, use kind="message" with "speaker" and "channel" (e.g. "WhatsApp", "SMS", "Rádio"). Never repeat a dialogue line inside a narration beat.',
     'ACTIVE PARTY COMPANIONS & RELATIONSHIPS: If activeParty is non-empty, weave those companions naturally into the scene (their banter, advice, reactions, and teamwork) and emit companionReactions when the player makes a choice they care about. Whenever introducing or interacting closely with a party companion, romance partner, or recurring NPC whose sheet lacks details, populate their age, height, appearance, personality, currentMood, attributes (6 BG3 stats), skills, traits, likes, dislikes, and a concise bondMemory via stateChanges.upsertNpcs. Always honor any player-edited biometrics, height, age, appearance, or skills present in activeParty/knownNpcs without contradicting them.',
     'PLAYER ORGANIZATION / GUILD / FACTION: If playerOrganization is present in state, treat it as a real living force in the world — weave its name, motto, members on duty/mission, outposts, morale, Heat (notoriety), treaties, and policies organically into dialogue, rumors, and consequences.',
@@ -940,9 +1051,57 @@ function buildCompactStateContext(campaign: Campaign): string {
   const canonFacts = [...pinnedFacts, ...dynamicFacts].slice(0, 35).map((f) => f.text);
 
   const effAttrs = getEffectiveAttributes(campaign.player);
+  const dndActive = isDndRuleset(campaign);
+  const dndSheet = dndActive ? campaign.player.dnd : undefined;
+  const dndBlock = dndSheet
+    ? (() => {
+        const cls = DND_CLASSES[dndSheet.classId];
+        const sp = DND_SPECIES[dndSheet.speciesId];
+        const bg = DND_BACKGROUNDS[dndSheet.backgroundId];
+        const acInfo = computeArmorClass(campaign.player);
+        const spellInfo = computeSpellcastingInfo(campaign.player);
+        const theme = campaign.world.primaryTheme;
+        return {
+          ruleset: 'dnd5e_2024',
+          class: `${getThemedClassLabel(dndSheet.classId, theme)} (${cls.label})`,
+          subclass: dndSheet.subclassId ?? null,
+          species: `${getThemedSpeciesLabel(dndSheet.speciesId, theme)} (${sp.label})`,
+          background: bg.label,
+          armorClass: acInfo.ac,
+          initiative: formatModifier(computeInitiativeBonus(campaign.player)),
+          passivePerception: computePassiveScore(campaign.player, 'perception'),
+          tempHp: dndSheet.tempHp ?? 0,
+          hitDice: `${dndSheet.hitDiceRemaining}/${campaign.player.level} d${dndSheet.hitDie}`,
+          conditions: dndSheet.conditions ?? [],
+          exhaustion: dndSheet.exhaustion ?? 0,
+          proficientSkills: (dndSheet.skillProficiencies ?? []).map((sk) =>
+            getThemedSkillLabel(sk, theme),
+          ),
+          expertiseSkills: (dndSheet.skillExpertise ?? []).map((sk) =>
+            getThemedSkillLabel(sk, theme),
+          ),
+          spellSaveDc: spellInfo?.saveDc ?? null,
+          spellSlots: Object.entries(dndSheet.spellSlots?.tiers ?? {})
+            .filter(([, s]) => s.max > 0)
+            .map(([lvl, s]) => `Lv.${lvl}: ${s.current}/${s.max}`),
+          pactSlots: dndSheet.spellSlots?.pactMax
+            ? `${dndSheet.spellSlots.pactCurrent ?? 0}/${dndSheet.spellSlots.pactMax} (Lv.${dndSheet.spellSlots.pactSlotLevel ?? 1})`
+            : null,
+          knownSpells: [
+            ...(dndSheet.cantripIds ?? []).slice(0, 4),
+            ...(dndSheet.preparedSpellIds ?? []).slice(0, 6),
+          ].map((id) => getThemedSpellLabel(id, theme)),
+          classResources: (dndSheet.classResources ?? []).map(
+            (r) => `${r.name}: ${r.current}/${r.max}`,
+          ),
+          weaponMasteries: dndSheet.weaponMasteries ?? [],
+        };
+      })()
+    : null;
 
   return JSON.stringify(
     {
+      ruleset: dndActive ? 'dnd5e_2024' : 'mythos_legacy',
       protagonist: {
         name: campaign.player.name,
         age: campaign.player.age,
@@ -961,14 +1120,19 @@ function buildCompactStateContext(campaign: Campaign): string {
           WIS: `${effAttrs.wis} (${formatModifier(getAttributeModifier(effAttrs.wis))})`,
           CHA: `${effAttrs.cha} (${formatModifier(getAttributeModifier(effAttrs.cha))})`,
         },
-        vigor: `${campaign.player.vigor}/${campaign.player.maxVigor}`,
+        hp: `${campaign.player.vigor}/${campaign.player.maxVigor}${dndSheet?.tempHp ? ` (+${dndSheet.tempHp} Temp)` : ''}`,
         tension: campaign.player.tension,
-        inspiration: `${campaign.player.inspiration ?? 1}/4`,
+        inspiration: dndActive
+          ? `${Math.min(1, campaign.player.inspiration ?? 0)}/1`
+          : `${campaign.player.inspiration ?? 1}/4`,
+        dnd5e: dndBlock,
         currency: `${campaign.player.currency?.amount ?? 0} ${campaign.player.currency?.label ?? 'Ouro'}`,
         traits: campaign.player.traits,
-        skillLevels: (campaign.player.skillLevels ?? []).map(
-          (s) => `${s.name} (Nv.${s.level}, ${s.attribute.toUpperCase()})`,
-        ),
+        skillLevels: dndActive
+          ? []
+          : (campaign.player.skillLevels ?? []).map(
+              (s) => `${s.name} (Nv.${s.level}, ${s.attribute.toUpperCase()})`,
+            ),
         talents: (campaign.player.talents ?? []).map(
           (t) => `${t.name}: ${t.description}`,
         ),
@@ -1032,6 +1196,24 @@ function buildCompactStateContext(campaign: Campaign): string {
           likes: (n.likes ?? []).slice(0, 4),
           dislikes: (n.dislikes ?? []).slice(0, 4),
         })),
+      activeClash:
+        campaign.activeClash?.status === 'active'
+          ? {
+              archetype: campaign.activeClash.archetype,
+              title: campaign.activeClash.title,
+              round: campaign.activeClash.round,
+              playerZone: campaign.activeClash.playerZone,
+              enemies: campaign.activeClash.enemies
+                .filter((e) => e.hp > 0)
+                .map((e) => ({
+                  name: e.name,
+                  hp: `${e.hp}/${e.maxHp}`,
+                  posture: `${e.posture}/${e.maxPosture}`,
+                  staggered: Boolean(e.staggered),
+                  nextIntent: e.nextIntent.label,
+                })),
+            }
+          : null,
       permanentCanonFacts: canonFacts,
       playerOrganization: campaign.organization
         ? {
@@ -1256,6 +1438,7 @@ export async function generateStoryTurn(
   length: ResponseLength,
   crisisMode?: 'survival_test' | 'breaking_point',
   narrationPrefs?: Partial<AiNarrationPreferences>,
+  clashRoundContext?: string,
 ): Promise<StoryTurnResponse> {
   const client = new GoogleGenAI({ apiKey });
   const systemInstruction = buildSystemInstruction(
@@ -1292,6 +1475,7 @@ export async function generateStoryTurn(
     '',
     `PLAYER INPUT: "${playerAction}"`,
     rollInstruction,
+    clashRoundContext ?? '',
     directionDirective,
     crisisDirective,
   ]
@@ -1318,16 +1502,95 @@ export async function generateStoryTurn(
     campaign.player.name,
   );
 
+  const validClashArchetypes = new Set<ClashArchetype>([
+    'combat',
+    'chase',
+    'social',
+    'siege',
+  ]);
+  const rawSuggested = parsed.suggestedClash;
+  const sanitizedSuggestedClash =
+    !clashRoundContext &&
+    campaign.activeClash?.status !== 'active' &&
+    campaign.turnCount >= 1 &&
+    rawSuggested &&
+    validClashArchetypes.has(rawSuggested.archetype) &&
+    typeof rawSuggested.title === 'string' &&
+    rawSuggested.title.trim().length > 0
+      ? {
+          archetype: rawSuggested.archetype,
+          title: rawSuggested.title.trim(),
+          reason:
+            typeof rawSuggested.reason === 'string' && rawSuggested.reason.trim()
+              ? rawSuggested.reason.trim()
+              : 'A tensão da cena escalou para um confronto decisivo.',
+        }
+      : null;
+
   return {
     ...parsed,
     narration,
     beats,
     actions: Array.isArray(parsed.actions) ? parsed.actions : [],
     stateChanges: parsed.stateChanges ?? {},
+    suggestedClash: sanitizedSuggestedClash,
     interactionId: interaction.id,
     engineUsed: 'gemini',
   };
 }
+
+const PULSE_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    sceneTitle: { type: 'string', description: 'Short atmospheric beat title (3-6 words).' },
+    location: { type: 'string', description: 'Current location name.' },
+    mood: { type: 'string', description: 'Short 1-3 word atmosphere mood label.' },
+    narration: {
+      type: 'string',
+      description: '1-2 concise ambient paragraphs describing the world moving around the protagonist.',
+    },
+    actions: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 4,
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string' },
+          intent: {
+            type: 'string',
+            enum: ['bold', 'stealth', 'diplomatic', 'investigate', 'survival', 'item'],
+          },
+          risk: { type: 'string', enum: ['safe', 'low', 'medium', 'high'] },
+          requiresRoll: { type: 'boolean' },
+          attribute: { type: 'string', enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'] },
+          skillId: { type: 'string' },
+          effectTag: { type: 'string' },
+        },
+        required: ['label', 'intent', 'risk', 'requiresRoll'],
+      },
+    },
+    stateChanges: {
+      type: 'object',
+      properties: {
+        tensionDelta: { type: 'integer' },
+        vigorDelta: { type: 'integer' },
+        advanceTime: {
+          type: 'object',
+          properties: {
+            minutes: { type: 'integer' },
+            weather: { type: 'string' },
+            weatherType: {
+              type: 'string',
+              enum: ['clear', 'cloudy', 'rain', 'storm', 'fog', 'heatwave', 'snow', 'ash'],
+            },
+          },
+        },
+      },
+    },
+  },
+  required: ['sceneTitle', 'location', 'mood', 'narration', 'actions', 'stateChanges'],
+};
 
 export async function generateLivingWorldPulse(
   apiKey: string,
@@ -1349,7 +1612,7 @@ export async function generateLivingWorldPulse(
     response_format: {
       type: 'text',
       mime_type: 'application/json',
-      schema: TURN_RESPONSE_SCHEMA,
+      schema: PULSE_RESPONSE_SCHEMA,
     },
     generation_config: {
       max_output_tokens: 4096,
@@ -2173,7 +2436,9 @@ export async function generateCraftUpgrade(
     LANGUAGE_DIRECTIVE[campaign.language],
     'Evaluate the player’s crafting or upgrade project using the selected target item/vehicle, optional secondary component, and Base Materials spent.',
     'Keep results grounded and believable inside this world’s era and laws (e.g., realistic tactical/armor/vehicle mods in modern survival, runic/masterwork forging in fantasy, cyber-mods in sci-fi).',
-    'Reward clever combinations with a crisp upgraded name, upgraded rarity (up to +1 or +2 tiers), realistic stat bonuses (+1 to +2 on 1-2 relevant BG3 attributes, or +10 to +20 maxVigor for armor/gear), and a concise vivid narrativeLog.',
+    isDndRuleset(campaign)
+      ? 'D&D 5.2 (2024) CRAFTING BALANCE: Reward clever upgrades with a crisp upgraded name, upgraded rarity (+1 tier), modest realistic bonuses (+1 on 1 relevant attribute or +1/+2 weapon/armor enhancement — NEVER emit +10..20 maxVigor on a D&D 5e character!), and a concise vivid narrativeLog.'
+      : 'Reward clever combinations with a crisp upgraded name, upgraded rarity (up to +1 or +2 tiers), realistic stat bonuses (+1 to +2 on 1-2 relevant BG3 attributes, or +10 to +20 maxVigor for armor/gear), and a concise vivid narrativeLog.',
     hasWorkshop
       ? 'BONUS: The protagonist has an active Workshop/Oficina at their Base — allow refined, higher-craftsmanship results.'
       : '',
@@ -2463,6 +2728,10 @@ export async function generateWorldEvent(
       ? 'urgent'
       : 'medium';
 
+  const dndMaxEventHpDelta = isDndRuleset(campaign)
+    ? Math.max(4, Math.ceil((campaign.player.maxVigor || 10) * 0.35))
+    : 25;
+
   const choices = Array.isArray(parsed.choices)
     ? parsed.choices
         .filter((c) => c && String(c.label || '').trim())
@@ -2487,7 +2756,10 @@ export async function generateWorldEvent(
               : undefined,
           vigorDelta:
             typeof c.vigorDelta === 'number'
-              ? Math.max(-25, Math.min(25, Math.round(c.vigorDelta)))
+              ? Math.max(
+                  -dndMaxEventHpDelta,
+                  Math.min(dndMaxEventHpDelta, Math.round(c.vigorDelta)),
+                )
               : undefined,
           tensionDelta:
             typeof c.tensionDelta === 'number'
@@ -3244,6 +3516,342 @@ export async function generateOrgOperationReport(
           }
         : undefined,
     canonFact: parsed.canonFact ? String(parsed.canonFact).trim() : undefined,
+    engineUsed: 'gemini',
+  };
+}
+
+
+// ---------------------------------------------------------------------------
+// MYTHOS 11.0 — Tactical Clash Initialization (Polymorphic 4 Archetypes)
+// ---------------------------------------------------------------------------
+
+const CLASH_INIT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    archetype: {
+      type: 'string',
+      enum: ['combat', 'chase', 'social', 'siege'],
+      description: 'Best matching clash archetype for the current scene.',
+    },
+    title: {
+      type: 'string',
+      description: 'Evocative short clash title (3-6 words) in the campaign language.',
+    },
+    stakes: {
+      type: 'string',
+      description: 'One sharp sentence explaining what happens if the player fails.',
+    },
+    objective: {
+      type: 'string',
+      description: 'One concrete tactical objective sentence.',
+    },
+    playerStartZone: {
+      type: 'string',
+      enum: ['close', 'mid', 'far'],
+    },
+    waveTotal: {
+      type: 'integer',
+      description: 'Only for siege archetype: 2 to 4 waves.',
+    },
+    enemies: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string' },
+          isBoss: { type: 'boolean' },
+          hp: { type: 'integer', description: 'D&D 5.2: CR-scaled PV (e.g. 7-22 at Lv.1-2, 30-75 for Lv.3-5 bosses); Legacy: 30-130.' },
+          posture: { type: 'integer', description: '20 to 65 (bosses 38-65, minions 18-32).' },
+          armorClass: { type: 'integer', description: 'D&D 5.2 enemy Armor Class (10 to 21, e.g. 12-15 at Lv.1-2).' },
+          cr: { type: 'number', description: 'D&D 5.2 Challenge Rating (e.g. 0.25, 0.5, 1, 2, 3).' },
+          attackBonus: { type: 'integer', description: 'D&D 5.2 enemy to-hit bonus (+2 to +10).' },
+          damageDice: { type: 'string', description: 'D&D 5.2 enemy damage dice (e.g. "1d6+2", "1d8+3").' },
+          zone: { type: 'string', enum: ['close', 'mid', 'far'] },
+          armor: { type: 'integer', description: '0 to 4 flat mitigation (legacy mode).' },
+          weaknesses: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2-3 short weakness keywords (e.g. "Flanco", "Fogo", "Provas", "DES").',
+          },
+          nextIntent: {
+            type: 'object',
+            properties: {
+              kind: {
+                type: 'string',
+                enum: [
+                  'heavy_attack',
+                  'attack',
+                  'defend',
+                  'flank',
+                  'debuff',
+                  'special',
+                  'pursue',
+                  'pressure',
+                ],
+              },
+              label: { type: 'string', description: 'Short vivid telegraphed move name.' },
+              damage: { type: 'integer', description: '8 to 30.' },
+              target: {
+                type: 'string',
+                enum: ['player', 'ally', 'barricade', 'all'],
+              },
+              targetAllyName: {
+                type: 'string',
+                description: 'Optional exact name of an active party companion when target="ally".',
+              },
+            },
+            required: ['kind', 'label', 'damage', 'target'],
+          },
+        },
+        required: ['name', 'role', 'hp', 'posture', 'zone', 'armor', 'weaknesses', 'nextIntent'],
+      },
+    },
+    terrain: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          description: { type: 'string' },
+          zone: { type: 'string', enum: ['close', 'mid', 'far'] },
+          attribute: { type: 'string', enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'] },
+          effectKind: {
+            type: 'string',
+            enum: [
+              'posture_break',
+              'damage_burst',
+              'cover_shield',
+              'escape_boost',
+              'social_leverage',
+            ],
+          },
+          effectLabel: { type: 'string' },
+          usesLeft: { type: 'integer', description: '1 or 2.' },
+        },
+        required: ['name', 'description', 'zone', 'attribute', 'effectKind', 'effectLabel', 'usesLeft'],
+      },
+    },
+  },
+  required: ['archetype', 'title', 'stakes', 'objective', 'playerStartZone', 'enemies', 'terrain'],
+};
+
+export async function generateClashInit(
+  apiKey: string,
+  campaign: Campaign,
+  opts?: {
+    requestedArchetype?: ClashArchetype;
+    customPremise?: string;
+  },
+): Promise<ClashInitResponse> {
+  const client = new GoogleGenAI({ apiKey });
+  const langLabel =
+    campaign.language === 'en'
+      ? 'English'
+      : campaign.language === 'fr'
+        ? 'French'
+        : 'Brazilian Portuguese (pt-BR)';
+
+  const recentEntries = campaign.entries
+    .slice(-4)
+    .map((e) => `[${e.role.toUpperCase()} T${e.turn}] ${e.text.slice(0, 420)}`)
+    .join('\n');
+
+  const dndActive = isDndRuleset(campaign);
+  const systemInstruction = `You are the MYTHOS Tactical Clash Designer.
+Write ALL titles, names, roles, intents, stakes, and terrain features strictly in ${langLabel}.
+Design an authentic, grounded tactical encounter matching the EXACT current scene, location, world theme, and NPCs already present in the story!
+- If hostile or suspicious NPCs are already in this scene, USE THEM as the enemies/opponents (exact names!).
+- For "social" duels, enemies are rhetorical/interrogation opponents (hp = Composure, posture = Defense) and terrain features are situational leverage/crowd/silence/records.
+- For "chase", enemies are pursuers (hp = Stamina, posture = Pace) and terrain features are shortcuts, bottlenecks, and barriers.
+- For "siege", enemies are Wave 1 threats and terrain features are traps, vantage points, and chokepoints.
+- Only use target="ally" when activeParty has companions; only use target="barricade" for archetype="siege".${
+    dndActive
+      ? `\n- D&D 5e (2024 / SRD 5.2) ENCOUNTER BALANCE: The protagonist is Level ${campaign.player.level} (${campaign.player.vigor}/${campaign.player.maxVigor} PV). Set realistic CR-appropriate hp (e.g. minions 7–15 PV and bosses 22–38 PV at Lv.1–2, scaling smoothly with player level), armorClass (11–18), cr (0.25–5), attackBonus (+3 to +8), and damageDice (e.g. "1d6+2", "1d8+3").`
+      : ''
+  }`;
+
+  const inputPayload = JSON.stringify(
+    {
+      ruleset: dndActive ? 'dnd5e_2024' : 'mythos_legacy',
+      world: {
+        title: campaign.world.title,
+        theme: campaign.world.primaryTheme,
+        era: campaign.world.era,
+        tone: campaign.world.tone,
+      },
+      currentLocation: campaign.currentLocation,
+      weather: campaign.worldClock?.weather ?? 'Neutro',
+      requestedArchetype: opts?.requestedArchetype ?? 'auto',
+      customPremise: opts?.customPremise ?? null,
+      player: {
+        name: campaign.player.name,
+        level: campaign.player.level,
+        hp: `${campaign.player.vigor}/${campaign.player.maxVigor}`,
+        occupation: campaign.player.occupation,
+      },
+      activeParty: campaign.codex.npcs
+        .filter((n) => n.inParty && n.status === 'alive')
+        .map((n) => ({ name: n.name, role: n.role })),
+      nearbyNpcs: campaign.codex.npcs
+        .filter((n) => n.status === 'alive' && !n.inParty)
+        .slice(0, 8)
+        .map((n) => ({ name: n.name, role: n.role, stance: n.stance })),
+      recentScene: recentEntries,
+    },
+    null,
+    2,
+  );
+
+  const interaction = await client.interactions.create({
+    model: 'gemini-3.8-flash',
+    system_instruction: systemInstruction,
+    input: `Design the Tactical Clash state for this scene:\n${inputPayload}`,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: CLASH_INIT_SCHEMA,
+    },
+    generation_config: {
+      temperature: 0.65,
+      max_output_tokens: 6144,
+      thinking_level: 'low',
+    },
+  });
+
+  const parsed = parseStructuredJson<Partial<ClashInitResponse>>(
+    interaction.output_text,
+  );
+
+  const validArchetypes = new Set<ClashArchetype>([
+    'combat',
+    'chase',
+    'social',
+    'siege',
+  ]);
+  const validZones = new Set<ClashZone>(['close', 'mid', 'far']);
+  const validIntentKinds = new Set<ClashEnemyIntentKind>([
+    'heavy_attack',
+    'attack',
+    'defend',
+    'flank',
+    'debuff',
+    'special',
+    'pursue',
+    'pressure',
+  ]);
+  const validEffectKinds = new Set<ClashTerrainEffectKind>([
+    'posture_break',
+    'damage_burst',
+    'cover_shield',
+    'escape_boost',
+    'social_leverage',
+  ]);
+  const validAttrs = new Set<AttributeId>(['str', 'dex', 'con', 'int', 'wis', 'cha']);
+
+  const archetype: ClashArchetype =
+    opts?.requestedArchetype && validArchetypes.has(opts.requestedArchetype)
+      ? opts.requestedArchetype
+      : parsed.archetype && validArchetypes.has(parsed.archetype)
+        ? parsed.archetype
+        : 'combat';
+
+  const enemies = (Array.isArray(parsed.enemies) ? parsed.enemies : [])
+    .slice(0, 3)
+    .map((e) => {
+      const hp = dndActive
+        ? Math.max(4, Math.min(260, Math.round(Number(e.hp) || 14)))
+        : Math.max(25, Math.min(180, Math.round(Number(e.hp) || 60)));
+      const posture = Math.max(18, Math.min(90, Math.round(Number(e.posture) || 32)));
+      const rawIntent = e.nextIntent;
+      const targetVal =
+        rawIntent?.target === 'ally' ||
+        rawIntent?.target === 'barricade' ||
+        rawIntent?.target === 'all'
+          ? rawIntent.target
+          : 'player';
+      const rawDnd = e as Record<string, unknown>;
+      return {
+        name: String(e.name || 'Oponente').trim(),
+        role: String(e.role || 'Ameaça').trim(),
+        isBoss: Boolean(e.isBoss),
+        hp,
+        maxHp: hp,
+        posture,
+        maxPosture: posture,
+        zone: validZones.has(e.zone as ClashZone) ? (e.zone as ClashZone) : 'mid',
+        armor: Math.max(0, Math.min(5, Math.round(Number(e.armor) || 1))),
+        armorClass:
+          typeof rawDnd.armorClass === 'number' && Number.isFinite(rawDnd.armorClass)
+            ? Math.max(10, Math.min(22, Math.round(rawDnd.armorClass)))
+            : undefined,
+        cr:
+          typeof rawDnd.cr === 'number' && Number.isFinite(rawDnd.cr)
+            ? Math.max(0.125, Math.min(20, rawDnd.cr))
+            : undefined,
+        attackBonus:
+          typeof rawDnd.attackBonus === 'number' && Number.isFinite(rawDnd.attackBonus)
+            ? Math.max(1, Math.min(14, Math.round(rawDnd.attackBonus)))
+            : undefined,
+        damageDice:
+          typeof rawDnd.damageDice === 'string' && rawDnd.damageDice.trim()
+            ? rawDnd.damageDice.trim()
+            : undefined,
+        weaknesses: Array.isArray(e.weaknesses)
+          ? e.weaknesses.map((w) => String(w).trim()).filter(Boolean).slice(0, 3)
+          : ['Flanco'],
+        nextIntent: {
+          kind: validIntentKinds.has(rawIntent?.kind as ClashEnemyIntentKind)
+            ? (rawIntent!.kind as ClashEnemyIntentKind)
+            : 'attack',
+          label: String(rawIntent?.label || 'Ataque Direto').trim(),
+          damage: dndActive
+            ? Math.max(3, Math.min(40, Math.round(Number(rawIntent?.damage) || 6)))
+            : Math.max(6, Math.min(34, Math.round(Number(rawIntent?.damage) || 15))),
+          target: targetVal as 'player' | 'ally' | 'barricade' | 'all',
+          targetAllyName: rawIntent?.targetAllyName
+            ? String(rawIntent.targetAllyName).trim()
+            : undefined,
+        },
+      };
+    });
+
+  const terrain = (Array.isArray(parsed.terrain) ? parsed.terrain : [])
+    .slice(0, 3)
+    .map((t) => ({
+      name: String(t.name || 'Elemento do Cenário').trim(),
+      description: String(t.description || 'Pode ser explorado taticamente.').trim(),
+      zone: validZones.has(t.zone as ClashZone) ? (t.zone as ClashZone) : 'mid',
+      attribute: validAttrs.has(t.attribute as AttributeId)
+        ? (t.attribute as AttributeId)
+        : 'dex',
+      effectKind: validEffectKinds.has(t.effectKind as ClashTerrainEffectKind)
+        ? (t.effectKind as ClashTerrainEffectKind)
+        : 'posture_break',
+      effectLabel: String(t.effectLabel || 'Vantagem tática').trim(),
+      usesLeft: Math.max(1, Math.min(2, Math.round(Number(t.usesLeft) || 1))),
+    }));
+
+  return {
+    archetype,
+    title: String(parsed.title || `Confronto em ${campaign.currentLocation}`).trim(),
+    stakes: String(
+      parsed.stakes || 'O desfecho desta cena terá consequências reais na história.',
+    ).trim(),
+    objective: String(parsed.objective || 'Vença ou domine o confronto.').trim(),
+    playerStartZone: validZones.has(parsed.playerStartZone as ClashZone)
+      ? (parsed.playerStartZone as ClashZone)
+      : 'mid',
+    waveTotal:
+      archetype === 'siege'
+        ? Math.max(2, Math.min(4, Math.round(Number(parsed.waveTotal) || 3)))
+        : undefined,
+    enemies,
+    terrain,
     engineUsed: 'gemini',
   };
 }

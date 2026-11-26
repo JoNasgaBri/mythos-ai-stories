@@ -19,14 +19,25 @@ import type { ToastMessage } from '../types/game';
 
 interface ToastStackProps {
   toasts: ToastMessage[];
+  extraTopOffsetMobile?: boolean;
   onDismiss: (id: string) => void;
 }
 
-export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
+export function ToastStack({
+  toasts,
+  extraTopOffsetMobile = false,
+  onDismiss,
+}: ToastStackProps) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed top-[calc(3.35rem+env(safe-area-inset-top))] right-3 left-3 z-50 flex flex-col items-center gap-2 sm:top-auto sm:right-6 sm:bottom-6 sm:left-auto sm:max-w-xs sm:items-end">
+    <div
+      className={`pointer-events-none fixed right-3 left-3 z-50 flex flex-col items-center gap-2 sm:top-auto sm:right-6 sm:bottom-6 sm:left-auto sm:max-w-xs sm:items-end ${
+        extraTopOffsetMobile
+          ? 'top-[calc(7.6rem+env(safe-area-inset-top))]'
+          : 'top-[calc(3.35rem+env(safe-area-inset-top))]'
+      }`}
+    >
       {toasts.map((toast) => {
         const icon =
           toast.kind === 'level' || toast.kind === 'talent' ? (

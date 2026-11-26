@@ -11,8 +11,12 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { isDndRuleset } from '../engine/dnd52Rules';
 import {
   formatClockTime,
+  getAttributeModifier,
+  getEffectiveAttributes,
+  getProficiencyBonus,
   MAX_SHORT_RESTS_PER_DAY,
 } from '../engine/rpgSystem';
 import type { Campaign, WorldThemeId } from '../types/game';
@@ -32,6 +36,7 @@ export interface RestChoicePayload {
   skillName?: string;
   customNote?: string;
   narrateScene: boolean;
+  hitDiceToSpend?: number;
 }
 
 interface RestCampModalProps {
@@ -91,6 +96,15 @@ export function RestCampModal({
   const [skillName, setSkillName] = useState('');
   const [customNote, setCustomNote] = useState('');
   const [narrateScene, setNarrateScene] = useState(true);
+  const [hitDiceToSpend, setHitDiceToSpend] = useState(0);
+
+  const isDnd = isDndRuleset(campaign);
+  const dnd = campaign.player.dnd;
+  const hitDiceAvailable = dnd?.hitDiceRemaining ?? 0;
+  const hitDieSize = dnd?.hitDie ?? 10;
+  const missingHp = Math.max(0, campaign.player.maxVigor - campaign.player.vigor);
+  const effConMod = getAttributeModifier(getEffectiveAttributes(campaign.player).con);
+  const pb = getProficiencyBonus(campaign.player.level);
 
   const aliveNpcs = campaign.codex.npcs.filter((n) => n.status === 'alive');
   const partyFirst = [
@@ -99,15 +113,24 @@ export function RestCampModal({
   ];
   const skills = campaign.player.skillLevels ?? [];
 
+  const recommendedHitDice =
+    isDnd && missingHp > 0 && hitDiceAvailable > 0
+      ? Math.min(
+          hitDiceAvailable,
+          Math.max(1, Math.ceil(missingHp / Math.max(1, Math.floor(hitDieSize / 2) + 1 + effConMod))),
+        )
+      : 0;
+
   useEffect(() => {
     if (!open) return;
     const used = campaign.worldClock?.shortRestsUsedToday ?? 0;
-    setKind(used >= MAX_SHORT_RESTS_PER_DAY ? 'long' : 'short');
+    setKind(!isDnd && used >= MAX_SHORT_RESTS_PER_DAY ? 'long' : 'short');
     setFocus('quiet');
     setCompanionName(partyFirst[0]?.name ?? '');
     setSkillName(skills[0]?.name ?? '');
     setCustomNote('');
     setNarrateScene(true);
+    setHitDiceToSpend(recommendedHitDice);
   }, [open]);
 
   useEffect(() => {
@@ -144,6 +167,7 @@ export function RestCampModal({
       skillName: focus === 'train' ? skillName || undefined : undefined,
       customNote: customNote.trim() || undefined,
       narrateScene,
+      hitDiceToSpend: isDnd && kind === 'short' ? hitDiceToSpend : undefined,
     });
     onClose();
   };
@@ -197,11 +221,11 @@ export function RestCampModal({
             </div>
           ) : null}
 
-          {/* Rest Type Picker: Short vs Long (BG3 style) */}
+          {/* Rest Type Picker: Short vs Long (D&D 2024 SRD 5.2 / Legacy) */}
           <div className="grid grid-cols-2 gap-2.5">
             <button
               type="button"
-              disabled={shortRestsLeft <= 0}
+              disabled={!isDnd && shortRestsLeft <= 0}
               onClick={() => setKind('short')}
               className={`rounded-2xl border p-3.5 text-left transition disabled:opacity-45 ${
                 kind === 'short'
@@ -215,11 +239,19 @@ export function RestCampModal({
                   Descanso Curto
                 </span>
                 <span className="font-mono-tech rounded bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 text-[10px] text-[var(--accent)]">
-                  {shortRestsLeft}/{MAX_SHORT_RESTS_PER_DAY}
+                  {isDnd ? `${hitDiceAvailable}/${campaign.player.level} d${hitDieSize}` : `${shortRestsLeft}/${MAX_SHORT_RESTS_PER_DAY}`}
                 </span>
               </div>
               <p className="mt-1.5 text-[11px] leading-snug text-[var(--text-secondary)]">
-                Avança <strong>+1h30</strong>, recupera <strong>+20 Vigor</strong> e mantém você na cena atual sem cortar o dia.
+                {isDnd ? (
+                  <>
+                    Avança <strong>+1h</strong>, permite gastar <strong>Dados de Vida</strong> (d{hitDieSize}{effConMod >= 0 ? `+${effConMod}` : effConMod}) e recarrega recursos curtos.
+                  </>
+                ) : (
+                  <>
+                    Avança <strong>+1h30</strong>, recupera <strong>+20 Vigor</strong> e mantém você na cena atual.
+                  </>
+                )}
               </p>
             </button>
 
@@ -238,14 +270,62 @@ export function RestCampModal({
                   Descanso Longo
                 </span>
                 <span className="font-mono-tech rounded bg-[var(--bg-canvas)]/70 px-1.5 py-0.5 text-[10px] text-[var(--success)]">
-                  07:30
+                  {isDnd ? '8h · 100%' : '07:30'}
                 </span>
               </div>
               <p className="mt-1.5 text-[11px] leading-snug text-[var(--text-secondary)]">
-                Passa para o <strong>Dia {(campaign.worldClock?.day ?? 1) + 1}</strong>, recupera <strong>+{longVigorGain} Vigor</strong>{hasMedbay ? ' (Enfermaria)' : ''} e alivia tensão.
+                {isDnd ? (
+                  <>
+                    <strong>100% PV</strong>, <strong>todos os Dados de Vida</strong>, Espaços de Magia, <strong>−1 Exaustão</strong>{hasMedbay ? ` e +${campaign.player.level + pb} PV Temp` : ''}.
+                  </>
+                ) : (
+                  <>
+                    Passa para o <strong>Dia {(campaign.worldClock?.day ?? 1) + 1}</strong>, recupera <strong>+{longVigorGain} Vigor</strong>{hasMedbay ? ' (Enfermaria)' : ''} e alivia tensão.
+                  </>
+                )}
               </p>
             </button>
           </div>
+
+          {/* Cancel-Safe Hit Dice Stepper for D&D 5.2 Short Rest */}
+          {isDnd && kind === 'short' && missingHp > 0 && hitDiceAvailable > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--accent)]/40 bg-[var(--accent-soft)]/50 px-3.5 py-2.5 text-xs">
+              <div>
+                <div className="font-semibold text-[var(--text-primary)]">
+                  Gastar Dados de Vida (d{hitDieSize}{effConMod >= 0 ? `+${effConMod}` : effConMod})
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  PV atual: {campaign.player.vigor}/{campaign.player.maxVigor} · Rolado ao confirmar
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setHitDiceToSpend((n) => Math.max(0, n - 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] font-bold"
+                >
+                  −
+                </button>
+                <span className="font-mono-tech min-w-[44px] text-center font-bold text-[var(--accent)]">
+                  {hitDiceToSpend}/{hitDiceAvailable}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setHitDiceToSpend((n) => Math.min(hitDiceAvailable, n + 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] font-bold"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHitDiceToSpend(recommendedHitDice)}
+                  className="rounded-lg bg-[var(--accent)]/20 px-2 py-1 text-[10px] font-bold text-[var(--accent)]"
+                >
+                  Auto
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/* Focus Picker */}
           <div>

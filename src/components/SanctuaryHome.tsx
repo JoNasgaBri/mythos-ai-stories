@@ -402,7 +402,9 @@ export function SanctuaryHome({
                       <span>·</span>
                       <span className="inline-flex items-center gap-1">
                         <Heart className="h-3 w-3 text-[var(--danger)]" />
-                        {camp.player.vigor}%
+                        {camp.ruleset === 'dnd5e_2024'
+                          ? `${camp.player.vigor}/${camp.player.maxVigor} PV`
+                          : `${Math.round((camp.player.vigor / Math.max(1, camp.player.maxVigor)) * 100)}%`}
                       </span>
                     </div>
 

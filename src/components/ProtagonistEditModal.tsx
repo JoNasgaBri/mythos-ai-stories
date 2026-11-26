@@ -15,6 +15,7 @@ import {
   ATTRIBUTE_KEYS,
   ATTRIBUTE_META,
   BG3_BUILD_PRESETS,
+  EPIC_BOON_ATTRIBUTE_CAP,
   formatModifier,
   getAttributeModifier,
   getAttributeTierMeta,
@@ -24,6 +25,7 @@ import {
   MAX_LEVEL,
   NATURAL_ATTRIBUTE_CAP,
 } from '../engine/rpgSystem';
+import { isDndRuleset } from '../engine/dnd52Rules';
 import type {
   Campaign,
   CharacterAttributes,
@@ -100,41 +102,47 @@ export function ProtagonistEditModal({
 
   if (!open) return null;
 
+  const isDnd = isDndRuleset(campaign);
+  const hasEpicBoon = Boolean(
+    player.dnd?.featIds.some((id) => id.startsWith('boon_')),
+  );
+  const attrCap = isDnd && hasEpicBoon ? EPIC_BOON_ATTRIBUTE_CAP : NATURAL_ATTRIBUTE_CAP;
   const gearBonuses = getEquippedGearBonuses(player.inventory);
   const level = Math.max(1, Math.min(MAX_LEVEL, player.level));
   const profBonus = getProficiencyBonus(level);
   const earnedAsis = ASI_LEVELS.filter((lv) => lv <= level).length;
   const nextAsi = getNextAsiLevel(level);
 
-  // Authentic BG3/5e baseline sum: 72–75 at Lv1 (27-pt buy + racial +2/+1) + 2 per ASI earned
+  // Authentic D&D 5.2 / BG3 baseline sum: 72–75 at Lv1 (27-pt buy + background +2/+1) + 2 per ASI earned
   const baseSum = ATTRIBUTE_KEYS.reduce((acc, k) => acc + (attrs[k] ?? 10), 0);
   const recommendedMin = 71 + earnedAsis * 2;
   const recommendedMax = 76 + earnedAsis * 2;
+  const rulesLabel = isDnd ? 'D&D 5.2 (2024)' : 'BG3';
   const balanceStatus =
     baseSum > recommendedMax
       ? {
-          label: `Acima da curva BG3 para Nv.${level} (recomendado ${recommendedMin}–${recommendedMax})`,
+          label: `Acima da curva ${rulesLabel} para Nv.${level} (recomendado ${recommendedMin}–${recommendedMax})`,
           color: '#fb923c',
         }
       : baseSum < recommendedMin
         ? {
-            label: `Build desafiadora para Nv.${level} (padrão BG3: ${recommendedMin}–${recommendedMax})`,
+            label: `Build desafiadora para Nv.${level} (padrão ${rulesLabel}: ${recommendedMin}–${recommendedMax})`,
             color: '#38bdf8',
           }
         : {
-            label: `Equilibrada no padrão BG3 Nv.${level} (${recommendedMin}–${recommendedMax} pts totais)`,
+            label: `Equilibrada no padrão ${rulesLabel} Nv.${level} (${recommendedMin}–${recommendedMax} pts totais)`,
             color: 'var(--success)',
           };
 
   const applyPreset = (presetAttrs: CharacterAttributes) => {
-    // Apply preset + distribute earned ASIs evenly onto highest 1-2 stats without exceeding cap 20
+    // Apply preset + distribute earned ASIs evenly onto highest 1-2 stats without exceeding cap
     const next: CharacterAttributes = { ...presetAttrs };
     const sorted = [...ATTRIBUTE_KEYS].sort((a, b) => next[b] - next[a]);
     let asiPoints = earnedAsis * 2;
     let idx = 0;
     while (asiPoints > 0 && idx < sorted.length) {
       const key = sorted[idx];
-      if (next[key] < NATURAL_ATTRIBUTE_CAP) {
+      if (next[key] < attrCap) {
         next[key] += 1;
         asiPoints -= 1;
       } else {
@@ -146,12 +154,12 @@ export function ProtagonistEditModal({
 
   const handleSave = () => {
     const clampedAttrs: CharacterAttributes = {
-      str: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.str))),
-      dex: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.dex))),
-      con: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.con))),
-      int: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.int))),
-      wis: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.wis))),
-      cha: Math.max(6, Math.min(NATURAL_ATTRIBUTE_CAP, Math.round(attrs.cha))),
+      str: Math.max(6, Math.min(attrCap, Math.round(attrs.str))),
+      dex: Math.max(6, Math.min(attrCap, Math.round(attrs.dex))),
+      con: Math.max(6, Math.min(attrCap, Math.round(attrs.con))),
+      int: Math.max(6, Math.min(attrCap, Math.round(attrs.int))),
+      wis: Math.max(6, Math.min(attrCap, Math.round(attrs.wis))),
+      cha: Math.max(6, Math.min(attrCap, Math.round(attrs.cha))),
     };
 
     onSaveProfile({
@@ -185,11 +193,11 @@ export function ProtagonistEditModal({
             </span>
             <div>
               <h2 className="font-display text-sm font-semibold tracking-wide text-[var(--text-primary)] sm:text-base">
-                Editar Protagonista & Build BG3
+                {isDnd ? 'Editar Protagonista · D&D 5.2 (2024)' : 'Editar Protagonista & Build BG3'}
               </h2>
               <p className="text-[11px] text-[var(--text-muted)]">
                 Nível {level}/{MAX_LEVEL} · Proficiência +{profBonus} ·{' '}
-                {nextAsi ? `Próx. ASI: Nv.${nextAsi}` : 'Nível Máximo'}
+                {nextAsi ? `Próx. ASI/Talento: Nv.${nextAsi}` : 'Nível Máximo'}
               </p>
             </div>
           </div>
@@ -318,7 +326,9 @@ export function ProtagonistEditModal({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--accent)]">
                 <Award className="h-3.5 w-3.5" />
-                Atributos Base — Escala BG3 / D&D 5e (6 a 20)
+                {isDnd
+                  ? `Atributos Base — D&D 5e 2024 (6 a ${attrCap})`
+                  : `Atributos Base — Escala BG3 / D&D 5e (6 a ${NATURAL_ATTRIBUTE_CAP})`}
               </h3>
               <span
                 className="font-mono-tech inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-0.5 text-[10px] font-semibold"
@@ -334,10 +344,10 @@ export function ProtagonistEditModal({
                 {balanceStatus.label}
               </div>
               <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-                <strong>Escala BG3:</strong> <strong>8–9</strong> = abaixo da média ·{' '}
+                <strong>Escala {rulesLabel}:</strong> <strong>8–9</strong> = abaixo da média ·{' '}
                 <strong>10–11</strong> = civil comum · <strong>14–15</strong> = profissional ·{' '}
-                <strong>16–17</strong> = elite · <strong>20</strong> = teto natural sobre-humano (só equipamentos lendários ultrapassam até 24). ASIs (+2 pts) vêm nos níveis{' '}
-                <strong>4, 8, 12, 16 e 20</strong>.
+                <strong>16–17</strong> = elite · <strong>20</strong> = teto natural ({isDnd ? 'Dádivas Épicas no Nv.19 permitem até 30' : 'só equipamentos lendários ultrapassam até 24'}). ASIs/Talentos vêm nos níveis{' '}
+                <strong>4, 8, 12, 16 e 19</strong>.
               </p>
             </div>
 
@@ -413,12 +423,12 @@ export function ProtagonistEditModal({
                       </div>
                       <button
                         type="button"
-                        disabled={baseVal >= NATURAL_ATTRIBUTE_CAP}
+                        disabled={baseVal >= attrCap}
                         onClick={() =>
                           setAttrs((prev) => ({
                             ...prev,
                             [key]: Math.min(
-                              NATURAL_ATTRIBUTE_CAP,
+                              attrCap,
                               (prev[key] ?? 10) + 1,
                             ),
                           }))

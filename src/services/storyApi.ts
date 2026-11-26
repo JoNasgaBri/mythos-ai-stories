@@ -11,32 +11,50 @@ import {
   generateDemoSceneArt,
 } from '../engine/demoArtwork';
 import {
+  createDemoClashInit,
+} from '../engine/clashSystem';
+import {
   createStarterOperationsForCampaign,
   createStarterRecruitsForCampaign,
 } from '../engine/orgSystem';
 import {
-  computeMaxVigor,
+  DND_CLASSES,
+  DND_CONDITIONS,
+  DND_XP_DELTAS,
+} from '../data/dnd52Catalog';
+import {
+  applyDndDamageWithTempHp,
+  applyDndTempHpGain,
+  computeClassResourcesForLevel,
+  computeMaxHpForRuleset,
+  computeNpcArmorClass,
+  computeNpcMaxHpForRuleset,
+  computeSpellSlotsForClass,
+  getMaxInspirationForRuleset,
+  getXpDeltaForRuleset,
+} from '../engine/dnd52Rules';
+import {
   defaultAffinityFromStance,
   defaultNpcAttributes,
   deriveRelationshipFromAffinity,
   getAsiPointsForLevel,
-  getEquippedGearBonuses,
+  getEffectiveAttributes,
   getProficiencyBonus,
   inferEquipSlotFromCategory,
   inferItemStorage,
   inferNpcAssistAttribute,
   inferSkillAttribute,
-  MAX_INSPIRATION,
   MAX_LEVEL,
   RELATIONSHIP_META,
   syncSkillLevels,
-  xpRequiredForLevel,
 } from '../engine/rpgSystem';
 import type {
   AiStateChanges,
   AppSettings,
   Campaign,
   CanonFact,
+  ClashArchetype,
+  ClashInitResponse,
   CraftRequest,
   CraftResponse,
   DiceRollResult,
@@ -157,7 +175,44 @@ function stripHeavyMediaForApi(campaign: Campaign): Campaign {
       imageUrl: undefined,
       beats: undefined,
     })),
+    activeClash: campaign.activeClash
+      ? {
+          ...campaign.activeClash,
+          roundLog: campaign.activeClash.roundLog.slice(-6),
+        }
+      : null,
   };
+}
+
+export async function requestClashInit(
+  campaign: Campaign,
+  settings: AppSettings,
+  health: ApiHealthStatus,
+  opts?: {
+    requestedArchetype?: ClashArchetype;
+    customPremise?: string;
+  },
+): Promise<ClashInitResponse> {
+  if (shouldUseGemini(settings, health)) {
+    try {
+      const res = await postJson<ClashInitResponse>(
+        '/api/story/clash-init',
+        {
+          campaign: stripHeavyMediaForApi(campaign),
+          requestedArchetype: opts?.requestedArchetype,
+          customPremise: opts?.customPremise,
+        },
+        settings,
+      );
+      if (Array.isArray(res.enemies) && res.enemies.length > 0) {
+        return res;
+      }
+    } catch {
+      // Fall back cleanly to deterministic thematic Demo generator
+    }
+  }
+  await briefDemoDelay(320);
+  return createDemoClashInit(campaign, opts?.requestedArchetype);
 }
 
 export async function requestStoryStart(
@@ -194,6 +249,7 @@ export async function requestStoryTurn(
   health: ApiHealthStatus,
   crisisMode?: 'survival_test' | 'breaking_point',
   signal?: AbortSignal,
+  clashRoundContext?: string,
 ): Promise<StoryTurnResponse> {
   if (shouldUseGemini(settings, health)) {
     return postJson<StoryTurnResponse>(
@@ -211,6 +267,7 @@ export async function requestStoryTurn(
         },
         model: settings.geminiModel,
         crisisMode,
+        clashRoundContext,
       },
       settings,
       signal,
@@ -223,6 +280,7 @@ export async function requestStoryTurn(
     diceRoll,
     settings.responseLength,
     crisisMode,
+    clashRoundContext,
   );
 }
 
@@ -1047,7 +1105,7 @@ export function applyStateChanges(
   player: PlayerState,
   changes: AiStateChanges | undefined,
   turn = 0,
-  options?: { hasTrainingStation?: boolean },
+  options?: { hasTrainingStation?: boolean; ruleset?: Campaign['ruleset'] },
 ): {
   nextPlayer: PlayerState;
   deltas: StateDelta[];
@@ -1056,6 +1114,11 @@ export function applyStateChanges(
   if (!changes) {
     return { nextPlayer: player, deltas: [] };
   }
+
+  const ruleset = options?.ruleset ?? (player.dnd ? 'dnd5e_2024' : 'mythos_legacy');
+  const isDnd = ruleset === 'dnd5e_2024';
+  const maxInsp = getMaxInspirationForRuleset(ruleset);
+  const hpWord = isDnd ? 'PV' : 'Vigor';
 
   const deltas: StateDelta[] = [];
   let name = player.name;
@@ -1082,15 +1145,29 @@ export function applyStateChanges(
 
   let level = player.level ?? 1;
   let xp = player.xp ?? 0;
-  let xpToNextLevel = player.xpToNextLevel ?? xpRequiredForLevel(level);
+  let xpToNextLevel = player.xpToNextLevel ?? getXpDeltaForRuleset(level, ruleset);
   let attributePoints = player.attributePoints ?? 0;
   let maxVigor = player.maxVigor;
   let vigor = player.vigor;
   let tension = player.tension;
   let inspiration =
     typeof player.inspiration === 'number'
-      ? Math.max(0, Math.min(MAX_INSPIRATION, player.inspiration))
+      ? Math.max(0, Math.min(maxInsp, player.inspiration))
       : 1;
+  let nextDnd = player.dnd
+    ? {
+        ...player.dnd,
+        conditions: [...player.dnd.conditions],
+        classResources: player.dnd.classResources.map((r) => ({ ...r })),
+        spellSlots: {
+          ...player.dnd.spellSlots,
+          tiers: Object.fromEntries(
+            Object.entries(player.dnd.spellSlots.tiers ?? {}).map(([k, v]) => [k, { ...v }]),
+          ),
+        },
+        deathSaves: { ...player.dnd.deathSaves },
+      }
+    : undefined;
 
   const inventory: InventoryItem[] = player.inventory.map((i) => ({ ...i }));
   if (Array.isArray(changes.addItems)) {
@@ -1104,6 +1181,7 @@ export function applyStateChanges(
         existing.quantity += qty;
         if (item.rarity && !existing.rarity) existing.rarity = item.rarity;
         if (item.bonuses && !existing.bonuses) existing.bonuses = item.bonuses;
+        if (item.dndStats && !existing.dndStats) existing.dndStats = item.dndStats;
       } else {
         const category = item.category ?? 'misc';
         inventory.push({
@@ -1119,6 +1197,9 @@ export function applyStateChanges(
             item.equipSlot ?? inferEquipSlotFromCategory(category, item.name),
           equipped: false,
           bonuses: item.bonuses,
+          dndStats:
+            item.dndStats ??
+            (isDnd && category === 'consumable' ? { healDice: '2d4+2' } : undefined),
         });
       }
       deltas.push({
@@ -1149,9 +1230,12 @@ export function applyStateChanges(
     }
   }
 
-  // XP & automatic Level Up progression
+  // XP & automatic Level Up progression (official 2024 D&D 5.2 table + Subclass/ASI/Boon triggers)
   if (typeof changes.xpGain === 'number' && changes.xpGain > 0) {
-    const gained = Math.min(400, Math.round(changes.xpGain));
+    const xpCap = isDnd
+      ? Math.max(400, (DND_XP_DELTAS[Math.max(0, Math.min(19, level - 1))] ?? 300) * 2)
+      : 400;
+    const gained = Math.min(xpCap, Math.round(changes.xpGain));
     xp += gained;
     deltas.push({
       kind: 'xp',
@@ -1163,28 +1247,59 @@ export function applyStateChanges(
       const prevProf = getProficiencyBonus(level);
       xp -= xpToNextLevel;
       level += 1;
-      const asiGain = getAsiPointsForLevel(level);
-      attributePoints += asiGain;
-      xpToNextLevel = xpRequiredForLevel(level);
+      xpToNextLevel = getXpDeltaForRuleset(level, ruleset);
       const nextProf = getProficiencyBonus(level);
-      const gearBonuses = getEquippedGearBonuses(inventory);
-      const nextMax = computeMaxVigor(
+
+      const prevMax = maxVigor;
+      const nextMax = computeMaxHpForRuleset(ruleset, {
         level,
-        (player.attributes?.con ?? 10) + (gearBonuses.con ?? 0),
-        gearBonuses.maxVigor ?? 0,
-      );
+        attributes: player.attributes,
+        inventory,
+        dnd: nextDnd,
+      });
       maxVigor = Math.max(maxVigor, nextMax);
-      vigor = Math.min(maxVigor, vigor + 12);
-      const perks = [
-        asiGain > 0 ? `+${asiGain} ASI` : null,
-        nextProf > prevProf ? `Prof. +${nextProf}` : null,
-        '+Vigor Máx',
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      const hpBump = Math.max(1, maxVigor - prevMax);
+      vigor = Math.min(maxVigor, vigor + (isDnd ? hpBump : 12));
+
+      const perks: string[] = [`+${hpBump} ${hpWord} Máx`];
+      if (nextProf > prevProf) perks.push(`BP +${nextProf}`);
+
+      if (isDnd && nextDnd) {
+        const cls = DND_CLASSES[nextDnd.classId];
+        nextDnd.hitDiceRemaining = Math.min(level, nextDnd.hitDiceRemaining + 1);
+        nextDnd.spellSlots = computeSpellSlotsForClass(
+          nextDnd.classId,
+          level,
+          nextDnd.spellSlots,
+        );
+        const effAttrs = getEffectiveAttributes({ ...player, inventory });
+        nextDnd.classResources = computeClassResourcesForLevel(
+          nextDnd.classId,
+          level,
+          effAttrs,
+          nextDnd.classResources,
+        );
+        if (level === 3 && !nextDnd.subclassId) {
+          nextDnd.pendingSubclassChoice = true;
+          perks.push('Subclasse!');
+        }
+        if (cls?.asiLevels.includes(level) && level < 19) {
+          nextDnd.pendingAsiOrFeat = (nextDnd.pendingAsiOrFeat ?? 0) + 1;
+          perks.push('ASI ou Talento!');
+        }
+        if (level === 19) {
+          nextDnd.pendingEpicBoon = true;
+          perks.push('Dádiva Épica!');
+        }
+      } else {
+        const asiGain = getAsiPointsForLevel(level);
+        attributePoints += asiGain;
+        if (asiGain > 0) perks.unshift(`+${asiGain} ASI`);
+      }
+
       deltas.push({
         kind: 'level',
-        label: `Nível ${level}! (${perks})`,
+        label: `Nível ${level}! (${perks.join(' · ')})`,
         positive: true,
       });
     }
@@ -1193,16 +1308,112 @@ export function applyStateChanges(
     }
   }
 
-  if (typeof changes.vigorDelta === 'number' && changes.vigorDelta !== 0) {
-    const prev = vigor;
-    vigor = Math.max(0, Math.min(maxVigor, vigor + changes.vigorDelta));
-    const diff = vigor - prev;
-    if (diff !== 0) {
+  // D&D 5.2 Temporary HP gain (never stacks; takes higher)
+  if (isDnd && nextDnd && typeof changes.tempHpGain === 'number' && changes.tempHpGain > 0) {
+    const nextTemp = applyDndTempHpGain(nextDnd.tempHp, changes.tempHpGain);
+    if (nextTemp > nextDnd.tempHp) {
+      nextDnd.tempHp = nextTemp;
       deltas.push({
         kind: 'vigor',
-        label: `${diff > 0 ? '+' : ''}${diff} Vigor`,
-        positive: diff > 0,
+        label: `+${nextTemp} PV Temporários`,
+        positive: true,
       });
+    }
+  }
+
+  // HP / Vigor delta (in 5.2, route damage through tempHp + clamp narrative damage to avoid AI 100-scale one-shots!)
+  if (typeof changes.vigorDelta === 'number' && changes.vigorDelta !== 0) {
+    let delta = Math.round(changes.vigorDelta);
+    if (isDnd && delta < 0) {
+      const maxNarrativeHit = Math.max(4, Math.ceil(maxVigor * 0.5));
+      delta = Math.max(-maxNarrativeHit, delta);
+    }
+    const prev = vigor;
+    if (isDnd && nextDnd && delta < 0) {
+      const dmgRes = applyDndDamageWithTempHp(vigor, nextDnd.tempHp, Math.abs(delta));
+      vigor = dmgRes.nextHp;
+      nextDnd.tempHp = dmgRes.nextTempHp;
+      const absorbedNote = dmgRes.absorbed > 0 ? ` (${dmgRes.absorbed} abs.)` : '';
+      if (dmgRes.hpLost > 0 || dmgRes.absorbed > 0) {
+        deltas.push({
+          kind: 'vigor',
+          label: `-${dmgRes.hpLost} ${hpWord}${absorbedNote}`,
+          positive: false,
+        });
+      }
+    } else {
+      vigor = Math.max(0, Math.min(maxVigor, vigor + delta));
+      const diff = vigor - prev;
+      if (diff !== 0) {
+        deltas.push({
+          kind: 'vigor',
+          label: `${diff > 0 ? '+' : ''}${diff} ${hpWord}`,
+          positive: diff > 0,
+        });
+      }
+    }
+    if (isDnd && nextDnd && vigor > 0 && prev <= 0) {
+      nextDnd.deathSaves = { successes: 0, failures: 0, stabilized: false };
+      nextDnd.conditions = nextDnd.conditions.filter((c) => c !== 'unconscious');
+    }
+  }
+
+  // D&D 5.2 Conditions, Exhaustion & Spell Slot Delta
+  if (isDnd && nextDnd) {
+    if (Array.isArray(changes.conditionsAdd)) {
+      for (const c of changes.conditionsAdd) {
+        if (DND_CONDITIONS[c] && !nextDnd.conditions.includes(c)) {
+          nextDnd.conditions.push(c);
+          deltas.push({
+            kind: 'crisis',
+            label: `${DND_CONDITIONS[c].icon} ${DND_CONDITIONS[c].label}`,
+            positive: false,
+          });
+        }
+      }
+    }
+    if (Array.isArray(changes.conditionsRemove)) {
+      for (const c of changes.conditionsRemove) {
+        if (nextDnd.conditions.includes(c)) {
+          nextDnd.conditions = nextDnd.conditions.filter((x) => x !== c);
+          if (DND_CONDITIONS[c]) {
+            deltas.push({
+              kind: 'vigor',
+              label: `Curado: ${DND_CONDITIONS[c].label}`,
+              positive: true,
+            });
+          }
+        }
+      }
+    }
+    if (typeof changes.exhaustionDelta === 'number' && changes.exhaustionDelta !== 0) {
+      const prevEx = nextDnd.exhaustion;
+      nextDnd.exhaustion = Math.max(0, Math.min(6, prevEx + Math.round(changes.exhaustionDelta)));
+      if (nextDnd.exhaustion !== prevEx) {
+        deltas.push({
+          kind: 'crisis',
+          label: `Exaustão Nv.${nextDnd.exhaustion}/6`,
+          positive: nextDnd.exhaustion < prevEx,
+        });
+      }
+    }
+    if (changes.spellSlotsDelta && typeof changes.spellSlotsDelta.level === 'number') {
+      const lv = Math.max(1, Math.min(9, Math.round(changes.spellSlotsDelta.level)));
+      const d = Math.round(changes.spellSlotsDelta.delta || 0);
+      if (d !== 0) {
+        if (nextDnd.spellSlots.pactMax && (nextDnd.spellSlots.pactSlotLevel ?? 1) === lv) {
+          nextDnd.spellSlots.pactCurrent = Math.max(
+            0,
+            Math.min(nextDnd.spellSlots.pactMax, (nextDnd.spellSlots.pactCurrent ?? 0) + d),
+          );
+        } else if (nextDnd.spellSlots.tiers[lv]) {
+          const tier = nextDnd.spellSlots.tiers[lv];
+          nextDnd.spellSlots.tiers[lv] = {
+            ...tier,
+            current: Math.max(0, Math.min(tier.max, tier.current + d)),
+          };
+        }
+      }
     }
   }
 
@@ -1221,11 +1432,11 @@ export function applyStateChanges(
 
   if (typeof changes.inspirationGain === 'number' && changes.inspirationGain > 0) {
     const prev = inspiration;
-    inspiration = Math.min(MAX_INSPIRATION, inspiration + Math.round(changes.inspirationGain));
+    inspiration = Math.min(maxInsp, inspiration + Math.round(changes.inspirationGain));
     if (inspiration > prev) {
       deltas.push({
         kind: 'inspiration',
-        label: `+${inspiration - prev} Inspiração ✦`,
+        label: isDnd ? '★ Inspiração Heroica!' : `+${inspiration - prev} Inspiração ✦`,
         positive: true,
       });
     }
@@ -1384,11 +1595,11 @@ export function applyStateChanges(
       if (target) {
         target.status = 'completed';
         deltas.push({ kind: 'quest', label: `Concluído: ${target.title}`, positive: true });
-        if (inspiration < MAX_INSPIRATION) {
+        if (inspiration < maxInsp) {
           inspiration += 1;
           deltas.push({
             kind: 'inspiration',
-            label: '+1 Inspiração ✦ (Objetivo)',
+            label: isDnd ? '★ Inspiração Heroica (Objetivo)' : '+1 Inspiração ✦ (Objetivo)',
             positive: true,
           });
         }
@@ -1429,6 +1640,7 @@ export function applyStateChanges(
       currency,
       inventory,
       quests,
+      ...(nextDnd ? { dnd: nextDnd } : {}),
     },
     deltas,
     worldIdentityPatch,
@@ -1440,6 +1652,7 @@ export function applyCodexChanges(
   currentLocation: string,
   turn: number,
   changes: AiStateChanges | undefined,
+  ruleset?: Campaign['ruleset'],
 ): { nextCodex: WorldCodex; deltas: StateDelta[] } {
   const npcs: NpcRecord[] = codex.npcs.map((n) => ({ ...n }));
   const locations: LocationRecord[] = codex.locations.map((l) => ({ ...l }));
@@ -1572,7 +1785,16 @@ export function applyCodexChanges(
               cha: rawNpc.attributes.cha ?? baseAttrs.cha,
             }
           : baseAttrs;
-        const maxHp = computeMaxVigor(1, attrs.con, 0);
+        const npcLevel = 1;
+        const maxHp = computeNpcMaxHpForRuleset(ruleset, {
+          level: npcLevel,
+          attributes: attrs,
+          role: rawNpc.role || 'Habitante',
+        });
+        const npcAc = computeNpcArmorClass({
+          attributes: attrs,
+          role: rawNpc.role || 'Habitante',
+        });
 
         const created: NpcRecord = {
           id: `npc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1593,9 +1815,10 @@ export function applyCodexChanges(
           appearance: rawNpc.appearance?.trim() || undefined,
           personality: rawNpc.personality?.trim() || undefined,
           currentMood: rawNpc.currentMood?.trim() || undefined,
-          level: 1,
+          level: npcLevel,
           vigor: maxHp,
           maxVigor: maxHp,
+          armorClass: npcAc,
           attributes: attrs,
           skills: Array.isArray(rawNpc.skills)
             ? rawNpc.skills.map((s) => s.trim()).filter(Boolean)

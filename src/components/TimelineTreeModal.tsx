@@ -803,11 +803,19 @@ export function TimelineTreeModal({
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 px-3 py-2">
                       <span className="text-[10px] text-[var(--text-muted)]">
-                        Vigor
+                        {activeCampaign.ruleset === 'dnd5e_2024' ? 'PV' : 'Vigor'}
                       </span>
                       <div className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
                         <Heart className="h-3.5 w-3.5 text-[var(--danger)]" />
-                        <span>{selectedNode.vigor}%</span>
+                        <span>
+                          {selectedNode.maxVigor
+                            ? activeCampaign.ruleset === 'dnd5e_2024'
+                              ? `${selectedNode.vigor}/${selectedNode.maxVigor} PV`
+                              : `${Math.round((selectedNode.vigor / Math.max(1, selectedNode.maxVigor)) * 100)}%`
+                            : activeCampaign.ruleset === 'dnd5e_2024'
+                              ? `${selectedNode.vigor} PV`
+                              : `${selectedNode.vigor}%`}
+                        </span>
                       </div>
                     </div>
                     <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 px-3 py-2">

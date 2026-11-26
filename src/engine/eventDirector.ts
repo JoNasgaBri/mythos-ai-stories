@@ -38,6 +38,7 @@ export function evaluateStorytellerTrigger(params: {
   if (profile === 'manual') return fallbackResult;
   if (campaign.status !== 'active') return fallbackResult;
   if (campaign.activeWorldEvent) return fallbackResult;
+  if (campaign.activeClash?.status === 'active') return fallbackResult;
   if (campaign.turnCount < 2) return fallbackResult;
 
   const lastTurn = campaign.lastWorldEventTurn ?? 0;

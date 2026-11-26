@@ -5,6 +5,7 @@ import {
   MessageSquare,
   Send,
   Sparkles,
+  Swords,
   Wand2,
   X,
 } from 'lucide-react';
@@ -32,6 +33,9 @@ interface MobileCommandBarProps {
   selectedItem: InventoryItem | null;
   actionsCount: number;
   isBusy: boolean;
+  hasActiveClash?: boolean;
+  onOpenClashSheet?: () => void;
+  onComposerFocusChange?: (focused: boolean) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onChangeInputText: (val: string) => void;
   onChangeInputMode: (mode: CommandInputMode) => void;
@@ -50,6 +54,9 @@ export function MobileCommandBar({
   selectedItem,
   actionsCount,
   isBusy,
+  hasActiveClash = false,
+  onOpenClashSheet,
+  onComposerFocusChange,
   textareaRef,
   onChangeInputText,
   onChangeInputMode,
@@ -131,6 +138,19 @@ export function MobileCommandBar({
     >
       {/* Ultra-compact single-row control strip */}
       <div className="no-scrollbar mb-1.5 flex items-center gap-1.5 overflow-x-auto">
+        {hasActiveClash && onOpenClashSheet ? (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={onOpenClashSheet}
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[#f87171]/60 bg-[#f87171]/15 px-2.5 text-[11px] font-semibold text-[#fca5a5] shadow-sm transition active:scale-95 disabled:opacity-45"
+          >
+            <Swords className="h-3 w-3 shrink-0" />
+            <span>Tática</span>
+            <ChevronUp className="h-3 w-3 shrink-0" />
+          </button>
+        ) : null}
+
         {actionsCount > 0 ? (
           <button
             type="button"
@@ -196,6 +216,8 @@ export function MobileCommandBar({
             ref={textareaRef}
             rows={1}
             value={inputText}
+            onFocus={() => onComposerFocusChange?.(true)}
+            onBlur={() => onComposerFocusChange?.(false)}
             onChange={(e) => onChangeInputText(e.target.value)}
             onKeyDown={(e) => {
               if (
